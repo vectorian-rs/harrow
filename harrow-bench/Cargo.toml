@@ -27,3 +27,7 @@ harness = false
 [[bench]]
 name = "full_stack"
 harness = false
+
+[[bench]]
+name = "route_groups"
+harness = false

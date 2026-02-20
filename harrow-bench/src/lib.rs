@@ -77,6 +77,12 @@ pub async fn timing_middleware(req: Request, next: Next) -> Response {
     resp
 }
 
+/// Adds x-group response header — used for group middleware benchmarks.
+pub async fn group_tag_middleware(req: Request, next: Next) -> Response {
+    let resp = next.run(req).await;
+    resp.header("x-group", "1")
+}
+
 // ---------------------------------------------------------------------------
 // Keep-alive HTTP/1.1 client
 // ---------------------------------------------------------------------------
