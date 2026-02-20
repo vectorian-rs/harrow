@@ -18,6 +18,7 @@ cargo bench
 cargo bench --bench echo
 cargo bench --bench middleware_chain
 cargo bench --bench full_stack
+cargo bench --bench route_groups
 ```
 
 Results are written to `target/criterion/`. Open `target/criterion/report/index.html` for interactive charts.
@@ -43,6 +44,7 @@ Three levels of measurement, isolating different costs:
 | **Micro** | Path matching, route table lookup | Direct function calls, no IO |
 | **TCP** | Full request-response cycle over loopback | Keep-alive HTTP/1.1 client |
 | **Scaling** | Route table size and middleware depth impact | TCP with parameterized configurations |
+| **Groups** | Route group overhead, scoped middleware, nesting | TCP with group/nested configurations |
 
 TCP benchmarks use a minimal keep-alive HTTP/1.1 client (`BenchClient`) that reuses a single connection. This isolates server-side framework overhead from client library cost.
 
@@ -216,6 +218,60 @@ For typical services with 10–50 routes, route table size has no measurable imp
 
 ---
 
+## Results: Route Groups
+
+TCP round-trip measuring the cost of route groups: prefix-based grouping, scoped middleware (via `Arc<dyn Middleware>`), and nested group composition.
+
+### Group vs top-level route
+
+| Benchmark | Time | Delta vs baseline |
+|-----------|------|-------------------|
+| `toplevel_0mw` (baseline) | 29.0 µs | — |
+| `group_0mw` (prefix only, no middleware) | 29.0 µs | +0.0 µs |
+| `group_1mw` (prefix + 1 group middleware) | 29.7 µs | +0.7 µs |
+
+**Route grouping itself is free.** The `App::group()` / `Group` builder merely prepends a prefix at startup. At runtime, group routes are indistinguishable from top-level routes in the route table — there is no extra indirection or lookup cost.
+
+### Group middleware depth scaling
+
+| Depth | Time | Delta vs 0 |
+|-------|------|------------|
+| 0 | 28.5 µs | — |
+| 1 | 28.6 µs | +0.1 µs |
+| 2 | 28.9 µs | +0.4 µs |
+| 3 | 29.3 µs | +0.8 µs |
+| 5 | 29.7 µs | +1.2 µs |
+
+**Per-group-middleware cost: ~240 ns/layer** (derived from 0→5 delta: 1.2 µs / 5 = 240 ns). Identical to the global middleware cost measured in the middleware chain benchmarks. Group middleware uses the same `run_middleware_chain` code path — the only difference is the index range (global then route-level).
+
+### Nested groups
+
+| Nesting | Total middleware | Time | Delta vs 1 level |
+|---------|-----------------|------|-------------------|
+| 1 level (`/api`, 1 mw) | 1 | 29.0 µs | — |
+| 2 levels (`/api/v1`, 1+1 mw) | 2 | 29.9 µs | +0.9 µs |
+| 3 levels (`/api/v1/admin`, 1+1+1 mw) | 3 | 30.5 µs | +1.5 µs |
+
+**~500 ns per nesting level**, which is ~250 ns per middleware layer — consistent with previous measurements. Nesting itself adds no overhead beyond the middleware it contributes. At build time, `Group::group()` flattens nested routes into the top-level route table with combined middleware vectors via `Arc::clone`.
+
+### Global + group middleware combined
+
+| Configuration | Total middleware | Time | Delta vs 2 global only |
+|---------------|-----------------|------|------------------------|
+| 2 global + 0 group | 2 | 29.9 µs | — |
+| 2 global + 2 group | 4 | 30.1 µs | +0.2 µs |
+| 2 global + 3 group (nested) | 5 | 30.7 µs | +0.8 µs |
+
+Global and group middleware **compose linearly** with no amplification. The middleware chain walks global middleware first (indices 0..N), then route-level middleware (indices N..N+M), then the handler. Adding 3 group middleware layers to an existing 2 global layers costs exactly what 3 additional layers would cost anywhere.
+
+### Implementation notes
+
+- Group middleware is stored as `Vec<Arc<dyn Middleware>>` on each `Route`. Multiple routes in the same group share middleware instances via `Arc::clone` — one atomic refcount bump per route at startup, zero runtime cost.
+- The `run_middleware_chain` function uses a combined index over global + route middleware, avoiding a separate chain or any conditional branching per middleware type.
+- The fast path (`shared.middleware.is_empty() && route.middleware.is_empty()`) skips chain setup entirely when no middleware exists at any level.
+
+---
+
 ## Performance Budget
 
 Based on these measurements, the per-request overhead budget for Harrow:
@@ -224,6 +280,8 @@ Based on these measurements, the per-request overhead budget for Harrow:
 |-----------|--------|----------|
 | Route matching (< 50 routes) | < 1 µs | 634 ns worst case |
 | Middleware chain (≤ 5 layers) | < 1.5 µs | ~1.2 µs |
+| Route group overhead (prefix only) | 0 µs | 0 µs (free) |
+| Group middleware (≤ 5 layers) | < 1.5 µs | ~1.2 µs |
 | State injection | < 50 ns | ~20 ns |
 | Response construction | < 100 ns | ~50 ns |
 | **Total framework overhead** | **< 3 µs** | **~2 µs typical** |
