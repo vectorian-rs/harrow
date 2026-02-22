@@ -18,6 +18,14 @@ impl TypeMap {
         self.inner.insert(TypeId::of::<T>(), Box::new(val));
     }
 
+    /// Try to retrieve a reference to the value of type `T`.
+    /// Returns `None` if `T` was not previously inserted.
+    pub fn try_get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.inner
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref::<T>())
+    }
+
     /// Retrieve a reference to the value of type `T`.
     /// Panics if `T` was not previously inserted — this is a programmer error.
     pub fn get<T: Send + Sync + 'static>(&self) -> &T {
@@ -66,5 +74,18 @@ mod tests {
         map.insert(1u32);
         map.insert(2u32);
         assert_eq!(*map.get::<u32>(), 2);
+    }
+
+    #[test]
+    fn try_get_missing_returns_none() {
+        let map = TypeMap::new();
+        assert!(map.try_get::<u64>().is_none());
+    }
+
+    #[test]
+    fn try_get_present_returns_some() {
+        let mut map = TypeMap::new();
+        map.insert(42u64);
+        assert_eq!(map.try_get::<u64>(), Some(&42u64));
     }
 }

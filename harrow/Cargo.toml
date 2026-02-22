@@ -6,8 +6,9 @@ license.workspace = true
 description = "A thin, macro-free HTTP framework over Hyper with built-in observability"
 
 [features]
-default = ["o11y", "json", "http2"]
+default = ["o11y", "json", "http2", "timeout"]
 o11y = ["harrow-o11y"]
+timeout = ["harrow-core/timeout"]
 json = ["harrow-core/json"]
 http2 = ["harrow-server/http2"]
 tls = ["harrow-server/tls"]
@@ -17,3 +18,9 @@ profiling = ["harrow-core/profiling", "harrow-o11y/profiling", "harrow-server/pr
 harrow-core = { workspace = true }
 harrow-o11y = { workspace = true, optional = true }
 harrow-server = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

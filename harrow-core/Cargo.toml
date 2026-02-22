@@ -8,9 +8,11 @@ description = "Core types for Harrow: routing, request/response wrappers, middle
 [features]
 default = ["json"]
 json = ["serde", "serde_json"]
+timeout = ["tokio"]
 profiling = []
 
 [dependencies]
+tokio = { workspace = true, optional = true }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }

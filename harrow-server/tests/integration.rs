@@ -7,6 +7,9 @@ use harrow_core::middleware::Next;
 use harrow_core::request::Request;
 use harrow_core::response::Response;
 use harrow_core::route::App;
+use harrow_core::timeout::timeout_middleware;
+use harrow_o11y::o11y_middleware::o11y_middleware;
+use harrow_o11y::O11yConfig;
 
 /// Shared counter used as application state.
 struct HitCounter(AtomicUsize);
@@ -391,4 +394,173 @@ async fn group_404_and_405() {
     // Path exists but wrong method -> 405.
     let (status, _, _) = http_get(addr, "/api/submit").await;
     assert_eq!(status, 405);
+}
+
+// -- HTTP helper with custom headers -----------------------------------------
+
+/// Simple HTTP/1.1 GET with extra headers, returns (status, headers, body).
+async fn http_get_with_headers(
+    addr: SocketAddr,
+    path: &str,
+    extra_headers: &[(&str, &str)],
+) -> (u16, Vec<(String, String)>, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+    for (k, v) in extra_headers {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    req.push_str("\r\n");
+    stream.write_all(req.as_bytes()).await.unwrap();
+
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let raw = String::from_utf8_lossy(&buf);
+
+    let mut parts = raw.splitn(2, "\r\n\r\n");
+    let head = parts.next().unwrap_or("");
+    let body = parts.next().unwrap_or("").to_string();
+
+    let mut lines = head.lines();
+    let status_line = lines.next().unwrap_or("");
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0);
+
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, ": ");
+            let key = parts.next()?.to_lowercase();
+            let val = parts.next()?.to_string();
+            Some((key, val))
+        })
+        .collect();
+
+    let body = if headers
+        .iter()
+        .any(|(k, v)| k == "transfer-encoding" && v.contains("chunked"))
+    {
+        decode_chunked(&body)
+    } else {
+        body
+    };
+
+    (status, headers, body)
+}
+
+// -- O11y Integration Tests --------------------------------------------------
+
+#[tokio::test]
+async fn o11y_middleware_adds_request_id_header() {
+    let app = App::new()
+        .state(Arc::new(O11yConfig::default()))
+        .middleware(o11y_middleware)
+        .get("/hello", hello);
+
+    let addr = start_server(app).await;
+
+    let (status, headers, _) = http_get(addr, "/hello").await;
+    assert_eq!(status, 200);
+    let rid = header_val(&headers, "x-request-id");
+    assert!(rid.is_some(), "expected x-request-id header");
+    assert!(rid.unwrap().starts_with("hrw-"), "expected hrw- prefix");
+}
+
+#[tokio::test]
+async fn o11y_middleware_respects_disable_request_id() {
+    let config = O11yConfig::default().disable_request_id();
+    let app = App::new()
+        .state(Arc::new(config))
+        .middleware(o11y_middleware)
+        .get("/hello", hello);
+
+    let addr = start_server(app).await;
+
+    let (status, headers, _) = http_get(addr, "/hello").await;
+    assert_eq!(status, 200);
+    assert_eq!(header_val(&headers, "x-request-id"), None);
+}
+
+#[tokio::test]
+async fn o11y_middleware_echoes_incoming_request_id() {
+    let app = App::new()
+        .state(Arc::new(O11yConfig::default()))
+        .middleware(o11y_middleware)
+        .get("/hello", hello);
+
+    let addr = start_server(app).await;
+
+    let (status, headers, _) =
+        http_get_with_headers(addr, "/hello", &[("x-request-id", "client-123")]).await;
+    assert_eq!(status, 200);
+    assert_eq!(header_val(&headers, "x-request-id"), Some("client-123"));
+}
+
+#[tokio::test]
+async fn o11y_middleware_without_config_uses_defaults() {
+    // No O11yConfig in state — should not panic, should fall back to defaults.
+    let app = App::new()
+        .middleware(o11y_middleware)
+        .get("/hello", hello);
+
+    let addr = start_server(app).await;
+
+    let (status, headers, _) = http_get(addr, "/hello").await;
+    assert_eq!(status, 200);
+    let rid = header_val(&headers, "x-request-id");
+    assert!(rid.is_some(), "expected x-request-id with default config");
+}
+
+async fn echo_route_pattern(req: Request) -> Response {
+    let pattern = req.route_pattern().unwrap_or("none").to_string();
+    Response::text(pattern)
+}
+
+#[tokio::test]
+async fn route_pattern_is_template_not_resolved() {
+    let app = App::new()
+        .get("/users/:id", echo_route_pattern);
+
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/users/42").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "/users/:id");
+}
+
+// -- Timeout Middleware Tests ------------------------------------------------
+
+async fn slow_handler(_req: Request) -> Response {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    Response::text("slow")
+}
+
+#[tokio::test]
+async fn timeout_middleware_returns_408_on_slow_handler() {
+    let app = App::new()
+        .middleware(timeout_middleware(Duration::from_millis(50)))
+        .get("/slow", slow_handler);
+
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/slow").await;
+    assert_eq!(status, 408);
+    assert_eq!(body, "request timeout");
+}
+
+#[tokio::test]
+async fn timeout_middleware_passes_fast_handler() {
+    let app = App::new()
+        .middleware(timeout_middleware(Duration::from_secs(1)))
+        .get("/hello", hello);
+
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/hello").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "hello");
 }

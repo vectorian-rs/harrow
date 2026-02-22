@@ -14,14 +14,23 @@ pub struct Request {
     inner: http::Request<Incoming>,
     path_match: PathMatch,
     state: Arc<TypeMap>,
+    route_pattern: Option<String>,
+    request_id: Option<String>,
 }
 
 impl Request {
-    pub fn new(inner: http::Request<Incoming>, path_match: PathMatch, state: Arc<TypeMap>) -> Self {
+    pub fn new(
+        inner: http::Request<Incoming>,
+        path_match: PathMatch,
+        state: Arc<TypeMap>,
+        route_pattern: Option<String>,
+    ) -> Self {
         Self {
             inner,
             path_match,
             state,
+            route_pattern,
+            request_id: None,
         }
     }
 
@@ -74,6 +83,27 @@ impl Request {
     /// Panics if `T` was not registered via `App::state()`.
     pub fn state<T: Send + Sync + 'static>(&self) -> &T {
         self.state.get::<T>()
+    }
+
+    /// Try to access application state of type `T`.
+    /// Returns `None` if `T` was not registered via `App::state()`.
+    pub fn try_state<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.state.try_get::<T>()
+    }
+
+    /// The route pattern that matched this request (e.g. `/users/:id`).
+    pub fn route_pattern(&self) -> Option<&str> {
+        self.route_pattern.as_deref()
+    }
+
+    /// The request ID assigned by the o11y middleware.
+    pub fn request_id(&self) -> Option<&str> {
+        self.request_id.as_deref()
+    }
+
+    /// Set the request ID. Called by o11y middleware before passing to handlers.
+    pub fn set_request_id(&mut self, id: String) {
+        self.request_id = Some(id);
     }
 
     /// Consume the request and collect the body as bytes.

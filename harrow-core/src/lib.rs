@@ -5,6 +5,8 @@ pub mod request;
 pub mod response;
 pub mod route;
 pub mod state;
+#[cfg(feature = "timeout")]
+pub mod timeout;
 
 pub use handler::HandlerFn;
 pub use middleware::{Middleware, Next};
