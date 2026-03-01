@@ -1,0 +1,10 @@
+target/
+.git/
+.github/
+docs/
+infra/
+flamegraphs/
+scripts/
+.venv/
+.claude/
+*.perf.data*
