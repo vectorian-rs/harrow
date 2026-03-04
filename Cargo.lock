@@ -525,6 +525,7 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper",
+ "hyper-util",
  "pin-project-lite",
  "serde",
  "serde_json",

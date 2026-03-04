@@ -111,3 +111,111 @@ impl<E: IntoResponse> IntoResponse for Result<Response, E> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    async fn body_bytes(resp: Response) -> Bytes {
+        resp.into_inner()
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+    }
+
+    #[tokio::test]
+    async fn new_sets_status_and_body() {
+        let resp = Response::new(StatusCode::CREATED, "created");
+        assert_eq!(resp.status_code(), StatusCode::CREATED);
+        assert_eq!(body_bytes(resp).await, Bytes::from("created"));
+    }
+
+    #[tokio::test]
+    async fn ok_returns_200_empty() {
+        let resp = Response::ok();
+        assert_eq!(resp.status_code(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await, Bytes::new());
+    }
+
+    #[tokio::test]
+    async fn text_sets_content_type_and_body() {
+        let resp = Response::text("hello");
+        assert_eq!(resp.status_code(), StatusCode::OK);
+        let inner = resp.into_inner();
+        assert_eq!(
+            inner.headers().get(http::header::CONTENT_TYPE).unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        let body = inner.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body, Bytes::from("hello"));
+    }
+
+    #[cfg(feature = "json")]
+    #[tokio::test]
+    async fn json_sets_content_type_and_body() {
+        let resp = Response::json(&serde_json::json!({"key": "val"}));
+        assert_eq!(resp.status_code(), StatusCode::OK);
+        let inner = resp.into_inner();
+        assert_eq!(
+            inner.headers().get(http::header::CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        let body = inner.into_body().collect().await.unwrap().to_bytes();
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed, serde_json::json!({"key": "val"}));
+    }
+
+    #[test]
+    fn status_overrides() {
+        let resp = Response::ok().status(404);
+        assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn status_invalid_falls_back_to_ok() {
+        let resp = Response::ok().status(9999);
+        assert_eq!(resp.status_code(), StatusCode::OK);
+    }
+
+    #[test]
+    fn header_sets_value() {
+        let resp = Response::ok().header("x-custom", "value");
+        let inner = resp.into_inner();
+        assert_eq!(inner.headers().get("x-custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn header_chain() {
+        let resp = Response::ok()
+            .header("x-one", "1")
+            .header("x-two", "2");
+        let inner = resp.into_inner();
+        assert_eq!(inner.headers().get("x-one").unwrap(), "1");
+        assert_eq!(inner.headers().get("x-two").unwrap(), "2");
+    }
+
+    #[test]
+    fn into_response_identity() {
+        let resp = Response::ok();
+        let resp = resp.into_response();
+        assert_eq!(resp.status_code(), StatusCode::OK);
+    }
+
+    #[test]
+    fn into_response_result_ok() {
+        let result: Result<Response, Response> = Ok(Response::text("ok"));
+        let resp = result.into_response();
+        assert_eq!(resp.status_code(), StatusCode::OK);
+    }
+
+    #[test]
+    fn into_response_result_err() {
+        let result: Result<Response, Response> =
+            Err(Response::new(StatusCode::INTERNAL_SERVER_ERROR, "error"));
+        let resp = result.into_response();
+        assert_eq!(resp.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}

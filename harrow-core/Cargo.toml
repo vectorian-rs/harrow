@@ -20,3 +20,7 @@ hyper = { workspace = true }
 pin-project-lite = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+hyper-util = { workspace = true }

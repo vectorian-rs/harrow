@@ -151,3 +151,208 @@ impl std::fmt::Display for BodyError {
 }
 
 impl std::error::Error for BodyError {}
+
+/// Test utilities for creating `Request` instances.
+///
+/// Uses a tokio duplex stream with hyper HTTP/1 to produce a real
+/// `http::Request<Incoming>`, since `Incoming` has no public constructor.
+#[cfg(test)]
+pub(crate) mod test_util {
+    use super::*;
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+    use std::sync::Mutex;
+    use tokio::io::AsyncWriteExt;
+
+    /// Create a harrow `Request` for testing.
+    pub(crate) async fn make_request(
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<&[u8]>,
+        path_match: PathMatch,
+        state: TypeMap,
+        route_pattern: Option<&str>,
+    ) -> Request {
+        let mut raw = format!("{method} {uri} HTTP/1.1\r\nhost: test\r\n");
+        for &(name, value) in headers {
+            raw.push_str(&format!("{name}: {value}\r\n"));
+        }
+        if let Some(b) = body {
+            raw.push_str(&format!("content-length: {}\r\n", b.len()));
+        }
+        raw.push_str("connection: close\r\n\r\n");
+        let mut raw_bytes = raw.into_bytes();
+        if let Some(b) = body {
+            raw_bytes.extend_from_slice(b);
+        }
+
+        let (client, server) = tokio::io::duplex(4096);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = Mutex::new(Some(tx));
+
+        tokio::spawn(async move {
+            let io = TokioIo::new(server);
+            let _ = http1::Builder::new()
+                .serve_connection(
+                    io,
+                    service_fn(move |req: http::Request<hyper::body::Incoming>| {
+                        let sender = tx.lock().unwrap().take();
+                        async move {
+                            if let Some(tx) = sender {
+                                let _ = tx.send(req);
+                            }
+                            Ok::<_, std::convert::Infallible>(
+                                http::Response::new(Full::new(Bytes::new())),
+                            )
+                        }
+                    }),
+                )
+                .await;
+        });
+
+        let mut client = client;
+        client.write_all(&raw_bytes).await.unwrap();
+
+        // Keep client alive until hyper processes the request and sends it
+        // over the oneshot. Dropping early kills the connection before hyper
+        // can call service_fn.
+        let inner = rx.await.expect("failed to receive test request");
+        drop(client);
+
+        Request::new(
+            inner,
+            path_match,
+            Arc::new(state),
+            route_pattern.map(Arc::from),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::path::PathPattern;
+
+    #[tokio::test]
+    async fn method_returns_request_method() {
+        let req = test_util::make_request(
+            "POST", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert_eq!(req.method(), http::Method::POST);
+    }
+
+    #[tokio::test]
+    async fn path_returns_uri_path() {
+        let req = test_util::make_request(
+            "GET", "/users/42", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert_eq!(req.path(), "/users/42");
+    }
+
+    #[tokio::test]
+    async fn param_returns_captured_value() {
+        let pm = PathPattern::parse("/users/:id").match_path("/users/42").unwrap();
+        let req = test_util::make_request(
+            "GET", "/users/42", &[], None, pm, TypeMap::new(), None,
+        ).await;
+        assert_eq!(req.param("id"), "42");
+    }
+
+    #[tokio::test]
+    async fn param_returns_empty_for_missing() {
+        let req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert_eq!(req.param("nonexistent"), "");
+    }
+
+    #[tokio::test]
+    async fn query_pairs_parses_query() {
+        let req = test_util::make_request(
+            "GET", "/search?q=rust&page=2", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        let pairs = req.query_pairs();
+        assert_eq!(pairs.get("q").unwrap(), "rust");
+        assert_eq!(pairs.get("page").unwrap(), "2");
+    }
+
+    #[tokio::test]
+    async fn query_pairs_empty_for_no_query() {
+        let req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert!(req.query_pairs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn header_returns_value() {
+        let req = test_util::make_request(
+            "GET", "/", &[("x-custom", "hello")], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert_eq!(req.header("x-custom"), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn header_returns_none_for_missing() {
+        let req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert!(req.header("x-nonexistent").is_none());
+    }
+
+    #[tokio::test]
+    async fn state_returns_typed_value() {
+        let mut state = TypeMap::new();
+        state.insert(42u32);
+        let req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), state, None,
+        ).await;
+        assert_eq!(*req.state::<u32>(), 42);
+    }
+
+    #[tokio::test]
+    async fn try_state_returns_none_for_missing() {
+        let req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert!(req.try_state::<u32>().is_none());
+    }
+
+    #[tokio::test]
+    async fn route_pattern_returns_pattern() {
+        let req = test_util::make_request(
+            "GET", "/users/42", &[], None, PathMatch::default(), TypeMap::new(), Some("/users/:id"),
+        ).await;
+        assert_eq!(req.route_pattern(), Some("/users/:id"));
+    }
+
+    #[tokio::test]
+    async fn request_id_initially_none() {
+        let req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        assert!(req.request_id().is_none());
+    }
+
+    #[tokio::test]
+    async fn set_request_id_stores_id() {
+        let mut req = test_util::make_request(
+            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        req.set_request_id("abc-123".to_string());
+        assert_eq!(req.request_id(), Some("abc-123"));
+    }
+
+    #[tokio::test]
+    async fn body_bytes_reads_body() {
+        let req = test_util::make_request(
+            "POST", "/", &[], Some(b"hello body"), PathMatch::default(), TypeMap::new(), None,
+        ).await;
+        let body = req.body_bytes().await.unwrap();
+        assert_eq!(body, bytes::Bytes::from("hello body"));
+    }
+}
