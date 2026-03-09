@@ -139,11 +139,16 @@ async fn dispatch(
         None => {
             // Zero-alloc 405 vs 404 check — PathPattern::matches does not
             // capture params, so no String allocations.
-            let resp = if shared
-                .route_table
-                .any_route_matches_path(hyper_req.uri().path())
-            {
+            let path = hyper_req.uri().path();
+            let resp = if shared.route_table.any_route_matches_path(path) {
+                let methods = shared.route_table.allowed_methods(path);
+                let allow_value = methods
+                    .iter()
+                    .map(|m| m.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 Response::new(http::StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
+                    .header("allow", &allow_value)
             } else {
                 Response::new(http::StatusCode::NOT_FOUND, "not found")
             };

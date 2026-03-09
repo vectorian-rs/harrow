@@ -152,6 +152,20 @@ impl RouteTable {
             .ok()
             .is_some_and(|m| self.method_maps[*m.value].has_any())
     }
+
+    /// Return the HTTP methods registered for the given path.
+    /// Used to populate the `Allow` header on 405 responses (RFC 9110 §15.5.6).
+    pub fn allowed_methods(&self, path: &str) -> Vec<Method> {
+        let matched = match self.router.at(path).ok() {
+            Some(m) => m,
+            None => return Vec::new(),
+        };
+        self.method_maps[*matched.value]
+            .entries
+            .iter()
+            .map(|(m, _)| m.clone())
+            .collect()
+    }
 }
 
 impl Default for RouteTable {
@@ -577,6 +591,25 @@ mod tests {
         let (idx, pm) = table.match_route_idx(&Method::GET, "/files/x").unwrap();
         assert_eq!(idx, 0);
         assert_eq!(pm.get("path"), Some("x"));
+    }
+
+    #[test]
+    fn allowed_methods_returns_registered_methods() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/users"));
+        table.push(make_route(Method::POST, "/users"));
+        table.push(make_route(Method::DELETE, "/users"));
+
+        let mut methods: Vec<String> = table
+            .allowed_methods("/users")
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        methods.sort();
+        assert_eq!(methods, vec!["DELETE", "GET", "POST"]);
+
+        // Non-existent path returns empty
+        assert!(table.allowed_methods("/nope").is_empty());
     }
 
     #[test]

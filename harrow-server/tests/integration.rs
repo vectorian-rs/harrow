@@ -444,6 +444,77 @@ async fn http_get_with_headers(
     (status, headers, body)
 }
 
+/// Simple HTTP/1.1 request with arbitrary method, returns (status, headers, body).
+async fn http_request(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+) -> (u16, Vec<(String, String)>, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).await.unwrap();
+
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let raw = String::from_utf8_lossy(&buf);
+
+    let mut parts = raw.splitn(2, "\r\n\r\n");
+    let head = parts.next().unwrap_or("");
+    let body = parts.next().unwrap_or("").to_string();
+
+    let mut lines = head.lines();
+    let status_line = lines.next().unwrap_or("");
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0);
+
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, ": ");
+            let key = parts.next()?.to_lowercase();
+            let val = parts.next()?.to_string();
+            Some((key, val))
+        })
+        .collect();
+
+    let body = if headers
+        .iter()
+        .any(|(k, v)| k == "transfer-encoding" && v.contains("chunked"))
+    {
+        decode_chunked(&body)
+    } else {
+        body
+    };
+
+    (status, headers, body)
+}
+
+// -- Allow Header on 405 Tests -----------------------------------------------
+
+#[tokio::test]
+async fn returns_405_with_allow_header() {
+    let app = App::new()
+        .get("/users", users_handler)
+        .post("/users", hello)
+        .delete("/users", hello);
+
+    let addr = start_server(app).await;
+
+    // PUT is not registered — should get 405 with Allow listing the three methods.
+    let (status, headers, _) = http_request(addr, "PUT", "/users").await;
+    assert_eq!(status, 405);
+
+    let allow = header_val(&headers, "allow").expect("expected Allow header on 405");
+    let mut methods: Vec<&str> = allow.split(", ").collect();
+    methods.sort();
+    assert_eq!(methods, vec!["DELETE", "GET", "POST"]);
+}
+
 // -- O11y Integration Tests --------------------------------------------------
 
 #[tokio::test]
