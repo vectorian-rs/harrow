@@ -5,9 +5,50 @@ use http::Method;
 
 use crate::handler::{self, HandlerFn};
 use crate::middleware::Middleware;
-use crate::path::PathPattern;
+use crate::path::{to_matchit_pattern, PathMatch, PathPattern};
 use crate::request::Request;
 use crate::response::Response;
+
+// ---------------------------------------------------------------------------
+// MethodMap — maps HTTP methods to route indices for a single path pattern
+// ---------------------------------------------------------------------------
+
+struct MethodMap {
+    entries: Vec<(Method, usize)>,
+}
+
+impl MethodMap {
+    fn new() -> Self {
+        Self {
+            entries: Vec::with_capacity(2),
+        }
+    }
+
+    fn insert(&mut self, method: Method, route_idx: usize) {
+        self.entries.push((method, route_idx));
+    }
+
+    fn lookup(&self, method: &Method) -> Option<usize> {
+        self.entries
+            .iter()
+            .find(|(m, _)| m == method)
+            .map(|(_, idx)| *idx)
+    }
+
+    fn has_any(&self) -> bool {
+        !self.entries.is_empty()
+    }
+}
+
+/// Convert matchit params to a PathMatch, stripping the leading `/` from catch-all values.
+fn params_to_path_match(params: &matchit::Params) -> PathMatch {
+    let mut pm = PathMatch::with_capacity(params.iter().count());
+    for (key, value) in params.iter() {
+        let value = value.strip_prefix('/').unwrap_or(value);
+        pm.push(key.to_string(), value.to_string());
+    }
+    pm
+}
 
 /// Metadata attached to a route, queryable at runtime.
 #[derive(Clone, Debug, Default)]
@@ -32,16 +73,39 @@ pub struct Route {
 }
 
 /// The route table. A `Vec` you can iterate, filter, print, serialize.
+/// Uses matchit's compressed radix trie for O(path_length) lookups.
 pub struct RouteTable {
     routes: Vec<Route>,
+    router: matchit::Router<usize>,
+    method_maps: Vec<MethodMap>,
+    pattern_index: HashMap<String, usize>,
 }
 
 impl RouteTable {
     pub fn new() -> Self {
-        Self { routes: Vec::new() }
+        Self {
+            routes: Vec::new(),
+            router: matchit::Router::new(),
+            method_maps: Vec::new(),
+            pattern_index: HashMap::new(),
+        }
     }
 
     pub fn push(&mut self, route: Route) {
+        let idx = self.routes.len();
+        let matchit_pat = to_matchit_pattern(route.pattern.as_str());
+
+        if let Some(&map_idx) = self.pattern_index.get(&matchit_pat) {
+            self.method_maps[map_idx].insert(route.method.clone(), idx);
+        } else {
+            let map_idx = self.method_maps.len();
+            let mut mm = MethodMap::new();
+            mm.insert(route.method.clone(), idx);
+            self.method_maps.push(mm);
+            self.pattern_index.insert(matchit_pat.clone(), map_idx);
+            self.router.insert(matchit_pat, map_idx).expect("duplicate or conflicting route pattern");
+        }
+
         self.routes.push(route);
     }
 
@@ -62,50 +126,37 @@ impl RouteTable {
         self.routes.get(idx)
     }
 
-    /// Find the first matching route for the given method and path.
-    /// Returns the route and the path match (captured params).
+    /// Find the best matching route for the given method and path.
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn match_route(
         &self,
         method: &Method,
         path: &str,
-    ) -> Option<(&Route, crate::path::PathMatch)> {
-        for route in &self.routes {
-            if &route.method != method {
-                continue;
-            }
-            if let Some(path_match) = route.pattern.match_path(path) {
-                return Some((route, path_match));
-            }
-        }
-        None
+    ) -> Option<(&Route, PathMatch)> {
+        let (idx, path_match) = self.match_route_idx(method, path)?;
+        Some((&self.routes[idx], path_match))
     }
 
-    /// Find the first matching route index for the given method and path.
-    /// Returns the route index and path match. Used by the server to build
-    /// middleware chains that reference the handler through an Arc.
+    /// Find the best matching route index for the given method and path.
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn match_route_idx(
         &self,
         method: &Method,
         path: &str,
-    ) -> Option<(usize, crate::path::PathMatch)> {
-        for (i, route) in self.routes.iter().enumerate() {
-            if &route.method != method {
-                continue;
-            }
-            if let Some(path_match) = route.pattern.match_path(path) {
-                return Some((i, path_match));
-            }
-        }
-        None
+    ) -> Option<(usize, PathMatch)> {
+        let matched = self.router.at(path).ok()?;
+        let map_idx = *matched.value;
+        let route_idx = self.method_maps[map_idx].lookup(method)?;
+        Some((route_idx, params_to_path_match(&matched.params)))
     }
 
     /// Check whether any route (regardless of method) matches this path.
-    /// Zero-alloc — uses `PathPattern::matches` which doesn't capture params.
     /// Used for 405 vs 404 distinction.
     pub fn any_route_matches_path(&self, path: &str) -> bool {
-        self.routes.iter().any(|r| r.pattern.matches(path))
+        self.router
+            .at(path)
+            .ok()
+            .is_some_and(|m| self.method_maps[*m.value].has_any())
     }
 }
 
@@ -391,6 +442,157 @@ impl Group {
             route.middleware = combined;
         }
         routes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handler;
+
+    async fn dummy(_req: Request) -> Response {
+        Response::text("ok")
+    }
+
+    fn make_route(method: Method, pattern: &str) -> Route {
+        Route {
+            method,
+            pattern: PathPattern::parse(pattern),
+            handler: handler::wrap(dummy),
+            metadata: RouteMetadata::default(),
+            middleware: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn trie_exact_match() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/health"));
+        table.push(make_route(Method::GET, "/users"));
+
+        let (idx, _) = table.match_route_idx(&Method::GET, "/health").unwrap();
+        assert_eq!(idx, 0);
+        let (idx, _) = table.match_route_idx(&Method::GET, "/users").unwrap();
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn trie_param_match() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/users/:id"));
+
+        let (idx, pm) = table.match_route_idx(&Method::GET, "/users/42").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(pm.get("id"), Some("42"));
+    }
+
+    #[test]
+    fn trie_glob_match() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/files/*path"));
+
+        let (idx, pm) = table.match_route_idx(&Method::GET, "/files/a/b/c.txt").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(pm.get("path"), Some("a/b/c.txt"));
+    }
+
+    #[test]
+    fn trie_literal_over_param_priority() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/users/:id"));
+        table.push(make_route(Method::GET, "/users/me"));
+
+        // Literal "/users/me" should win even though param was registered first
+        let (idx, _) = table.match_route_idx(&Method::GET, "/users/me").unwrap();
+        assert_eq!(idx, 1);
+
+        // Other values still match param
+        let (idx, pm) = table.match_route_idx(&Method::GET, "/users/42").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(pm.get("id"), Some("42"));
+    }
+
+    #[test]
+    fn trie_method_filtering() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/users"));
+        table.push(make_route(Method::POST, "/users"));
+
+        let (idx, _) = table.match_route_idx(&Method::GET, "/users").unwrap();
+        assert_eq!(idx, 0);
+        let (idx, _) = table.match_route_idx(&Method::POST, "/users").unwrap();
+        assert_eq!(idx, 1);
+        assert!(table.match_route_idx(&Method::DELETE, "/users").is_none());
+    }
+
+    #[test]
+    fn trie_404_miss() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/health"));
+
+        assert!(table.match_route_idx(&Method::GET, "/nope").is_none());
+        assert!(table.match_route_idx(&Method::GET, "/health/extra").is_none());
+    }
+
+    #[test]
+    fn trie_root_path() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/"));
+
+        let (idx, _) = table.match_route_idx(&Method::GET, "/").unwrap();
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn trie_any_route_matches_path() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/users"));
+        table.push(make_route(Method::POST, "/users/:id"));
+
+        assert!(table.any_route_matches_path("/users"));
+        assert!(table.any_route_matches_path("/users/42"));
+        assert!(!table.any_route_matches_path("/nope"));
+    }
+
+    #[test]
+    fn trie_introspection_unchanged() {
+        let mut table = RouteTable::new();
+        assert!(table.is_empty());
+        assert_eq!(table.len(), 0);
+
+        table.push(make_route(Method::GET, "/a"));
+        table.push(make_route(Method::GET, "/b"));
+
+        assert!(!table.is_empty());
+        assert_eq!(table.len(), 2);
+        assert!(table.get(0).is_some());
+        assert!(table.get(2).is_none());
+        assert_eq!(table.iter().count(), 2);
+    }
+
+    #[test]
+    fn trie_glob_zero_segments() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/files/*path"));
+
+        // matchit catch-all requires at least one character; `/files/` does not match.
+        // This matches axum/actix/salvo behavior.
+        assert!(table.match_route_idx(&Method::GET, "/files/").is_none());
+
+        // But a single segment does match
+        let (idx, pm) = table.match_route_idx(&Method::GET, "/files/x").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(pm.get("path"), Some("x"));
+    }
+
+    #[test]
+    fn trie_match_route_returns_route() {
+        let mut table = RouteTable::new();
+        table.push(make_route(Method::GET, "/users/:id"));
+
+        let (route, pm) = table.match_route(&Method::GET, "/users/99").unwrap();
+        assert_eq!(route.pattern.as_str(), "/users/:id");
+        assert_eq!(pm.get("id"), Some("99"));
     }
 }
 

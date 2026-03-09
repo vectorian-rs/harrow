@@ -9,7 +9,7 @@ pub struct PathPattern {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Segment {
+pub(crate) enum Segment {
     /// Exact literal match, e.g. `users`.
     Literal(String),
     /// Named parameter, e.g. `:id`.
@@ -38,6 +38,17 @@ impl PathMatch {
             .find(|(k, _)| k == name)
             .map(|(_, v)| v.as_str())
     }
+
+    pub(crate) fn with_capacity(cap: usize) -> Self {
+        Self {
+            params: Vec::with_capacity(cap),
+        }
+    }
+
+    pub(crate) fn push(&mut self, name: String, value: String) {
+        self.params.push((name, value));
+    }
+
 }
 
 impl PathPattern {
@@ -137,6 +148,23 @@ impl PathPattern {
     pub fn as_arc_str(&self) -> Arc<str> {
         Arc::clone(&self.raw)
     }
+}
+
+/// Translate harrow pattern syntax to matchit syntax: `:id` → `{id}`, `*path` → `{*path}`.
+pub(crate) fn to_matchit_pattern(pattern: &str) -> String {
+    pattern
+        .split('/')
+        .map(|seg| {
+            if let Some(name) = seg.strip_prefix(':') {
+                format!("{{{name}}}")
+            } else if let Some(name) = seg.strip_prefix('*') {
+                format!("{{*{name}}}")
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 impl fmt::Display for PathPattern {

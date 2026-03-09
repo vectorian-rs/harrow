@@ -16,6 +16,7 @@ http = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
+matchit = { workspace = true }
 
 [[bin]]
 name = "harrow-server"
@@ -51,4 +52,8 @@ harness = false
 
 [[bench]]
 name = "axum_echo"
+harness = false
+
+[[bench]]
+name = "matchit_compare"
 harness = false
