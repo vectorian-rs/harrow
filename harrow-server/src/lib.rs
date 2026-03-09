@@ -31,7 +31,15 @@ pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error:
     tracing::info!("harrow listening on {addr}");
 
     loop {
-        let (stream, _remote) = listener.accept().await?;
+        let (stream, _remote) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::error!("accept error: {e}");
+                // Exponential backoff or sleep could be added here to avoid log spam 
+                // during FD exhaustion, but continue is the minimal fix for correctness.
+                continue;
+            }
+        };
         let io = TokioIo::new(stream);
         let shared = Arc::clone(&shared);
 
@@ -75,7 +83,13 @@ pub async fn serve_with_shutdown(
     loop {
         tokio::select! {
             result = listener.accept() => {
-                let (stream, _remote) = result?;
+                let (stream, _remote) = match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        tracing::error!("accept error: {e}");
+                        continue;
+                    }
+                };
                 let io = TokioIo::new(stream);
                 let shared = Arc::clone(&shared);
 
