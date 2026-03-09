@@ -143,8 +143,11 @@ async fn dispatch_safe(
                 .or_else(|| panic_payload.downcast_ref::<&str>().copied())
                 .unwrap_or("unknown panic");
             tracing::error!("handler panicked: {msg}");
-            Response::new(http::StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
-                .into_inner()
+            Response::new(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error",
+            )
+            .into_inner()
         }
     }
 }
