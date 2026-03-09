@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use ro11y::constants::fields;
 use tracing::Instrument;
 
 use harrow_core::middleware::Next;
@@ -27,7 +28,10 @@ pub async fn o11y_middleware(mut req: Request, next: Next) -> Response {
 
     let method = req.method().to_string();
     let path = req.path().to_string();
-    let route = req.route_pattern().unwrap_or_else(|| req.path()).to_string();
+    let route = req
+        .route_pattern()
+        .unwrap_or_else(|| req.path())
+        .to_string();
 
     // Extract request ID from header, or generate a new trace ID.
     let request_id = req
@@ -43,9 +47,9 @@ pub async fn o11y_middleware(mut req: Request, next: Next) -> Response {
     // Create span with trace_id field — OtlpLayer picks this up automatically.
     let span = tracing::info_span!(
         "http_request",
-        trace_id = request_id.as_str(),
-        method = %method,
-        path = %path,
+        { fields::TRACE_ID } = request_id.as_str(),
+        { fields::HTTP_METHOD } = %method,
+        { fields::HTTP_URI } = %path,
         route = %route,
         request_id = %request_id,
     );
@@ -56,11 +60,11 @@ pub async fn o11y_middleware(mut req: Request, next: Next) -> Response {
     let status = resp.status_code().as_u16();
 
     tracing::info!(
-        method = %method,
-        path = %path,
+        { fields::HTTP_METHOD } = %method,
+        { fields::HTTP_URI } = %path,
         route = %route,
-        status = status,
-        duration_ms = duration.as_secs_f64() * 1000.0,
+        { fields::HTTP_STATUS_CODE } = status,
+        { fields::HTTP_LATENCY_MS } = duration.as_secs_f64() * 1000.0,
         request_id = %request_id,
         "request completed"
     );

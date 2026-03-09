@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use harrow_core::middleware::Next;
@@ -8,8 +8,8 @@ use harrow_core::request::Request;
 use harrow_core::response::Response;
 use harrow_core::route::App;
 use harrow_core::timeout::timeout_middleware;
-use harrow_o11y::o11y_middleware::o11y_middleware;
 use harrow_o11y::O11yConfig;
+use harrow_o11y::o11y_middleware::o11y_middleware;
 
 /// Shared counter used as application state.
 struct HitCounter(AtomicUsize);
@@ -110,7 +110,10 @@ async fn http_get(addr: SocketAddr, path: &str) -> (u16, Vec<(String, String)>, 
         .collect();
 
     // Handle chunked transfer encoding: extract the actual body.
-    let body = if headers.iter().any(|(k, v)| k == "transfer-encoding" && v.contains("chunked")) {
+    let body = if headers
+        .iter()
+        .any(|(k, v)| k == "transfer-encoding" && v.contains("chunked"))
+    {
         decode_chunked(&body)
     } else {
         body
@@ -149,9 +152,7 @@ fn header_val<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str
 
 #[tokio::test]
 async fn basic_routing() {
-    let app = App::new()
-        .get("/hello", hello)
-        .get("/greet/:name", greet);
+    let app = App::new().get("/hello", hello).get("/greet/:name", greet);
 
     let addr = start_server(app).await;
 
@@ -267,12 +268,9 @@ async fn user_by_id(req: Request) -> Response {
 
 #[tokio::test]
 async fn group_basic_prefix() {
-    let app = App::new()
-        .get("/health", hello)
-        .group("/api", |g| {
-            g.get("/users", users_handler)
-             .get("/users/:id", user_by_id)
-        });
+    let app = App::new().get("/health", hello).group("/api", |g| {
+        g.get("/users", users_handler).get("/users/:id", user_by_id)
+    });
 
     let addr = start_server(app).await;
 
@@ -298,12 +296,10 @@ async fn group_basic_prefix() {
 
 #[tokio::test]
 async fn group_scoped_middleware() {
-    let app = App::new()
-        .get("/health", hello)
-        .group("/api", |g| {
-            g.middleware(group_tag_middleware)
-             .get("/users", users_handler)
-        });
+    let app = App::new().get("/health", hello).group("/api", |g| {
+        g.middleware(group_tag_middleware)
+            .get("/users", users_handler)
+    });
 
     let addr = start_server(app).await;
 
@@ -328,7 +324,7 @@ async fn group_with_global_middleware() {
         .get("/health", hello)
         .group("/api", |g| {
             g.middleware(group_tag_middleware)
-             .get("/users", users_handler)
+                .get("/users", users_handler)
         });
 
     let addr = start_server(app).await;
@@ -352,15 +348,14 @@ async fn nested_groups() {
     // /api -> group_tag_middleware
     //   /v1 -> inner_tag_middleware
     //     /users -> should have both middlewares
-    let app = App::new()
-        .group("/api", |g| {
-            g.middleware(group_tag_middleware)
-             .get("/health", hello)
-             .group("/v1", |v1| {
-                 v1.middleware(inner_tag_middleware)
-                   .get("/users", users_handler)
-             })
-        });
+    let app = App::new().group("/api", |g| {
+        g.middleware(group_tag_middleware)
+            .get("/health", hello)
+            .group("/v1", |v1| {
+                v1.middleware(inner_tag_middleware)
+                    .get("/users", users_handler)
+            })
+    });
 
     let addr = start_server(app).await;
 
@@ -380,10 +375,7 @@ async fn nested_groups() {
 
 #[tokio::test]
 async fn group_404_and_405() {
-    let app = App::new()
-        .group("/api", |g| {
-            g.post("/submit", hello)
-        });
+    let app = App::new().group("/api", |g| g.post("/submit", hello));
 
     let addr = start_server(app).await;
 
@@ -493,9 +485,7 @@ async fn o11y_middleware_echoes_incoming_request_id() {
 #[tokio::test]
 async fn o11y_middleware_without_config_uses_defaults() {
     // No O11yConfig in state — should not panic, should fall back to defaults.
-    let app = App::new()
-        .middleware(o11y_middleware)
-        .get("/hello", hello);
+    let app = App::new().middleware(o11y_middleware).get("/hello", hello);
 
     let addr = start_server(app).await;
 
@@ -512,8 +502,7 @@ async fn echo_route_pattern(req: Request) -> Response {
 
 #[tokio::test]
 async fn route_pattern_is_template_not_resolved() {
-    let app = App::new()
-        .get("/users/:id", echo_route_pattern);
+    let app = App::new().get("/users/:id", echo_route_pattern);
 
     let addr = start_server(app).await;
 

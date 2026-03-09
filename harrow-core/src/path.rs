@@ -48,7 +48,6 @@ impl PathMatch {
     pub(crate) fn push(&mut self, name: String, value: String) {
         self.params.push((name, value));
     }
-
 }
 
 impl PathPattern {

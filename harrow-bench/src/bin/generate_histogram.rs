@@ -199,10 +199,9 @@ fn bar_chart_svg(scenarios: &[Scenario], title: &str, y_label: &str) -> String {
     .unwrap();
 
     // Title
-    write!(
+    writeln!(
         svg,
-        r#"<text x="{}" y="35" text-anchor="middle" font-size="20" font-weight="600" fill="{TEXT_COLOR}">{}</text>
-"#,
+        r#"<text x="{}" y="35" text-anchor="middle" font-size="20" font-weight="600" fill="{TEXT_COLOR}">{}</text>"#,
         WIDTH / 2.0,
         escape_xml(title)
     )
@@ -227,7 +226,11 @@ fn bar_chart_svg(scenarios: &[Scenario], title: &str, y_label: &str) -> String {
     .unwrap();
 
     // Chart group
-    write!(svg, r#"<g transform="translate({MARGIN_LEFT},{MARGIN_TOP})">"#).unwrap();
+    write!(
+        svg,
+        r#"<g transform="translate({MARGIN_LEFT},{MARGIN_TOP})">"#
+    )
+    .unwrap();
 
     // Grid + Y labels
     for &t in &ticks {

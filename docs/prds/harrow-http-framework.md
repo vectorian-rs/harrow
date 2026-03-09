@@ -84,52 +84,32 @@ Harrow aims to be the framework you reach for when you want Hyper's raw performa
 
 ```rust
 /// A plain async function that handles a request.
-/// No traits to implement, no generics to satisfy.
 type HandlerFn = Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
 
-/// A single route entry. This is a concrete struct, not a trait object graph.
-struct Route {
-    method: Method,
-    pattern: PathPattern,
-    handler: HandlerFn,
-    metadata: RouteMetadata,
-}
-
-/// Metadata attached to each route, queryable at runtime.
-struct RouteMetadata {
-    name: Option<String>,
-    tags: Vec<String>,
-    deprecated: bool,
-    custom: HashMap<String, String>,
-}
-
-/// The route table. It is a Vec you can iterate, filter, print, serialize.
-struct RouteTable {
-    routes: Vec<Route>,
-}
-
-/// The application. Owns the route table, middleware chain, and o11y config.
+/// The application. Owns the route table, global middleware, and state.
+/// Observability is added via middleware and extension traits.
 struct App {
     route_table: RouteTable,
     middleware: Vec<Box<dyn Middleware>>,
-    o11y: O11yConfig,
+    state: crate::state::TypeMap,
 }
 ```
 
 ### 4.2 Handler Signatures
 
-Handlers are plain async functions. Parameter extraction is explicit — the user destructures from `Request`:
+Handlers are plain async functions. Parameter extraction is explicit — the user destructures from `Request` using methods that return `Result`:
 
 ```rust
-async fn get_user(req: Request) -> Response {
-    let user_id: u64 = req.param("id").parse().unwrap_or(0);
-    let db = req.state::<DbPool>();
-    // ...
-    Response::json(&user).status(200)
+async fn get_user(mut req: Request) -> Result<Response, AppError> {
+    let user_id: u64 = req.param("id").parse()?;
+    let db = req.get_state::<DbPool>()?;
+    let user = db.find(user_id).await?;
+    
+    Ok(Response::json(&user))
 }
 ```
 
-No extractor traits. No `FromRequest`. The `Request` wrapper provides ergonomic methods (`param`, `query`, `body_json`, `state`) that return `Result` types with clear errors.
+No "magic" argument injection. No variadic traits. The `Request` wrapper provides ergonomic methods (`param`, `query`, `json`, `get_state`) that return `Result` types with clear errors, ensuring full IDE support and localizing error logic within the handler body.
 
 ### 4.3 Routing API
 
@@ -189,20 +169,14 @@ No `Layer`. No `Service`. No `BoxCloneService`. A middleware is a function with 
 
 Every request automatically gets:
 
-| Feature | Implementation |
-|---------|---------------|
-| **Trace span** | `tracing::info_span!("http_request", method, path, request_id)` wrapping the handler. |
-| **Request ID** | Generated or propagated from `x-request-id` header. Available via `req.request_id()`. |
-| **Latency histogram** | Per-route histogram exported to a metrics registry (`metrics` crate). |
-| **Error counter** | Counts 4xx and 5xx responses per route. |
-| **Route label** | Metrics are tagged with the route pattern (not the resolved path) to avoid cardinality explosion. |
+| Feature | Implementation | Status |
+|---------|---------------|--------|
+| **Trace span** | `tracing::info_span!` wrapping the handler. | Implemented |
+| **Request ID** | Generated or propagated via `x-request-id`. | Implemented |
+| **Latency histogram** | Per-route histogram (`metrics` crate). | **v0.2 Target** |
+| **Error counter** | Counts 4xx/5xx responses per route. | **v0.2 Target** |
 
-Opt-out:
-
-```rust
-let app = App::new()
-    .o11y(O11yConfig::default().disable_metrics());
-```
+Opt-out is handled by not registering the observability middleware.
 
 ### 4.7 Startup Diagnostics
 
@@ -223,15 +197,13 @@ harrow listening on 0.0.0.0:8080
 
 ## 5. Path Matching
 
-A custom, simple path matcher — no regex engine:
+Harrow uses a compressed radix trie (via the `matchit` crate) for O(path_length) lookups. This provides high-performance routing even as the number of routes grows.
 
 | Pattern | Matches | Captures |
 |---------|---------|----------|
 | `/users` | exact | — |
 | `/users/:id` | single segment | `id` |
 | `/files/*path` | tail glob | `path` (rest of URL) |
-
-Path matching is a linear scan of the route table in v0.1. This is fast enough for typical service route counts (< 200 routes). If needed, a radix tree can be added behind the same `RouteTable` interface later.
 
 ---
 
@@ -248,23 +220,24 @@ let app = App::new()
     .get("/users/:id", get_user);
 
 // Inside handler:
-async fn get_user(req: Request) -> Response {
-    let db = req.state::<DbPool>();
+async fn get_user(req: Request) -> Result<Response, AppError> {
+    let db = req.get_state::<DbPool>()?; // Returns Result<&DbPool, Error>
     // ...
 }
 ```
 
-`state::<T>()` returns `&T`. Panics if `T` was not registered — this is a programmer error caught immediately at startup if the handler is exercised by a smoke test. No `Option`, no `Result` — if you need it, register it.
+`get_state::<T>()` returns `Result<&T, Error>`. This ensures that if a dependency is missing, the error is handled gracefully via the `?` operator rather than a runtime panic. `try_state::<T>()` is also available for optional dependencies.
 
 ---
 
 ## 7. Error Handling
 
-Handlers return `Response` directly. For fallible operations, a `into_response` conversion on `Result<Response, E>` where `E: IntoResponse` allows:
+Handlers return `Result<Response, AppError>`. This enables the "Explicit Extractor" pattern and provides clear observability for middleware.
 
 ```rust
-async fn get_user(req: Request) -> Result<Response, AppError> {
-    let id: u64 = req.param("id").parse()?;
+async fn get_user(mut req: Request) -> Result<Response, AppError> {
+    let id: u64 = req.param("id").parse()?; // Error on this specific line
+    let db = req.get_state::<DbPool>()?;
     let user = db.find_user(id).await?;
     Ok(Response::json(&user))
 }
@@ -282,8 +255,10 @@ app.serve_with_shutdown(addr, shutdown_signal()).await?;
 
 On signal, Harrow:
 1. Stops accepting new connections.
-2. Waits for in-flight requests to complete (configurable timeout).
+2. [Target v0.2] Waits for in-flight requests to complete (configurable timeout).
 3. Returns from `serve_with_shutdown`.
+
+Current v0.1 behavior terminates in-flight requests immediately.
 
 ---
 
@@ -474,49 +449,31 @@ Each milestone (v0.1, v0.2, v0.3) has a performance gate:
 
 ## 12. Milestones
 
-### v0.1 — Foundation
+### v0.1 — Foundation (Current)
 - Core types: `App`, `RouteTable`, `Route`, `Request`, `Response`.
-- Path matching with `:param` and `*glob`.
-- Middleware chain.
-- State injection via type-map.
-- Built-in o11y (tracing spans, request ID, latency histogram).
-- Route table printing at startup.
-- Graceful shutdown.
-- Criterion benchmark suite for all three workloads (echo, middleware-chain, full-stack).
-- Baseline flamegraphs for all three workloads, archived as v0.1 reference.
-- `scripts/profile.sh` and `scripts/profile-diff.sh` for local profiling.
-- CI pipeline producing differential flamegraphs on every PR.
-- **Performance gate:** Harrow frames < 5% of total samples in the `echo` flamegraph.
-
-### v0.2 — Ergonomics
+- High-performance routing via `matchit` radix trie.
 - Route groups with shared middleware.
-- `RouteTable` serialization (JSON, TOML) for external tooling.
-- `ProblemDetail` (RFC 9457) error response builder.
-- Query string and form body parsing helpers.
-- Configurable 404/405 responses.
-- **Performance gate:** No workload regresses > 3% vs v0.1. No new hot-path allocations from route groups or serialization (verified via flamegraph diff).
+- Middleware chain with fast-path optimization.
+- State injection via type-map.
+- Initial o11y (tracing spans, request ID).
+- Route table introspection and startup printing.
+- Basic graceful shutdown (no drain).
+- Criterion benchmark suite.
 
-### v0.3 — Production Hardening
-- TLS via rustls.
-- Connection-level timeouts and limits.
-- Request body size limits.
-- Rate limiting middleware (token bucket, shipped as an example).
-- OpenAPI route export (optional feature).
-- **Performance gate:** TLS/timeout frames absent from `echo` flamegraph. Full-stack workload within 5% of v0.2.
+### v0.2 — Ergonomics & Hardening
+- **Explicit Extractors:** `Result`-based handlers and `get_state()`.
+- **Graceful Shutdown Drain:** Wait for in-flight requests to finish.
+- **O11y Metrics:** Latency histograms and error counters.
+- `RouteTable` serialization (JSON, TOML).
+- `ProblemDetail` (RFC 9457) error response builder.
+- Configurable 404/405 responses.
 
 ---
 
-## 13. Open Questions
+## 13. Decisions
 
-1. **Should `HandlerFn` use `Box<dyn ...>` or a thin enum dispatch?** Boxing is simple but incurs an allocation per route registration (one-time cost, negligible). Enum dispatch avoids it but limits extensibility.
-
-2. **Should state injection panic or return `Option`?** Panic is proposed for simplicity. Alternative: return `Option<&T>` or compile-time checking via a builder pattern that encodes registered types.
-
-3. **Is linear route matching acceptable long-term?** For < 200 routes, yes. Beyond that, a radix tree (like `matchit`, which Axum uses) should be considered. Could start with linear and swap the internals without changing the public API.
-
-4. **Should Harrow expose the underlying `hyper::Request`/`hyper::Response`?** Proposed: no. Harrow wraps them to control the API surface. An escape hatch (`req.inner()`) can expose the raw Hyper types for advanced use.
-
-5. **Async trait vs boxed futures for middleware?** With `async fn` in traits stabilized, using `async trait` directly may simplify the middleware signature. Needs benchmarking to confirm there is no overhead regression.
+1. **State Injection:** Prefer `get_state::<T>() -> Result<&T, Error>` for required state, while providing `try_state::<T>() -> Option<&T>` for optional state.
+2. **Path Matching:** Radix tree (`matchit`) is the default implementation from v0.1.
 
 ---
 

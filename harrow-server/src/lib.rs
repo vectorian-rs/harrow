@@ -35,7 +35,7 @@ pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error:
             Ok(conn) => conn,
             Err(e) => {
                 tracing::error!("accept error: {e}");
-                // Exponential backoff or sleep could be added here to avoid log spam 
+                // Exponential backoff or sleep could be added here to avoid log spam
                 // during FD exhaustion, but continue is the minimal fix for correctness.
                 continue;
             }
@@ -151,9 +151,17 @@ async fn dispatch(
         }
     };
 
-    let route = shared.route_table.get(route_idx).expect("valid route index");
+    let route = shared
+        .route_table
+        .get(route_idx)
+        .expect("valid route index");
     let route_pattern = Some(route.pattern.as_arc_str());
-    let req = Request::new(hyper_req, path_match, Arc::clone(&shared.state), route_pattern);
+    let req = Request::new(
+        hyper_req,
+        path_match,
+        Arc::clone(&shared.state),
+        route_pattern,
+    );
 
     // Fast path: no middleware at all — call handler directly, avoid chain setup.
     if shared.middleware.is_empty() && route.middleware.is_empty() {
@@ -182,7 +190,10 @@ fn run_middleware_chain(
     req: Request,
 ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
     let global_len = shared.middleware.len();
-    let route = shared.route_table.get(route_idx).expect("valid route index");
+    let route = shared
+        .route_table
+        .get(route_idx)
+        .expect("valid route index");
     let total = global_len + route.middleware.len();
 
     if mw_idx >= total {
@@ -191,17 +202,15 @@ fn run_middleware_chain(
     } else if mw_idx < global_len {
         // Global middleware.
         let shared_for_next = Arc::clone(&shared);
-        let next = Next::new(move |req| {
-            run_middleware_chain(shared_for_next, route_idx, mw_idx + 1, req)
-        });
+        let next =
+            Next::new(move |req| run_middleware_chain(shared_for_next, route_idx, mw_idx + 1, req));
         shared.middleware[mw_idx].call(req, next)
     } else {
         // Route-level middleware (from groups).
         let route_mw_idx = mw_idx - global_len;
         let shared_for_next = Arc::clone(&shared);
-        let next = Next::new(move |req| {
-            run_middleware_chain(shared_for_next, route_idx, mw_idx + 1, req)
-        });
+        let next =
+            Next::new(move |req| run_middleware_chain(shared_for_next, route_idx, mw_idx + 1, req));
         route.middleware[route_mw_idx].call(req, next)
     }
 }

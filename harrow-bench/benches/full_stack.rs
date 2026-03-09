@@ -1,13 +1,13 @@
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use tokio::sync::Mutex;
 
 use harrow::App;
 use harrow_bench::{
-    header_middleware, noop_middleware, param_state_handler, start_server, text_handler,
-    timing_middleware, BenchClient, HitCounter,
+    BenchClient, HitCounter, header_middleware, noop_middleware, param_state_handler, start_server,
+    text_handler, timing_middleware,
 };
 
 // ---------------------------------------------------------------------------
@@ -76,8 +76,7 @@ fn bench_route_table_scaling(c: &mut Criterion) {
 
                 // Add n-1 decoy routes, then the target last (worst case).
                 for i in 0..n.saturating_sub(1) {
-                    let pattern: &'static str =
-                        Box::leak(format!("/decoy-{i}").into_boxed_str());
+                    let pattern: &'static str = Box::leak(format!("/decoy-{i}").into_boxed_str());
                     app = app.get(pattern, text_handler);
                 }
                 app = app.get("/target/:id", text_handler);

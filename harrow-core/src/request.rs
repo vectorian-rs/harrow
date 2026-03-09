@@ -52,9 +52,7 @@ impl Request {
     /// Get a path parameter captured by the route pattern.
     /// Returns an empty string if the parameter does not exist.
     pub fn param(&self, name: &str) -> &str {
-        self.path_match
-            .get(name)
-            .unwrap_or("")
+        self.path_match.get(name).unwrap_or("")
     }
 
     /// Parse query string into key-value pairs.
@@ -205,9 +203,9 @@ pub(crate) mod test_util {
                             if let Some(tx) = sender {
                                 let _ = tx.send(req);
                             }
-                            Ok::<_, std::convert::Infallible>(
-                                http::Response::new(Full::new(Bytes::new())),
-                            )
+                            Ok::<_, std::convert::Infallible>(http::Response::new(Full::new(
+                                Bytes::new(),
+                            )))
                         }
                     }),
                 )
@@ -240,41 +238,70 @@ mod tests {
     #[tokio::test]
     async fn method_returns_request_method() {
         let req = test_util::make_request(
-            "POST", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "POST",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert_eq!(req.method(), http::Method::POST);
     }
 
     #[tokio::test]
     async fn path_returns_uri_path() {
         let req = test_util::make_request(
-            "GET", "/users/42", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/users/42",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert_eq!(req.path(), "/users/42");
     }
 
     #[tokio::test]
     async fn param_returns_captured_value() {
-        let pm = PathPattern::parse("/users/:id").match_path("/users/42").unwrap();
-        let req = test_util::make_request(
-            "GET", "/users/42", &[], None, pm, TypeMap::new(), None,
-        ).await;
+        let pm = PathPattern::parse("/users/:id")
+            .match_path("/users/42")
+            .unwrap();
+        let req =
+            test_util::make_request("GET", "/users/42", &[], None, pm, TypeMap::new(), None).await;
         assert_eq!(req.param("id"), "42");
     }
 
     #[tokio::test]
     async fn param_returns_empty_for_missing() {
         let req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert_eq!(req.param("nonexistent"), "");
     }
 
     #[tokio::test]
     async fn query_pairs_parses_query() {
         let req = test_util::make_request(
-            "GET", "/search?q=rust&page=2", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/search?q=rust&page=2",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let pairs = req.query_pairs();
         assert_eq!(pairs.get("q").unwrap(), "rust");
         assert_eq!(pairs.get("page").unwrap(), "2");
@@ -283,24 +310,45 @@ mod tests {
     #[tokio::test]
     async fn query_pairs_empty_for_no_query() {
         let req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert!(req.query_pairs().is_empty());
     }
 
     #[tokio::test]
     async fn header_returns_value() {
         let req = test_util::make_request(
-            "GET", "/", &[("x-custom", "hello")], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[("x-custom", "hello")],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert_eq!(req.header("x-custom"), Some("hello"));
     }
 
     #[tokio::test]
     async fn header_returns_none_for_missing() {
         let req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert!(req.header("x-nonexistent").is_none());
     }
 
@@ -308,41 +356,68 @@ mod tests {
     async fn state_returns_typed_value() {
         let mut state = TypeMap::new();
         state.insert(42u32);
-        let req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), state, None,
-        ).await;
+        let req =
+            test_util::make_request("GET", "/", &[], None, PathMatch::default(), state, None).await;
         assert_eq!(*req.state::<u32>(), 42);
     }
 
     #[tokio::test]
     async fn try_state_returns_none_for_missing() {
         let req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert!(req.try_state::<u32>().is_none());
     }
 
     #[tokio::test]
     async fn route_pattern_returns_pattern() {
         let req = test_util::make_request(
-            "GET", "/users/42", &[], None, PathMatch::default(), TypeMap::new(), Some("/users/:id"),
-        ).await;
+            "GET",
+            "/users/42",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            Some("/users/:id"),
+        )
+        .await;
         assert_eq!(req.route_pattern(), Some("/users/:id"));
     }
 
     #[tokio::test]
     async fn request_id_initially_none() {
         let req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         assert!(req.request_id().is_none());
     }
 
     #[tokio::test]
     async fn set_request_id_stores_id() {
         let mut req = test_util::make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         req.set_request_id("abc-123".to_string());
         assert_eq!(req.request_id(), Some("abc-123"));
     }
@@ -350,8 +425,15 @@ mod tests {
     #[tokio::test]
     async fn body_bytes_reads_body() {
         let req = test_util::make_request(
-            "POST", "/", &[], Some(b"hello body"), PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "POST",
+            "/",
+            &[],
+            Some(b"hello body"),
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let body = req.body_bytes().await.unwrap();
         assert_eq!(body, bytes::Bytes::from("hello body"));
     }

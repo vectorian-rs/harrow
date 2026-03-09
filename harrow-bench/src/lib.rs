@@ -4,8 +4,8 @@
 //! so benchmarks measure framework overhead, not client library cost.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use harrow::{App, Next, Request, Response};
 
@@ -22,7 +22,11 @@ pub async fn start_server(app: App) -> SocketAddr {
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
-        harrow::serve_with_shutdown(app, addr, async { let _ = rx.await; }).await.unwrap();
+        harrow::serve_with_shutdown(app, addr, async {
+            let _ = rx.await;
+        })
+        .await
+        .unwrap();
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -111,9 +115,8 @@ impl BenchClient {
     /// Send a GET request and return the status code and body length.
     /// Uses keep-alive — the connection is reused across calls.
     pub async fn get(&mut self, path: &str) -> (u16, usize) {
-        let req = format!(
-            "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"
-        );
+        let req =
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
         self.stream.write_all(req.as_bytes()).await.unwrap();
 
         // Read the response headers.
@@ -180,9 +183,7 @@ impl BenchClient {
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
+    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
 }
 
 fn parse_status(headers: &str) -> u16 {
@@ -203,12 +204,10 @@ enum BodyLength {
 async fn parse_body_length(headers: &str, _extra: &[u8]) -> BodyLength {
     for line in headers.lines() {
         let lower = line.to_lowercase();
-        if lower.starts_with("content-length:") {
-            if let Some(val) = lower.strip_prefix("content-length:") {
-                if let Ok(n) = val.trim().parse() {
-                    return BodyLength::ContentLength(n);
-                }
-            }
+        if let Some(val) = lower.strip_prefix("content-length:")
+            && let Ok(n) = val.trim().parse()
+        {
+            return BodyLength::ContentLength(n);
         }
         if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
             return BodyLength::Chunked;
@@ -221,11 +220,7 @@ fn decode_chunked_len(raw: &[u8]) -> usize {
     let s = std::str::from_utf8(raw).unwrap_or("");
     let mut total = 0;
     let mut remaining = s;
-    loop {
-        let (size_str, rest) = match remaining.split_once("\r\n") {
-            Some(pair) => pair,
-            None => break,
-        };
+    while let Some((size_str, rest)) = remaining.split_once("\r\n") {
         let size = usize::from_str_radix(size_str.trim(), 16).unwrap_or(0);
         if size == 0 {
             break;

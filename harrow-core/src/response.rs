@@ -189,9 +189,7 @@ mod tests {
 
     #[test]
     fn header_chain() {
-        let resp = Response::ok()
-            .header("x-one", "1")
-            .header("x-two", "2");
+        let resp = Response::ok().header("x-one", "1").header("x-two", "2");
         let inner = resp.into_inner();
         assert_eq!(inner.headers().get("x-one").unwrap(), "1");
         assert_eq!(inner.headers().get("x-two").unwrap(), "2");

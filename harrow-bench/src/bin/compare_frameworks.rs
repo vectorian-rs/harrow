@@ -142,12 +142,7 @@ fn wait_for_server(host: &str, port: u16, timeout: Duration) -> Result<(), Strin
     let deadline = Instant::now() + timeout;
     let addr = format!("{host}:{port}");
     while Instant::now() < deadline {
-        if TcpStream::connect_timeout(
-            &addr.parse().unwrap(),
-            Duration::from_millis(200),
-        )
-        .is_ok()
-        {
+        if TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(200)).is_ok() {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
@@ -184,22 +179,24 @@ fn run_bench(
 ) -> Option<Value> {
     let output = Command::new(bench_bin)
         .args([
-            "-u", url, "-M", "-c",
+            "-u",
+            url,
+            "-M",
+            "-c",
             &concurrency.to_string(),
             "-d",
             &duration.to_string(),
             "-w",
             &warmup.to_string(),
-            "-j", "-q",
+            "-j",
+            "-q",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output();
 
     match output {
-        Ok(o) if o.status.success() => {
-            serde_json::from_slice(&o.stdout).ok()
-        }
+        Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).ok(),
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             eprintln!("    bench failed (exit {}): {}", o.status, stderr.trim());
@@ -216,12 +213,7 @@ fn run_bench(
 // Report
 // ---------------------------------------------------------------------------
 
-fn generate_report(
-    results: &BTreeMap<String, Value>,
-    outdir: &Path,
-    duration: u32,
-    warmup: u32,
-) {
+fn generate_report(results: &BTreeMap<String, Value>, outdir: &Path, duration: u32, warmup: u32) {
     let now = chrono_lite_utc();
     let mut report = format!(
         "# Harrow vs Axum — Framework Comparison\n\
@@ -316,7 +308,14 @@ fn main() {
     if !args.remote {
         println!("Building both servers in release mode...");
         let status = Command::new("cargo")
-            .args(["build", "--release", "--bin", "harrow-server", "--bin", "axum-server"])
+            .args([
+                "build",
+                "--release",
+                "--bin",
+                "harrow-server",
+                "--bin",
+                "axum-server",
+            ])
             .status()
             .expect("failed to run cargo build");
         if !status.success() {
@@ -414,9 +413,7 @@ fn main() {
     if let Some(bin) = histogram_bin.filter(|p| p.exists()) {
         println!();
         println!("Generating SVG comparison charts...");
-        let status = Command::new(&bin)
-            .arg(outdir.to_str().unwrap())
-            .status();
+        let status = Command::new(&bin).arg(outdir.to_str().unwrap()).status();
         match status {
             Ok(s) if s.success() => println!("SVG charts written to {}/", outdir.display()),
             _ => eprintln!("generate-histogram failed"),

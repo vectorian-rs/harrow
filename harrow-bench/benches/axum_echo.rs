@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::{Router, Json, extract::Path, routing::get};
-use criterion::{criterion_group, criterion_main, Criterion};
+use axum::{Json, Router, extract::Path, routing::get};
+use criterion::{Criterion, criterion_group, criterion_main};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 

@@ -4,14 +4,13 @@ use std::pin::Pin;
 use crate::request::Request;
 use crate::response::Response;
 
+/// A boxed, `Send` future that resolves to a `Response`.
+type BoxFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+
 /// A middleware function. Receives the request and a `Next` handle to call
 /// the remainder of the chain (or the final handler).
 pub trait Middleware: Send + Sync {
-    fn call(
-        &self,
-        req: Request,
-        next: Next,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send>>;
+    fn call(&self, req: Request, next: Next) -> BoxFuture;
 }
 
 /// Blanket impl: any matching async function is a Middleware.
@@ -20,24 +19,18 @@ where
     F: Fn(Request, Next) -> Fut + Send + Sync,
     Fut: Future<Output = Response> + Send + 'static,
 {
-    fn call(
-        &self,
-        req: Request,
-        next: Next,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> BoxFuture {
         Box::pin((self)(req, next))
     }
 }
 
 /// Handle to the next middleware or the final handler.
 pub struct Next {
-    inner: Box<dyn FnOnce(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send>,
+    inner: Box<dyn FnOnce(Request) -> BoxFuture + Send>,
 }
 
 impl Next {
-    pub fn new(
-        f: impl FnOnce(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + 'static,
-    ) -> Self {
+    pub fn new(f: impl FnOnce(Request) -> BoxFuture + Send + 'static) -> Self {
         Self { inner: Box::new(f) }
     }
 
@@ -58,8 +51,15 @@ mod tests {
     async fn next_calls_inner_handler() {
         let next = Next::new(|_req| Box::pin(async { Response::text("inner") }));
         let req = make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let resp = next.run(req).await;
         assert_eq!(resp.status_code(), http::StatusCode::OK);
     }
@@ -72,8 +72,15 @@ mod tests {
 
         let next = Next::new(|_req| Box::pin(async { Response::text("handler") }));
         let req = make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let resp = Middleware::call(&my_mw, req, next).await;
         assert_eq!(resp.status_code(), http::StatusCode::OK);
     }
@@ -86,8 +93,15 @@ mod tests {
 
         let next = Next::new(|_req| Box::pin(async { Response::ok() }));
         let req = make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let resp = Middleware::call(&add_header, req, next).await;
         let inner = resp.into_inner();
         assert_eq!(inner.headers().get("x-added").unwrap(), "true");
@@ -105,17 +119,30 @@ mod tests {
         // Without auth header — short circuits
         let next = Next::new(|_req| Box::pin(async { Response::ok() }));
         let req = make_request(
-            "GET", "/", &[], None, PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let resp = Middleware::call(&auth_mw, req, next).await;
         assert_eq!(resp.status_code(), http::StatusCode::UNAUTHORIZED);
 
         // With auth header — passes through
         let next = Next::new(|_req| Box::pin(async { Response::ok() }));
         let req = make_request(
-            "GET", "/", &[("authorization", "Bearer tok")], None,
-            PathMatch::default(), TypeMap::new(), None,
-        ).await;
+            "GET",
+            "/",
+            &[("authorization", "Bearer tok")],
+            None,
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
         let resp = Middleware::call(&auth_mw, req, next).await;
         assert_eq!(resp.status_code(), http::StatusCode::OK);
     }

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tokio::sync::Mutex;
 
 use harrow::App;
 use harrow_core::path::PathPattern;
 use http::Method;
 
-use harrow_bench::{build_app_with_routes, start_server, text_handler, json_handler, BenchClient};
+use harrow_bench::{BenchClient, build_app_with_routes, json_handler, start_server, text_handler};
 
 // ---------------------------------------------------------------------------
 // Micro-benchmarks: PathPattern::match_path (no TCP, no IO)
@@ -55,23 +55,19 @@ fn bench_path_matching(c: &mut Criterion) {
 fn bench_route_table_lookup(c: &mut Criterion) {
     let mut group = c.benchmark_group("route_table_lookup");
 
-    for n in [1usize, 10, 50, 100, 200] {
+    for n in [1usize, 10, 50, 100, 200, 500] {
         // Build a route table with n routes where the target is last.
         let app = build_app_with_routes(n);
         let table = app.route_table();
 
-        group.bench_with_input(
-            BenchmarkId::new("worst_case", n),
-            &n,
-            |b, _| {
-                b.iter(|| {
-                    table.match_route_idx(
-                        std::hint::black_box(&Method::GET),
-                        std::hint::black_box("/target/42"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("worst_case", n), &n, |b, _| {
+            b.iter(|| {
+                table.match_route_idx(
+                    std::hint::black_box(&Method::GET),
+                    std::hint::black_box("/target/42"),
+                )
+            })
+        });
     }
 
     // Best case: target is the first route.
@@ -180,5 +176,10 @@ fn bench_echo_tcp(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_path_matching, bench_route_table_lookup, bench_echo_tcp);
+criterion_group!(
+    benches,
+    bench_path_matching,
+    bench_route_table_lookup,
+    bench_echo_tcp
+);
 criterion_main!(benches);

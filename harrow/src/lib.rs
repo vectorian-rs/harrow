@@ -17,16 +17,16 @@ pub use harrow_core::timeout::timeout_middleware;
 
 #[cfg(feature = "o11y")]
 pub mod o11y {
-    pub use harrow_o11y::o11y_middleware::o11y_middleware;
     pub use harrow_o11y::O11yConfig;
+    pub use harrow_o11y::o11y_middleware::o11y_middleware;
 }
 
 #[cfg(feature = "o11y")]
 mod o11y_ext {
     use std::sync::Arc;
 
-    use harrow_o11y::o11y_middleware::o11y_middleware;
     use harrow_o11y::O11yConfig;
+    use harrow_o11y::o11y_middleware::o11y_middleware;
 
     use crate::App;
 
@@ -47,8 +47,12 @@ mod o11y_ext {
                 service_name: config.service_name,
                 service_version: config.service_version,
                 environment: config.environment,
-                otlp_endpoint: config.otlp_endpoint,
+                otlp_traces_endpoint: config.otlp_traces_endpoint,
+                otlp_logs_endpoint: config.otlp_logs_endpoint,
+                otlp_metrics_endpoint: config.otlp_metrics_endpoint,
+                log_to_stderr: true,
                 use_metrics_interval: None,
+                metrics_flush_interval: None,
             });
 
             self.state(Arc::new(TelemetryGuardHolder(guard)))

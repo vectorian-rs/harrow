@@ -20,16 +20,14 @@ pub fn timeout_middleware(duration: Duration) -> TimeoutMiddleware {
 }
 
 impl Middleware for TimeoutMiddleware {
-    fn call(
-        &self,
-        req: Request,
-        next: Next,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
         let duration = self.duration;
         Box::pin(async move {
             match tokio::time::timeout(duration, next.run(req)).await {
                 Ok(response) => response,
-                Err(_elapsed) => Response::new(http::StatusCode::REQUEST_TIMEOUT, "request timeout"),
+                Err(_elapsed) => {
+                    Response::new(http::StatusCode::REQUEST_TIMEOUT, "request timeout")
+                }
             }
         })
     }

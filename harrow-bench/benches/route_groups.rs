@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tokio::sync::Mutex;
 
 use harrow::App;
 use harrow_bench::{
-    group_tag_middleware, header_middleware, noop_middleware, start_server, text_handler,
-    timing_middleware, BenchClient,
+    BenchClient, group_tag_middleware, header_middleware, noop_middleware, start_server,
+    text_handler, timing_middleware,
 };
 
 // ---------------------------------------------------------------------------
@@ -102,20 +102,16 @@ fn bench_group_middleware_depth(c: &mut Criterion) {
             Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
         };
 
-        group.bench_with_input(
-            BenchmarkId::new("noop", depth),
-            &depth,
-            |b, _| {
+        group.bench_with_input(BenchmarkId::new("noop", depth), &depth, |b, _| {
+            let client = Arc::clone(&client);
+            b.to_async(&rt).iter(|| {
                 let client = Arc::clone(&client);
-                b.to_async(&rt).iter(|| {
-                    let client = Arc::clone(&client);
-                    async move {
-                        let (status, _) = client.lock().await.get("/api/ping").await;
-                        debug_assert_eq!(status, 200);
-                    }
-                })
-            },
-        );
+                async move {
+                    let (status, _) = client.lock().await.get("/api/ping").await;
+                    debug_assert_eq!(status, 200);
+                }
+            })
+        });
     }
 
     group.finish();
@@ -156,8 +152,7 @@ fn bench_nested_groups(c: &mut Criterion) {
         let addr = rt.block_on(async {
             let app = App::new().group("/api", |g| {
                 g.middleware(group_tag_middleware).group("/v1", |v1| {
-                    v1.middleware(header_middleware)
-                        .get("/ping", text_handler)
+                    v1.middleware(header_middleware).get("/ping", text_handler)
                 })
             });
             start_server(app).await

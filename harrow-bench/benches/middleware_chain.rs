@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tokio::sync::Mutex;
 
 use harrow::App;
 use harrow_bench::{
-    header_middleware, noop_middleware, start_server, text_handler, timing_middleware, BenchClient,
+    BenchClient, header_middleware, noop_middleware, start_server, text_handler, timing_middleware,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,20 +29,16 @@ fn bench_middleware_depth(c: &mut Criterion) {
             Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
         };
 
-        group.bench_with_input(
-            BenchmarkId::new("noop", depth),
-            &depth,
-            |b, _| {
+        group.bench_with_input(BenchmarkId::new("noop", depth), &depth, |b, _| {
+            let client = Arc::clone(&client);
+            b.to_async(&rt).iter(|| {
                 let client = Arc::clone(&client);
-                b.to_async(&rt).iter(|| {
-                    let client = Arc::clone(&client);
-                    async move {
-                        let (status, _) = client.lock().await.get("/ping").await;
-                        debug_assert_eq!(status, 200);
-                    }
-                })
-            },
-        );
+                async move {
+                    let (status, _) = client.lock().await.get("/ping").await;
+                    debug_assert_eq!(status, 200);
+                }
+            })
+        });
     }
 
     group.finish();

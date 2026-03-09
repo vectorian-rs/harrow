@@ -3,7 +3,7 @@
 //! Identical endpoints to harrow_server — raw framework overhead only.
 //! Usage: axum-server [--bind ADDR] [--port PORT]
 
-use axum::{Router, extract::Path, routing::get, Json};
+use axum::{Json, Router, extract::Path, routing::get};
 use serde_json::{Value, json};
 
 async fn hello() -> &'static str {

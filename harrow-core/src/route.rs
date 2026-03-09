@@ -5,7 +5,7 @@ use http::Method;
 
 use crate::handler::{self, HandlerFn};
 use crate::middleware::Middleware;
-use crate::path::{to_matchit_pattern, PathMatch, PathPattern};
+use crate::path::{PathMatch, PathPattern, to_matchit_pattern};
 use crate::request::Request;
 use crate::response::Response;
 
@@ -103,7 +103,9 @@ impl RouteTable {
             mm.insert(route.method.clone(), idx);
             self.method_maps.push(mm);
             self.pattern_index.insert(matchit_pat.clone(), map_idx);
-            self.router.insert(matchit_pat, map_idx).expect("duplicate or conflicting route pattern");
+            self.router
+                .insert(matchit_pat, map_idx)
+                .expect("duplicate or conflicting route pattern");
         }
 
         self.routes.push(route);
@@ -128,22 +130,14 @@ impl RouteTable {
 
     /// Find the best matching route for the given method and path.
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn match_route(
-        &self,
-        method: &Method,
-        path: &str,
-    ) -> Option<(&Route, PathMatch)> {
+    pub fn match_route(&self, method: &Method, path: &str) -> Option<(&Route, PathMatch)> {
         let (idx, path_match) = self.match_route_idx(method, path)?;
         Some((&self.routes[idx], path_match))
     }
 
     /// Find the best matching route index for the given method and path.
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn match_route_idx(
-        &self,
-        method: &Method,
-        path: &str,
-    ) -> Option<(usize, PathMatch)> {
+    pub fn match_route_idx(&self, method: &Method, path: &str) -> Option<(usize, PathMatch)> {
         let matched = self.router.at(path).ok()?;
         let map_idx = *matched.value;
         let route_idx = self.method_maps[map_idx].lookup(method)?;
@@ -294,13 +288,7 @@ impl App {
     }
 
     /// Consume the builder, returning the parts needed by the server.
-    pub fn into_parts(
-        self,
-    ) -> (
-        RouteTable,
-        Vec<Box<dyn Middleware>>,
-        crate::state::TypeMap,
-    ) {
+    pub fn into_parts(self) -> (RouteTable, Vec<Box<dyn Middleware>>, crate::state::TypeMap) {
         (self.route_table, self.middleware, self.state)
     }
 }
@@ -491,7 +479,9 @@ mod tests {
         let mut table = RouteTable::new();
         table.push(make_route(Method::GET, "/files/*path"));
 
-        let (idx, pm) = table.match_route_idx(&Method::GET, "/files/a/b/c.txt").unwrap();
+        let (idx, pm) = table
+            .match_route_idx(&Method::GET, "/files/a/b/c.txt")
+            .unwrap();
         assert_eq!(idx, 0);
         assert_eq!(pm.get("path"), Some("a/b/c.txt"));
     }
@@ -531,7 +521,11 @@ mod tests {
         table.push(make_route(Method::GET, "/health"));
 
         assert!(table.match_route_idx(&Method::GET, "/nope").is_none());
-        assert!(table.match_route_idx(&Method::GET, "/health/extra").is_none());
+        assert!(
+            table
+                .match_route_idx(&Method::GET, "/health/extra")
+                .is_none()
+        );
     }
 
     #[test]
@@ -595,4 +589,3 @@ mod tests {
         assert_eq!(pm.get("id"), Some("99"));
     }
 }
-
