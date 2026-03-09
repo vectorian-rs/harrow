@@ -1,8 +1,10 @@
 use std::future::Future;
 use std::net::SocketAddr;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use futures_util::FutureExt;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -46,7 +48,7 @@ pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error:
         tokio::spawn(async move {
             let service = service_fn(move |req: http::Request<Incoming>| {
                 let shared = Arc::clone(&shared);
-                async move { Ok::<_, std::convert::Infallible>(dispatch(shared, req).await) }
+                async move { Ok::<_, std::convert::Infallible>(dispatch_safe(shared, req).await) }
             });
 
             if let Err(e) =
@@ -96,7 +98,7 @@ pub async fn serve_with_shutdown(
                 tokio::spawn(async move {
                     let service = service_fn(move |req: http::Request<Incoming>| {
                         let shared = Arc::clone(&shared);
-                        async move { Ok::<_, std::convert::Infallible>(dispatch(shared, req).await) }
+                        async move { Ok::<_, std::convert::Infallible>(dispatch_safe(shared, req).await) }
                     });
 
                     if let Err(e) =
@@ -122,6 +124,29 @@ struct SharedState {
     route_table: RouteTable,
     middleware: Vec<Box<dyn Middleware>>,
     state: Arc<TypeMap>,
+}
+
+/// Catch panics from dispatch and convert to 500 responses.
+async fn dispatch_safe(
+    shared: Arc<SharedState>,
+    hyper_req: http::Request<Incoming>,
+) -> http::Response<Full<Bytes>> {
+    match AssertUnwindSafe(dispatch(shared, hyper_req))
+        .catch_unwind()
+        .await
+    {
+        Ok(response) => response,
+        Err(panic_payload) => {
+            let msg = panic_payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            tracing::error!("handler panicked: {msg}");
+            Response::new(http::StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
+                .into_inner()
+        }
+    }
 }
 
 #[cfg_attr(feature = "profiling", inline(never))]

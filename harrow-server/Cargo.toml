@@ -17,6 +17,7 @@ bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
+futures-util = { workspace = true }
 hyper-util = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

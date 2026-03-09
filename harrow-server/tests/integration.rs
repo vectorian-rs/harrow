@@ -494,6 +494,22 @@ async fn http_request(
     (status, headers, body)
 }
 
+// -- Panic-to-500 Tests -------------------------------------------------------
+
+async fn panicking_handler(_req: Request) -> Response {
+    panic!("handler bug");
+}
+
+#[tokio::test]
+async fn panic_in_handler_returns_500() {
+    let app = App::new().get("/boom", panicking_handler);
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/boom").await;
+    assert_eq!(status, 500);
+    assert_eq!(body, "internal server error");
+}
+
 // -- Allow Header on 405 Tests -----------------------------------------------
 
 #[tokio::test]
