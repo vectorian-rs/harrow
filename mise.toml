@@ -1,8 +1,5 @@
-experimental_monorepo_root = true
-
 [env]
 _.python.venv = { path = ".venv", create = true }
-MISE_EXPERIMENTAL = true
 
 [settings]
 experimental = true
