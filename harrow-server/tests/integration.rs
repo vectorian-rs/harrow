@@ -531,6 +531,33 @@ async fn returns_405_with_allow_header() {
     assert_eq!(methods, vec!["DELETE", "GET", "POST"]);
 }
 
+// -- HEAD Auto-Handling Tests -------------------------------------------------
+
+#[tokio::test]
+async fn head_returns_get_headers_without_body() {
+    let app = App::new().get("/hello", hello);
+    let addr = start_server(app).await;
+
+    // HEAD to a GET-only route should succeed with 200, headers, but empty body.
+    let (status, headers, body) = http_request(addr, "HEAD", "/hello").await;
+    assert_eq!(status, 200);
+    assert!(body.is_empty(), "HEAD response body should be empty");
+    // Content-Type should be preserved from the GET handler.
+    assert!(
+        header_val(&headers, "content-type").is_some(),
+        "HEAD response should preserve Content-Type"
+    );
+}
+
+#[tokio::test]
+async fn head_returns_404_for_unknown_path() {
+    let app = App::new().get("/hello", hello);
+    let addr = start_server(app).await;
+
+    let (status, _, _) = http_request(addr, "HEAD", "/nope").await;
+    assert_eq!(status, 404);
+}
+
 // -- O11y Integration Tests --------------------------------------------------
 
 #[tokio::test]

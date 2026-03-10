@@ -157,17 +157,22 @@ async fn dispatch(
     shared: Arc<SharedState>,
     hyper_req: http::Request<Incoming>,
 ) -> http::Response<Full<Bytes>> {
-    // Borrow method and path directly from hyper_req — no clone, no to_string().
-    // Both borrows end before hyper_req is moved into Request::new().
-    let (route_idx, path_match) = match shared
-        .route_table
-        .match_route_idx(hyper_req.method(), hyper_req.uri().path())
-    {
+    let method = hyper_req.method().clone();
+    let path = hyper_req.uri().path();
+
+    // Try exact method match first, then HEAD→GET fallback (RFC 9110 §9.3.2).
+    let (match_result, is_head_fallback) = match shared.route_table.match_route_idx(&method, path) {
+        Some(found) => (Some(found), false),
+        None if method == http::Method::HEAD => (
+            shared.route_table.match_route_idx(&http::Method::GET, path),
+            true,
+        ),
+        None => (None, false),
+    };
+
+    let (route_idx, path_match) = match match_result {
         Some(found) => found,
         None => {
-            // Zero-alloc 405 vs 404 check — PathPattern::matches does not
-            // capture params, so no String allocations.
-            let path = hyper_req.uri().path();
             let resp = if shared.route_table.any_route_matches_path(path) {
                 let methods = shared.route_table.allowed_methods(path);
                 let allow_value = methods
@@ -197,13 +202,21 @@ async fn dispatch(
     );
 
     // Fast path: no middleware at all — call handler directly, avoid chain setup.
-    if shared.middleware.is_empty() && route.middleware.is_empty() {
-        let resp = (route.handler)(req).await;
-        return resp.into_inner();
-    }
+    let response = if shared.middleware.is_empty() && route.middleware.is_empty() {
+        (route.handler)(req).await.into_inner()
+    } else {
+        run_middleware_chain(shared, route_idx, 0, req)
+            .await
+            .into_inner()
+    };
 
-    let resp = run_middleware_chain(shared, route_idx, 0, req).await;
-    resp.into_inner()
+    // HEAD fallback: strip body, keep status + headers (RFC 9110 §9.3.2).
+    if is_head_fallback {
+        let (parts, _body) = response.into_parts();
+        http::Response::from_parts(parts, Full::new(Bytes::new()))
+    } else {
+        response
+    }
 }
 
 /// Recursively build and execute the middleware chain.
