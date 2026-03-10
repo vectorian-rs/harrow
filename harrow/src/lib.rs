@@ -44,15 +44,16 @@ mod o11y_ext {
     impl AppO11yExt for App {
         fn o11y(self, config: O11yConfig) -> Self {
             let guard = ro11y::init(ro11y::TelemetryConfig {
-                service_name: config.service_name,
-                service_version: config.service_version,
-                environment: config.environment,
-                otlp_traces_endpoint: config.otlp_traces_endpoint,
-                otlp_logs_endpoint: config.otlp_logs_endpoint,
-                otlp_metrics_endpoint: config.otlp_metrics_endpoint,
+                service_name: config.service_name.clone(),
+                service_version: config.service_version.clone(),
+                environment: config.environment.clone(),
+                otlp_traces_endpoint: config.otlp_traces_endpoint.clone(),
+                otlp_logs_endpoint: config.otlp_logs_endpoint.clone(),
+                otlp_metrics_endpoint: config.otlp_metrics_endpoint.clone(),
                 log_to_stderr: true,
                 use_metrics_interval: None,
                 metrics_flush_interval: None,
+                sampling_rate: None,
             });
 
             self.state(Arc::new(TelemetryGuardHolder(guard)))

@@ -22,7 +22,7 @@ async fn main() {
 
     let app = App::new()
         .o11y(O11yConfig {
-            otlp_traces_endpoint: option_env!("OTLP_ENDPOINT"),
+            otlp_traces_endpoint: option_env!("OTLP_ENDPOINT").map(String::from),
             ..O11yConfig::default()
         })
         .middleware(timeout_middleware(Duration::from_secs(30)))

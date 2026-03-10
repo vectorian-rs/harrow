@@ -1406,9 +1406,9 @@ dependencies = [
 
 [[package]]
 name = "ro11y"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4292f9e3a430aeec5a4a878cebbf2b355cac768e687f0bef161285408a310135"
+checksum = "cc8bd20678ca5ddf2c5d09749d6c9686652e958ffdbbc480a3fc08bbb59ff7d2"
 dependencies = [
  "blake3",
  "bytes",
