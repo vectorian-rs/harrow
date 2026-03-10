@@ -20,6 +20,9 @@ fn decode_query_component(s: &str) -> String {
         .into_owned()
 }
 
+/// Default max body size: 2 MiB.
+pub const DEFAULT_MAX_BODY_SIZE: usize = 2 * 1024 * 1024;
+
 /// Harrow's request wrapper. Provides ergonomic access to path params,
 /// query strings, body, and application state without extractor traits.
 pub struct Request {
@@ -28,6 +31,7 @@ pub struct Request {
     state: Arc<TypeMap>,
     route_pattern: Option<Arc<str>>,
     request_id: Option<String>,
+    max_body_size: usize,
 }
 
 impl Request {
@@ -43,7 +47,13 @@ impl Request {
             state,
             route_pattern,
             request_id: None,
+            max_body_size: DEFAULT_MAX_BODY_SIZE,
         }
+    }
+
+    /// Set the maximum body size for this request.
+    pub fn set_max_body_size(&mut self, limit: usize) {
+        self.max_body_size = limit;
     }
 
     /// The HTTP method.
@@ -141,16 +151,45 @@ impl Request {
     }
 
     /// Consume the request and collect the body as bytes.
-    pub async fn body_bytes(self) -> Result<Bytes, hyper::Error> {
+    ///
+    /// Enforces the max body size limit. Returns `BodyError::TooLarge` if
+    /// the body exceeds the configured limit.
+    pub async fn body_bytes(self) -> Result<Bytes, BodyError> {
         use http_body_util::BodyExt;
-        let collected = self.inner.into_body().collect().await?;
-        Ok(collected.to_bytes())
+
+        if self.max_body_size == 0 {
+            // No limit.
+            let collected = self
+                .inner
+                .into_body()
+                .collect()
+                .await
+                .map_err(BodyError::Hyper)?;
+            return Ok(collected.to_bytes());
+        }
+
+        let limited = http_body_util::Limited::new(self.inner.into_body(), self.max_body_size);
+        match limited.collect().await {
+            Ok(collected) => Ok(collected.to_bytes()),
+            Err(e) => {
+                // Limited returns a LengthLimitError if exceeded.
+                if e.downcast_ref::<http_body_util::LengthLimitError>()
+                    .is_some()
+                {
+                    Err(BodyError::TooLarge)
+                } else {
+                    // Re-wrap as a generic body error string since we can't
+                    // recover the original hyper::Error from Box<dyn Error>.
+                    Err(BodyError::BodyRead(e.to_string()))
+                }
+            }
+        }
     }
 
     /// Consume the request and deserialize the JSON body.
     #[cfg(feature = "json")]
     pub async fn body_json<T: serde::de::DeserializeOwned>(self) -> Result<T, BodyError> {
-        let bytes = self.body_bytes().await.map_err(BodyError::Hyper)?;
+        let bytes = self.body_bytes().await?;
         serde_json::from_slice(&bytes).map_err(BodyError::Json)
     }
 
@@ -170,6 +209,10 @@ impl Request {
 #[derive(Debug)]
 pub enum BodyError {
     Hyper(hyper::Error),
+    /// Body exceeded the configured max size limit.
+    TooLarge,
+    /// Generic body read error.
+    BodyRead(String),
     #[cfg(feature = "json")]
     Json(serde_json::Error),
 }
@@ -178,6 +221,8 @@ impl std::fmt::Display for BodyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BodyError::Hyper(e) => write!(f, "body read error: {e}"),
+            BodyError::TooLarge => write!(f, "body too large"),
+            BodyError::BodyRead(e) => write!(f, "body read error: {e}"),
             #[cfg(feature = "json")]
             BodyError::Json(e) => write!(f, "json parse error: {e}"),
         }

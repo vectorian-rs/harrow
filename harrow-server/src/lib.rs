@@ -20,11 +20,12 @@ use std::pin::Pin;
 
 /// Serve the application on the given address.
 pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
-    let (route_table, middleware, state) = app.into_parts();
+    let (route_table, middleware, state, max_body_size) = app.into_parts();
     let shared = Arc::new(SharedState {
         route_table,
         middleware,
         state: Arc::new(state),
+        max_body_size,
     });
 
     print_route_table(&shared.route_table);
@@ -68,11 +69,12 @@ pub async fn serve_with_shutdown(
     addr: SocketAddr,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (route_table, middleware, state) = app.into_parts();
+    let (route_table, middleware, state, max_body_size) = app.into_parts();
     let shared = Arc::new(SharedState {
         route_table,
         middleware,
         state: Arc::new(state),
+        max_body_size,
     });
 
     print_route_table(&shared.route_table);
@@ -124,6 +126,7 @@ struct SharedState {
     route_table: RouteTable,
     middleware: Vec<Box<dyn Middleware>>,
     state: Arc<TypeMap>,
+    max_body_size: usize,
 }
 
 /// Catch panics from dispatch and convert to 500 responses.
@@ -189,17 +192,31 @@ async fn dispatch(
         }
     };
 
+    // Content-Length pre-check: reject obviously oversized bodies before reading.
+    if shared.max_body_size > 0
+        && let Some(cl) = hyper_req
+            .headers()
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+        && cl > shared.max_body_size
+    {
+        return Response::new(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
+            .into_inner();
+    }
+
     let route = shared
         .route_table
         .get(route_idx)
         .expect("valid route index");
     let route_pattern = Some(route.pattern.as_arc_str());
-    let req = Request::new(
+    let mut req = Request::new(
         hyper_req,
         path_match,
         Arc::clone(&shared.state),
         route_pattern,
     );
+    req.set_max_body_size(shared.max_body_size);
 
     // Fast path: no middleware at all — call handler directly, avoid chain setup.
     let response = if shared.middleware.is_empty() && route.middleware.is_empty() {

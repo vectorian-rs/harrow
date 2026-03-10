@@ -179,6 +179,7 @@ pub struct App {
     route_table: RouteTable,
     middleware: Vec<Box<dyn Middleware>>,
     state: crate::state::TypeMap,
+    max_body_size: usize,
 }
 
 impl App {
@@ -187,6 +188,7 @@ impl App {
             route_table: RouteTable::new(),
             middleware: Vec::new(),
             state: crate::state::TypeMap::new(),
+            max_body_size: crate::request::DEFAULT_MAX_BODY_SIZE,
         }
     }
 
@@ -296,14 +298,33 @@ impl App {
         self
     }
 
+    /// Set the maximum request body size in bytes. Default: 2 MiB.
+    /// Set to 0 to disable the limit.
+    pub fn max_body_size(mut self, bytes: usize) -> Self {
+        self.max_body_size = bytes;
+        self
+    }
+
     /// Access the route table for introspection.
     pub fn route_table(&self) -> &RouteTable {
         &self.route_table
     }
 
     /// Consume the builder, returning the parts needed by the server.
-    pub fn into_parts(self) -> (RouteTable, Vec<Box<dyn Middleware>>, crate::state::TypeMap) {
-        (self.route_table, self.middleware, self.state)
+    pub fn into_parts(
+        self,
+    ) -> (
+        RouteTable,
+        Vec<Box<dyn Middleware>>,
+        crate::state::TypeMap,
+        usize,
+    ) {
+        (
+            self.route_table,
+            self.middleware,
+            self.state,
+            self.max_body_size,
+        )
     }
 }
 
