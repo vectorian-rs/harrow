@@ -605,4 +605,103 @@ mod tests {
         let body = req.body_bytes().await.unwrap();
         assert_eq!(body, bytes::Bytes::from("hello body"));
     }
+
+    #[tokio::test]
+    async fn body_bytes_enforces_size_limit() {
+        let mut req = test_util::make_request(
+            "POST",
+            "/",
+            &[],
+            Some(b"this body is too large"),
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
+        req.set_max_body_size(5); // limit to 5 bytes
+        let result = req.body_bytes().await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), BodyError::TooLarge));
+    }
+
+    #[tokio::test]
+    async fn body_bytes_allows_within_limit() {
+        let mut req = test_util::make_request(
+            "POST",
+            "/",
+            &[],
+            Some(b"hello"),
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
+        req.set_max_body_size(100);
+        let body = req.body_bytes().await.unwrap();
+        assert_eq!(body, bytes::Bytes::from("hello"));
+    }
+
+    #[tokio::test]
+    async fn body_bytes_no_limit_when_zero() {
+        let mut req = test_util::make_request(
+            "POST",
+            "/",
+            &[],
+            Some(b"any size is fine"),
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
+        req.set_max_body_size(0); // no limit
+        let body = req.body_bytes().await.unwrap();
+        assert_eq!(body, bytes::Bytes::from("any size is fine"));
+    }
+
+    #[tokio::test]
+    async fn body_bytes_exact_limit_succeeds() {
+        let data = b"12345";
+        let mut req = test_util::make_request(
+            "POST",
+            "/",
+            &[],
+            Some(data),
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
+        req.set_max_body_size(5); // exactly the body size
+        let body = req.body_bytes().await.unwrap();
+        assert_eq!(body, bytes::Bytes::from(&data[..]));
+    }
+
+    #[tokio::test]
+    async fn body_bytes_default_limit_is_2mib() {
+        let req = test_util::make_request(
+            "POST",
+            "/",
+            &[],
+            Some(b"small"),
+            PathMatch::default(),
+            TypeMap::new(),
+            None,
+        )
+        .await;
+        // Default max_body_size should be 2 MiB
+        assert_eq!(req.max_body_size, DEFAULT_MAX_BODY_SIZE);
+        assert_eq!(req.max_body_size, 2 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn body_error_too_large_display() {
+        let err = BodyError::TooLarge;
+        assert_eq!(err.to_string(), "body too large");
+    }
+
+    #[tokio::test]
+    async fn body_error_body_read_display() {
+        let err = BodyError::BodyRead("connection reset".to_string());
+        assert_eq!(err.to_string(), "body read error: connection reset");
+    }
 }
