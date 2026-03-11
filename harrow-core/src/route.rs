@@ -310,6 +310,19 @@ impl App {
         &self.route_table
     }
 
+    /// Create a test client that dispatches requests through the full
+    /// middleware + routing pipeline without TCP.
+    pub fn client(self) -> crate::client::Client {
+        let (route_table, middleware, state, max_body_size) = self.into_parts();
+        let shared = Arc::new(crate::dispatch::SharedState {
+            route_table,
+            middleware,
+            state: Arc::new(state),
+            max_body_size,
+        });
+        crate::client::Client::new(shared)
+    }
+
     /// Consume the builder, returning the parts needed by the server.
     pub fn into_parts(
         self,

@@ -3,11 +3,16 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http::Method;
-use hyper::body::Incoming;
+use http_body_util::combinators::BoxBody;
+use http_body_util::Full;
 use percent_encoding::percent_decode_str;
 
 use crate::path::PathMatch;
 use crate::state::TypeMap;
+
+/// Type-erased request body. Allows constructing requests from any body type
+/// (hyper `Incoming`, `Full<Bytes>`, etc.) without coupling to a specific impl.
+pub type Body = BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Maximum number of query pairs parsed to prevent OOM.
 const MAX_QUERY_PAIRS: usize = 100;
@@ -26,7 +31,7 @@ pub const DEFAULT_MAX_BODY_SIZE: usize = 2 * 1024 * 1024;
 /// Harrow's request wrapper. Provides ergonomic access to path params,
 /// query strings, body, and application state without extractor traits.
 pub struct Request {
-    inner: http::Request<Incoming>,
+    inner: http::Request<Body>,
     path_match: PathMatch,
     state: Arc<TypeMap>,
     route_pattern: Option<Arc<str>>,
@@ -36,7 +41,7 @@ pub struct Request {
 
 impl Request {
     pub fn new(
-        inner: http::Request<Incoming>,
+        inner: http::Request<Body>,
         path_match: PathMatch,
         state: Arc<TypeMap>,
         route_pattern: Option<Arc<str>>,
@@ -157,33 +162,21 @@ impl Request {
     pub async fn body_bytes(self) -> Result<Bytes, BodyError> {
         use http_body_util::BodyExt;
 
-        if self.max_body_size == 0 {
-            // No limit.
-            let collected = self
-                .inner
-                .into_body()
-                .collect()
-                .await
-                .map_err(BodyError::Hyper)?;
-            return Ok(collected.to_bytes());
-        }
+        let limit = self.max_body_size;
+        let mut body = self.inner.into_body();
+        let mut buf = bytes::BytesMut::new();
 
-        let limited = http_body_util::Limited::new(self.inner.into_body(), self.max_body_size);
-        match limited.collect().await {
-            Ok(collected) => Ok(collected.to_bytes()),
-            Err(e) => {
-                // Limited returns a LengthLimitError if exceeded.
-                if e.downcast_ref::<http_body_util::LengthLimitError>()
-                    .is_some()
-                {
-                    Err(BodyError::TooLarge)
-                } else {
-                    // Re-wrap as a generic body error string since we can't
-                    // recover the original hyper::Error from Box<dyn Error>.
-                    Err(BodyError::BodyRead(e.to_string()))
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|e| BodyError::BodyRead(e.to_string()))?;
+            if let Ok(data) = frame.into_data() {
+                if limit > 0 && buf.len() + data.len() > limit {
+                    return Err(BodyError::TooLarge);
                 }
+                buf.extend_from_slice(&data);
             }
         }
+
+        Ok(buf.freeze())
     }
 
     /// Consume the request and deserialize the JSON body.
@@ -198,9 +191,9 @@ impl Request {
         self.inner.headers()
     }
 
-    /// Access the raw inner `http::Request<Incoming>`.
+    /// Access the raw inner `http::Request<Body>`.
     /// Escape hatch for advanced use cases.
-    pub fn inner(&self) -> &http::Request<Incoming> {
+    pub fn inner(&self) -> &http::Request<Body> {
         &self.inner
     }
 }
@@ -208,7 +201,6 @@ impl Request {
 /// Errors that can occur when reading a request body.
 #[derive(Debug)]
 pub enum BodyError {
-    Hyper(hyper::Error),
     /// Body exceeded the configured max size limit.
     TooLarge,
     /// Generic body read error.
@@ -220,7 +212,6 @@ pub enum BodyError {
 impl std::fmt::Display for BodyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BodyError::Hyper(e) => write!(f, "body read error: {e}"),
             BodyError::TooLarge => write!(f, "body too large"),
             BodyError::BodyRead(e) => write!(f, "body read error: {e}"),
             #[cfg(feature = "json")]
@@ -231,20 +222,29 @@ impl std::fmt::Display for BodyError {
 
 impl std::error::Error for BodyError {}
 
+/// Convert a `hyper::body::Incoming` into a harrow `Body`.
+/// Called at the server boundary to box the hyper-specific body type.
+pub fn box_incoming(incoming: hyper::body::Incoming) -> Body {
+    use http_body_util::BodyExt;
+    incoming
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        .boxed()
+}
+
+/// Create a `Body` from a `Full<Bytes>`. Useful for constructing test requests
+/// and for the `Client`.
+pub fn full_body(body: Full<Bytes>) -> Body {
+    use http_body_util::BodyExt;
+    body.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
+        .boxed()
+}
+
 /// Test utilities for creating `Request` instances.
-///
-/// Uses a tokio duplex stream with hyper HTTP/1 to produce a real
-/// `http::Request<Incoming>`, since `Incoming` has no public constructor.
 #[cfg(test)]
 pub(crate) mod test_util {
     use super::*;
     use bytes::Bytes;
     use http_body_util::Full;
-    use hyper::server::conn::http1;
-    use hyper::service::service_fn;
-    use hyper_util::rt::TokioIo;
-    use std::sync::Mutex;
-    use tokio::io::AsyncWriteExt;
 
     /// Create a harrow `Request` for testing.
     pub(crate) async fn make_request(
@@ -256,52 +256,17 @@ pub(crate) mod test_util {
         state: TypeMap,
         route_pattern: Option<&str>,
     ) -> Request {
-        let mut raw = format!("{method} {uri} HTTP/1.1\r\nhost: test\r\n");
+        let body_bytes = body.map(Bytes::copy_from_slice).unwrap_or_default();
+        let mut builder = http::Request::builder().method(method).uri(uri);
         for &(name, value) in headers {
-            raw.push_str(&format!("{name}: {value}\r\n"));
+            builder = builder.header(name, value);
         }
-        if let Some(b) = body {
-            raw.push_str(&format!("content-length: {}\r\n", b.len()));
+        if body.is_some() {
+            builder = builder.header("content-length", body_bytes.len().to_string());
         }
-        raw.push_str("connection: close\r\n\r\n");
-        let mut raw_bytes = raw.into_bytes();
-        if let Some(b) = body {
-            raw_bytes.extend_from_slice(b);
-        }
-
-        let (client, server) = tokio::io::duplex(4096);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let tx = Mutex::new(Some(tx));
-
-        tokio::spawn(async move {
-            let io = TokioIo::new(server);
-            let _ = http1::Builder::new()
-                .serve_connection(
-                    io,
-                    service_fn(move |req: http::Request<hyper::body::Incoming>| {
-                        let sender = tx.lock().unwrap().take();
-                        async move {
-                            if let Some(tx) = sender {
-                                let _ = tx.send(req);
-                            }
-                            Ok::<_, std::convert::Infallible>(http::Response::new(Full::new(
-                                Bytes::new(),
-                            )))
-                        }
-                    }),
-                )
-                .await;
-        });
-
-        let mut client = client;
-        client.write_all(&raw_bytes).await.unwrap();
-
-        // Keep client alive until hyper processes the request and sends it
-        // over the oneshot. Dropping early kills the connection before hyper
-        // can call service_fn.
-        let inner = rx.await.expect("failed to receive test request");
-        drop(client);
-
+        let inner = builder
+            .body(crate::request::full_body(Full::new(body_bytes)))
+            .expect("valid request");
         Request::new(
             inner,
             path_match,

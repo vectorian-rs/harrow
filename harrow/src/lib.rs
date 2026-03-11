@@ -2,6 +2,7 @@
 //!
 //! A thin, macro-free HTTP framework over Hyper with built-in observability.
 
+pub use harrow_core::client::{Client, TestResponse};
 pub use harrow_core::handler;
 pub use harrow_core::middleware::{Middleware, Next};
 pub use harrow_core::path::PathPattern;
