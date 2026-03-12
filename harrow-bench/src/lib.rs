@@ -5,6 +5,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use harrow::{App, Next, Request, Response};
@@ -58,6 +59,51 @@ pub async fn param_state_handler(req: Request) -> Response {
 
 pub struct HitCounter(pub AtomicUsize);
 
+/// ~1KB JSON: object with array of 10 user objects.
+pub static JSON_1KB: LazyLock<serde_json::Value> = LazyLock::new(|| {
+    serde_json::json!({
+        "users": (0..10).map(|i| serde_json::json!({
+            "id": i,
+            "name": format!("User {i}"),
+            "email": format!("user{i}@example.com"),
+            "active": i % 2 == 0,
+            "score": i * 17 + 42,
+            "tags": ["bench", "test", "user"]
+        })).collect::<Vec<_>>()
+    })
+});
+
+/// ~10KB JSON: object with array of 100 user objects.
+pub static JSON_10KB: LazyLock<serde_json::Value> = LazyLock::new(|| {
+    serde_json::json!({
+        "users": (0..100).map(|i| serde_json::json!({
+            "id": i,
+            "name": format!("User {i}"),
+            "email": format!("user{i}@example.com"),
+            "active": i % 2 == 0,
+            "score": i * 17 + 42,
+            "tags": ["bench", "test", "user"]
+        })).collect::<Vec<_>>()
+    })
+});
+
+/// JSON 1KB handler — returns a ~1KB JSON payload.
+pub async fn json_1kb_handler(_req: Request) -> Response {
+    Response::json(&*JSON_1KB)
+}
+
+/// JSON 10KB handler — returns a ~10KB JSON payload.
+pub async fn json_10kb_handler(_req: Request) -> Response {
+    Response::json(&*JSON_10KB)
+}
+
+/// Simulates a handler that does async I/O (e.g. DB query).
+/// Returns JSON 1KB after a 100µs sleep.
+pub async fn simulated_io_handler(_req: Request) -> Response {
+    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+    Response::json(&*JSON_1KB)
+}
+
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
@@ -88,6 +134,64 @@ pub async fn group_tag_middleware(req: Request, next: Next) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrent connection helper
+// ---------------------------------------------------------------------------
+
+/// Run N concurrent keep-alive connections, each sending `reqs_per_conn`
+/// requests before closing. Models realistic traffic where clients maintain
+/// persistent connections and pipeline multiple requests.
+pub async fn run_concurrent(
+    addr: SocketAddr,
+    path: &str,
+    concurrency: usize,
+    reqs_per_conn: usize,
+) {
+    let mut handles = Vec::with_capacity(concurrency);
+    for _ in 0..concurrency {
+        let path = path.to_string();
+        let handle = tokio::spawn(async move {
+            let mut client = BenchClient::connect(addr).await;
+            for _ in 0..reqs_per_conn {
+                let (status, _) = client.get(&path).await;
+                debug_assert!(status == 200 || status == 404);
+            }
+        });
+        handles.push(handle);
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+}
+
+/// Run N concurrent keep-alive connections against a mixed set of routes.
+/// Each connection cycles through `paths` round-robin, sending `reqs_per_conn`
+/// total requests. Models real traffic with varied endpoint weights.
+pub async fn run_concurrent_mixed(
+    addr: SocketAddr,
+    paths: &[&str],
+    concurrency: usize,
+    reqs_per_conn: usize,
+) {
+    let paths: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
+    let mut handles = Vec::with_capacity(concurrency);
+    for conn_id in 0..concurrency {
+        let paths = paths.clone();
+        let handle = tokio::spawn(async move {
+            let mut client = BenchClient::connect(addr).await;
+            for i in 0..reqs_per_conn {
+                let path = &paths[(conn_id + i) % paths.len()];
+                let (status, _) = client.get(path).await;
+                debug_assert!(status == 200 || status == 404);
+            }
+        });
+        handles.push(handle);
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Keep-alive HTTP/1.1 client
 // ---------------------------------------------------------------------------
 
@@ -106,6 +210,10 @@ impl BenchClient {
     pub async fn connect(addr: SocketAddr) -> Self {
         let stream = TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
+        // Avoid TIME_WAIT buildup: RST on close instead of FIN handshake.
+        // Tokio deprecated this but Duration::ZERO means no blocking.
+        #[allow(deprecated)]
+        stream.set_linger(Some(std::time::Duration::ZERO)).unwrap();
         Self {
             stream,
             buf: Vec::with_capacity(4096),

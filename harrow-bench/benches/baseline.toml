@@ -22,6 +22,22 @@ median_ns = 23194.423737637677
 alloc_bytes = 2281
 alloc_count = 12
 
+[benchmarks.echo_json_1kb]
+criterion_path = "echo_tcp/json_1kb_no_mw"
+description = "JSON 1KB echo, 0 middleware, TCP round-trip"
+mean_ns = 0.0
+median_ns = 0.0
+alloc_bytes = 0
+alloc_count = 0
+
+[benchmarks.echo_json_10kb]
+criterion_path = "echo_tcp/json_10kb_no_mw"
+description = "JSON 10KB echo, 0 middleware, TCP round-trip"
+mean_ns = 0.0
+median_ns = 0.0
+alloc_bytes = 0
+alloc_count = 0
+
 [benchmarks.echo_param]
 criterion_path = "echo_tcp/param_no_mw"
 description = "Text echo with path param, 0 middleware, TCP"
@@ -109,6 +125,22 @@ mean_ns = 24993.539798370966
 median_ns = 24921.195457559683
 alloc_bytes = 10238
 alloc_count = 23
+
+[axum_benchmarks.echo_json_1kb]
+criterion_path = "axum_echo_tcp/json_1kb_no_mw"
+description = "JSON 1KB echo, 0 middleware, TCP round-trip (Axum)"
+mean_ns = 0.0
+median_ns = 0.0
+alloc_bytes = 0
+alloc_count = 0
+
+[axum_benchmarks.echo_json_10kb]
+criterion_path = "axum_echo_tcp/json_10kb_no_mw"
+description = "JSON 10KB echo, 0 middleware, TCP round-trip (Axum)"
+mean_ns = 0.0
+median_ns = 0.0
+alloc_bytes = 0
+alloc_count = 0
 
 [axum_benchmarks.echo_param]
 criterion_path = "axum_echo_tcp/param_no_mw"

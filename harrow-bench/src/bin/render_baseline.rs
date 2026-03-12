@@ -178,19 +178,10 @@ fn render(baseline: &Baseline) -> String {
         .map(|(k, _)| *k)
         .collect();
 
-    let has_axum = !comparison_keys.is_empty()
-        && baseline
-            .axum_benchmarks
-            .values()
-            .any(|e| e.mean_ns > 0.0);
-    let has_alloc_data = baseline
-        .benchmarks
-        .values()
-        .any(|e| e.alloc_bytes > 0);
-    let has_axum_alloc = baseline
-        .axum_benchmarks
-        .values()
-        .any(|e| e.alloc_bytes > 0);
+    let has_axum =
+        !comparison_keys.is_empty() && baseline.axum_benchmarks.values().any(|e| e.mean_ns > 0.0);
+    let has_alloc_data = baseline.benchmarks.values().any(|e| e.alloc_bytes > 0);
+    let has_axum_alloc = baseline.axum_benchmarks.values().any(|e| e.alloc_bytes > 0);
 
     // Compute total height.
     let harrow_panel_h =
@@ -351,7 +342,11 @@ fn render(baseline: &Baseline) -> String {
         let cmp_max = comparison_keys
             .iter()
             .flat_map(|k| {
-                let h = baseline.benchmarks.get(*k).map(|e| e.mean_ns).unwrap_or(0.0);
+                let h = baseline
+                    .benchmarks
+                    .get(*k)
+                    .map(|e| e.mean_ns)
+                    .unwrap_or(0.0);
                 let a = baseline
                     .axum_benchmarks
                     .get(*k)

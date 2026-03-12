@@ -47,6 +47,14 @@ path = "src/bin/render_baseline.rs"
 name = "measure-allocs"
 path = "src/bin/measure_allocs.rs"
 
+[[bin]]
+name = "profile-concurrent"
+path = "src/bin/profile_concurrent.rs"
+
+[[bin]]
+name = "stat-bench"
+path = "src/bin/stat_bench.rs"
+
 [[bench]]
 name = "echo"
 harness = false

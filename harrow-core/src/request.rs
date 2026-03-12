@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http::Method;
-use http_body_util::combinators::BoxBody;
 use http_body_util::Full;
+use http_body_util::combinators::BoxBody;
 use percent_encoding::percent_decode_str;
 
 use crate::path::PathMatch;

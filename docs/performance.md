@@ -370,6 +370,82 @@ target/release/axum-server --port 3002
 
 ---
 
+## Statistical Significance Testing
+
+Criterion benchmarks report point estimates with confidence intervals, but these can mislead when comparing two frameworks — a 5% gap may be noise from thermal throttling, OS scheduling, or CPU cache state. The `stat-bench` binary provides rigorous paired statistical testing.
+
+### Methodology
+
+**Paired t-test with bias cancellation.** Each trial measures both Harrow and Axum under identical conditions. The order alternates every trial (even trials: Harrow first; odd trials: Axum first) to cancel systematic bias from thermal effects and cache warming.
+
+Each trial consists of 50 rounds of (32 connections × 10 requests each) = 16,000 requests per trial. Three handler types are tested independently:
+
+| Handler | What it isolates |
+|---------|------------------|
+| **Text** (`"ok"`) | Pure framework overhead — routing, connection handling, response framing |
+| **JSON 1KB** (10-user array) | Framework + serialization cost |
+| **Simulated I/O** (100µs sleep + JSON 1KB) | Framework under async contention (models DB queries) |
+
+### Metrics reported
+
+| Metric | What it means |
+|--------|---------------|
+| **Mean ± StdDev** | Average ms/round for each framework |
+| **Diff** | Paired mean difference (Harrow − Axum), absolute and relative |
+| **95% CI** | Confidence interval for the true mean difference |
+| **t-statistic, p-value** | Paired t-test; p < 0.05 = statistically significant |
+| **Cohen's d** | Effect size: < 0.2 = negligible, 0.2–0.5 = small, 0.5–0.8 = medium, > 0.8 = large |
+| **Required n** | Sample size needed for 80% power to detect the observed effect at α = 0.05 |
+
+### How to run
+
+```bash
+# Default: 30 trials (takes ~5 minutes)
+cargo run --release --bin stat-bench
+
+# Custom trial count
+cargo run --release --bin stat-bench -- 50
+```
+
+Run on AC power with minimal background activity. Battery mode introduces ~30% variance.
+
+### Interpreting results
+
+A result is **actionable** when all three conditions hold:
+
+1. **p < 0.05** — the difference is statistically significant
+2. **Cohen's d > 0.2** — the effect size is at least small (not just detectable noise)
+3. **95% CI excludes zero** — the direction of the difference is certain
+
+If "Required n" exceeds ~100, the effect is too small to matter in practice — even if p < 0.05 with enough trials, a 0.1% difference is not worth optimizing.
+
+### Key findings (Apple Silicon, AC power, 30 trials)
+
+| Handler | Diff | p-value | Cohen's d | Significant? |
+|---------|------|---------|-----------|--------------|
+| Text | ~0% | 0.83 | ~0.04 | No — frameworks are identical |
+| JSON 1KB | −4.3% (Harrow faster) | < 0.0001 | 0.89 (large) | **Yes** — Harrow borrows JSON; Axum clones |
+| Sim I/O | ~−2% | 0.04 | ~0.38 | Marginal — needs ~57 trials for 80% power |
+
+The JSON 1KB advantage is architectural: `Response::json(&*JSON_1KB)` borrows the static value, while Axum's `Json(JSON_1KB.clone())` must clone the `serde_json::Value` tree. For the text and simulated I/O handlers, both frameworks are thin wrappers around the same hyper + tokio stack with no measurable difference.
+
+### Concurrent profiling
+
+For deeper investigation when criterion shows an unexpected gap, use the profiling binary:
+
+```bash
+# Sweep concurrency levels (8, 32, 64, 128, 256) across all handler types
+cargo run --release --bin profile-concurrent
+
+# Profile one framework only (for flamegraph)
+cargo run --release --bin profile-concurrent -- harrow
+cargo run --release --bin profile-concurrent -- axum
+```
+
+This runs 100 rounds per concurrency level with 5-round warmup, printing a formatted comparison table. Use it to confirm whether a criterion gap is real before investigating further.
+
+---
+
 ## Optimization History
 
 ### Hot-path allocation elimination (2026-02-25)

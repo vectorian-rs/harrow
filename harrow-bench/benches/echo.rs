@@ -7,7 +7,10 @@ use harrow::App;
 use harrow_core::path::PathPattern;
 use http::Method;
 
-use harrow_bench::{BenchClient, build_app_with_routes, json_handler, start_server, text_handler};
+use harrow_bench::{
+    BenchClient, build_app_with_routes, json_1kb_handler, json_10kb_handler, json_handler,
+    run_concurrent, run_concurrent_mixed, simulated_io_handler, start_server, text_handler,
+};
 
 // ---------------------------------------------------------------------------
 // Micro-benchmarks: PathPattern::match_path (no TCP, no IO)
@@ -154,6 +157,44 @@ fn bench_echo_tcp(c: &mut Criterion) {
         })
     });
 
+    // JSON 1KB echo, 0 middleware
+    let client = {
+        let addr = rt.block_on(async {
+            let app = App::new().get("/echo", json_1kb_handler);
+            start_server(app).await
+        });
+        Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
+    };
+    group.bench_function("json_1kb_no_mw", |b| {
+        let client = Arc::clone(&client);
+        b.to_async(&rt).iter(|| {
+            let client = Arc::clone(&client);
+            async move {
+                let (status, _) = client.lock().await.get("/echo").await;
+                debug_assert_eq!(status, 200);
+            }
+        })
+    });
+
+    // JSON 10KB echo, 0 middleware
+    let client = {
+        let addr = rt.block_on(async {
+            let app = App::new().get("/echo", json_10kb_handler);
+            start_server(app).await
+        });
+        Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
+    };
+    group.bench_function("json_10kb_no_mw", |b| {
+        let client = Arc::clone(&client);
+        b.to_async(&rt).iter(|| {
+            let client = Arc::clone(&client);
+            async move {
+                let (status, _) = client.lock().await.get("/echo").await;
+                debug_assert_eq!(status, 200);
+            }
+        })
+    });
+
     // 404 path (zero-alloc miss)
     let client = {
         let addr = rt.block_on(async {
@@ -176,10 +217,87 @@ fn bench_echo_tcp(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Concurrent TCP: multiple connections hitting the server simultaneously
+// ---------------------------------------------------------------------------
+
+fn bench_concurrent_tcp(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("concurrent_tcp");
+    group.warm_up_time(std::time::Duration::from_secs(1));
+    group.sample_size(30);
+
+    // --- Keep-alive pipelines: N connections × 10 requests each ---
+
+    let addr_text = rt.block_on(async {
+        let app = App::new().get("/echo", text_handler);
+        start_server(app).await
+    });
+
+    for n in [2, 8, 32] {
+        group.bench_with_input(BenchmarkId::new("text_10rpc", n), &n, |b, &n| {
+            b.to_async(&rt)
+                .iter(|| run_concurrent(addr_text, "/echo", n, 10))
+        });
+    }
+
+    let addr_json = rt.block_on(async {
+        let app = App::new().get("/echo", json_1kb_handler);
+        start_server(app).await
+    });
+
+    for n in [2, 8, 32] {
+        group.bench_with_input(BenchmarkId::new("json_1kb_10rpc", n), &n, |b, &n| {
+            b.to_async(&rt)
+                .iter(|| run_concurrent(addr_json, "/echo", n, 10))
+        });
+    }
+
+    // --- Simulated I/O: 100µs sleep per request (models DB query) ---
+
+    let addr_io = rt.block_on(async {
+        let app = App::new().get("/echo", simulated_io_handler);
+        start_server(app).await
+    });
+
+    for n in [8, 32, 128] {
+        group.bench_with_input(BenchmarkId::new("sim_io_10rpc", n), &n, |b, &n| {
+            b.to_async(&rt)
+                .iter(|| run_concurrent(addr_io, "/echo", n, 10))
+        });
+    }
+
+    // --- Mixed routes: health(text), /echo(json 1kb), /slow(sim I/O) ---
+
+    let addr_mixed = rt.block_on(async {
+        let app = App::new()
+            .get("/health", text_handler)
+            .get("/echo", json_1kb_handler)
+            .get("/slow", simulated_io_handler);
+        start_server(app).await
+    });
+
+    let mixed_paths: &[&str] = &["/health", "/echo", "/echo", "/slow"];
+
+    for n in [8, 32, 128] {
+        group.bench_with_input(BenchmarkId::new("mixed_10rpc", n), &n, |b, &n| {
+            b.to_async(&rt)
+                .iter(|| run_concurrent_mixed(addr_mixed, mixed_paths, n, 10))
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_path_matching,
     bench_route_table_lookup,
-    bench_echo_tcp
+    bench_echo_tcp,
+    bench_concurrent_tcp
 );
 criterion_main!(benches);

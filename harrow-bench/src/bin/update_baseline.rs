@@ -115,11 +115,10 @@ fn main() {
             std::process::exit(1);
         });
 
-        let estimates: CriterionEstimates =
-            serde_json::from_str(&json_text).unwrap_or_else(|e| {
-                eprintln!("  error parsing JSON for {name}: {e}");
-                std::process::exit(1);
-            });
+        let estimates: CriterionEstimates = serde_json::from_str(&json_text).unwrap_or_else(|e| {
+            eprintln!("  error parsing JSON for {name}: {e}");
+            std::process::exit(1);
+        });
 
         entry.mean_ns = estimates.mean.point_estimate;
         entry.median_ns = estimates.median.point_estimate;
@@ -151,11 +150,10 @@ fn main() {
             std::process::exit(1);
         });
 
-        let estimates: CriterionEstimates =
-            serde_json::from_str(&json_text).unwrap_or_else(|e| {
-                eprintln!("  error parsing JSON for {name}: {e}");
-                std::process::exit(1);
-            });
+        let estimates: CriterionEstimates = serde_json::from_str(&json_text).unwrap_or_else(|e| {
+            eprintln!("  error parsing JSON for {name}: {e}");
+            std::process::exit(1);
+        });
 
         entry.mean_ns = estimates.mean.point_estimate;
         entry.median_ns = estimates.median.point_estimate;
@@ -187,14 +185,15 @@ fn main() {
     baseline.resource_budget.total_cpu_percent =
         baseline.resource_budget.weighted_mean_ns * target_ops / 1e9 * 100.0;
 
-    baseline.resource_budget.verdict =
-        if baseline.resource_budget.total_cpu_percent < baseline.resource_budget.cpu_budget_percent {
-            "PASS".to_string()
-        } else if baseline.resource_budget.total_cpu_percent == 0.0 {
-            "PENDING".to_string()
-        } else {
-            "FAIL".to_string()
-        };
+    baseline.resource_budget.verdict = if baseline.resource_budget.total_cpu_percent
+        < baseline.resource_budget.cpu_budget_percent
+    {
+        "PASS".to_string()
+    } else if baseline.resource_budget.total_cpu_percent == 0.0 {
+        "PENDING".to_string()
+    } else {
+        "FAIL".to_string()
+    };
 
     // Write back.
     let output = toml::to_string_pretty(&baseline).unwrap_or_else(|e| {
@@ -209,7 +208,10 @@ fn main() {
 
     println!();
     println!("Updated {updated} benchmarks ({missing} missing criterion data)");
-    println!("Weighted mean: {:.1} ns", baseline.resource_budget.weighted_mean_ns);
+    println!(
+        "Weighted mean: {:.1} ns",
+        baseline.resource_budget.weighted_mean_ns
+    );
     println!(
         "CPU at {} ops/s: {:.2}% (budget: {}%)",
         baseline.resource_budget.target_ops_per_sec,
@@ -226,9 +228,7 @@ fn today() -> String {
         .args(["+%Y-%m-%d"])
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => "unknown".to_string(),
     }
 }

@@ -214,8 +214,7 @@ fn main() {
     // path_match_glob
     let glob = PathPattern::parse("/files/*path");
     let r = measure_sync(|| {
-        let _ =
-            std::hint::black_box(glob.match_path(std::hint::black_box("/files/a/b/c/d.txt")));
+        let _ = std::hint::black_box(glob.match_path(std::hint::black_box("/files/a/b/c/d.txt")));
     });
     println!(
         "  path_match_glob: {} bytes, {} allocs per op",
@@ -241,9 +240,7 @@ fn main() {
     // -- Client-based benchmarks (async, no TCP) --
 
     // echo_text
-    let client = App::new()
-        .get("/echo", harrow_bench::text_handler)
-        .client();
+    let client = App::new().get("/echo", harrow_bench::text_handler).client();
     let r = measure_async(|| {
         let client = &client;
         async move {
@@ -258,9 +255,7 @@ fn main() {
     results.insert("echo_text".into(), r);
 
     // echo_json
-    let client = App::new()
-        .get("/echo", harrow_bench::json_handler)
-        .client();
+    let client = App::new().get("/echo", harrow_bench::json_handler).client();
     let r = measure_async(|| {
         let client = &client;
         async move {
@@ -273,6 +268,40 @@ fn main() {
         r.bytes_per_op, r.count_per_op
     );
     results.insert("echo_json".into(), r);
+
+    // echo_json_1kb
+    let client = App::new()
+        .get("/echo", harrow_bench::json_1kb_handler)
+        .client();
+    let r = measure_async(|| {
+        let client = &client;
+        async move {
+            let resp = client.get("/echo").await;
+            debug_assert_eq!(resp.status(), http::StatusCode::OK);
+        }
+    });
+    println!(
+        "  echo_json_1kb: {} bytes, {} allocs per op",
+        r.bytes_per_op, r.count_per_op
+    );
+    results.insert("echo_json_1kb".into(), r);
+
+    // echo_json_10kb
+    let client = App::new()
+        .get("/echo", harrow_bench::json_10kb_handler)
+        .client();
+    let r = measure_async(|| {
+        let client = &client;
+        async move {
+            let resp = client.get("/echo").await;
+            debug_assert_eq!(resp.status(), http::StatusCode::OK);
+        }
+    });
+    println!(
+        "  echo_json_10kb: {} bytes, {} allocs per op",
+        r.bytes_per_op, r.count_per_op
+    );
+    results.insert("echo_json_10kb".into(), r);
 
     // echo_param
     let client = App::new()
@@ -292,9 +321,7 @@ fn main() {
     results.insert("echo_param".into(), r);
 
     // echo_404
-    let client = App::new()
-        .get("/echo", harrow_bench::text_handler)
-        .client();
+    let client = App::new().get("/echo", harrow_bench::text_handler).client();
     let r = measure_async(|| {
         let client = &client;
         async move {
@@ -471,6 +498,112 @@ fn main() {
             r.bytes_per_op, r.count_per_op
         );
         axum_results.insert("echo_json".into(), r);
+    }
+
+    // Axum echo_json_1kb
+    {
+        use axum::{Json, Router, routing::get};
+        use serde_json::Value;
+
+        async fn json_1kb_handler() -> Json<Value> {
+            Json(harrow_bench::JSON_1KB.clone())
+        }
+
+        disable_tracking();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let addr = rt.block_on(async {
+            let app = Router::new().route("/echo", get(json_1kb_handler));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            addr
+        });
+
+        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
+        let client = std::cell::RefCell::new(client);
+
+        rt.block_on(async {
+            for _ in 0..100 {
+                let _ = client.borrow_mut().get("/echo").await;
+            }
+        });
+
+        reset_tracking();
+        enable_tracking();
+        rt.block_on(async {
+            for _ in 0..ITERATIONS {
+                let _ = client.borrow_mut().get("/echo").await;
+            }
+        });
+        disable_tracking();
+        let (bytes, count) = snapshot();
+        let r = AllocResult {
+            bytes_per_op: bytes / ITERATIONS,
+            count_per_op: count / ITERATIONS,
+        };
+        println!(
+            "  echo_json_1kb: {} bytes, {} allocs per op",
+            r.bytes_per_op, r.count_per_op
+        );
+        axum_results.insert("echo_json_1kb".into(), r);
+    }
+
+    // Axum echo_json_10kb
+    {
+        use axum::{Json, Router, routing::get};
+        use serde_json::Value;
+
+        async fn json_10kb_handler() -> Json<Value> {
+            Json(harrow_bench::JSON_10KB.clone())
+        }
+
+        disable_tracking();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let addr = rt.block_on(async {
+            let app = Router::new().route("/echo", get(json_10kb_handler));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            addr
+        });
+
+        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
+        let client = std::cell::RefCell::new(client);
+
+        rt.block_on(async {
+            for _ in 0..100 {
+                let _ = client.borrow_mut().get("/echo").await;
+            }
+        });
+
+        reset_tracking();
+        enable_tracking();
+        rt.block_on(async {
+            for _ in 0..ITERATIONS {
+                let _ = client.borrow_mut().get("/echo").await;
+            }
+        });
+        disable_tracking();
+        let (bytes, count) = snapshot();
+        let r = AllocResult {
+            bytes_per_op: bytes / ITERATIONS,
+            count_per_op: count / ITERATIONS,
+        };
+        println!(
+            "  echo_json_10kb: {} bytes, {} allocs per op",
+            r.bytes_per_op, r.count_per_op
+        );
+        axum_results.insert("echo_json_10kb".into(), r);
     }
 
     // Axum echo_param
