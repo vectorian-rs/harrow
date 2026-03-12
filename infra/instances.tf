@@ -13,12 +13,6 @@ resource "aws_spot_instance_request" "server" {
   spot_type            = "one-time"
   wait_for_fulfillment = true
 
-  user_data = base64encode(templatefile("${path.module}/user-data.sh", {
-    repo_url = var.repo_url
-    branch   = var.branch
-    role     = "server"
-  }))
-
   root_block_device {
     volume_size = 30
     volume_type = "gp3"
@@ -37,12 +31,6 @@ resource "aws_spot_instance_request" "client" {
 
   spot_type            = "one-time"
   wait_for_fulfillment = true
-
-  user_data = base64encode(templatefile("${path.module}/user-data.sh", {
-    repo_url = var.repo_url
-    branch   = var.branch
-    role     = "client"
-  }))
 
   root_block_device {
     volume_size = 30

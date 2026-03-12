@@ -15,12 +15,12 @@ output "client_public_ip" {
 
 output "ssh_server" {
   description = "SSH command for server instance"
-  value       = "ssh -i ~/.ssh/${var.key_name}.pem ec2-user@${aws_spot_instance_request.server.public_ip}"
+  value       = "ssh -i ~/.ssh/${var.key_name}.pem alpine@${aws_spot_instance_request.server.public_ip}"
 }
 
 output "ssh_client" {
   description = "SSH command for client instance"
-  value       = "ssh -i ~/.ssh/${var.key_name}.pem ec2-user@${aws_spot_instance_request.client.public_ip}"
+  value       = "ssh -i ~/.ssh/${var.key_name}.pem alpine@${aws_spot_instance_request.client.public_ip}"
 }
 
 output "run_harrow_server" {
@@ -36,4 +36,13 @@ output "run_axum_server" {
 output "run_bench" {
   description = "Command to run full comparison (paste on client instance)"
   value       = "cd ~/harrow && SERVER_HOST=${aws_spot_instance_request.server.private_ip} ./scripts/compare-frameworks.sh --remote --bench-bin ~/mcp-load-tester/target/release/bench"
+}
+
+output "ansible_inventory" {
+  description = "Ansible inventory (paste to infra/ansible/inventory.ini)"
+  value = templatefile("${path.module}/ansible/inventory.tpl", {
+    server_ip = aws_spot_instance_request.server.public_ip
+    client_ip = aws_spot_instance_request.client.public_ip
+    key_name  = var.key_name
+  })
 }

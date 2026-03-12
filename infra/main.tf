@@ -17,9 +17,23 @@ provider "aws" {
 # Data sources
 # ---------------------------------------------------------------------------
 
-# Amazon Linux 2023 ARM64 AMI via SSM parameter
-data "aws_ssm_parameter" "al2023_arm64" {
-  name = "/aws/service/al2023/ami-kernel-default/arm64/latest"
+# Alpine Linux ARM64 AMI
+data "aws_ami" "alpine" {
+  most_recent = true
+  owners      = ["538276064493"] # Official Alpine Linux
+
+  filter {
+    name   = "name"
+    values = ["alpine-3.*-aarch64-uefi-tiny-*"]
+  }
+  filter {
+    name   = "architecture"
+    values = ["arm64"]
+  }
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
 }
 
 # Current caller identity (for tagging)
@@ -38,7 +52,7 @@ data "http" "my_ip" {
 locals {
   my_ip = "${trimspace(data.http.my_ip.response_body)}/32"
   az    = data.aws_availability_zones.available.names[0]
-  ami   = data.aws_ssm_parameter.al2023_arm64.value
+  ami   = data.aws_ami.alpine.id
 
   common_tags = {
     Project   = "harrow-bench"

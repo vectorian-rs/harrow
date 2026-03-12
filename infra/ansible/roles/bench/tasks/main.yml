@@ -1,0 +1,68 @@
+- name: Install benchmark packages
+  become: true
+  ansible.builtin.package:
+    name:
+      - docker
+      - git
+      - jq
+      - curl
+      - gcc
+      - g++
+      - make
+      - openssl-dev
+      - pkgconf
+    state: present
+
+- name: Enable Docker at boot
+  become: true
+  ansible.builtin.command: rc-update add docker default
+  changed_when: false
+
+- name: Start Docker
+  become: true
+  ansible.builtin.command: rc-service docker start
+  changed_when: false
+
+- name: Add alpine user to docker group
+  become: true
+  ansible.builtin.user:
+    name: alpine
+    groups: docker
+    append: true
+
+- name: Clone harrow repo
+  ansible.builtin.git:
+    repo: "{{ repo_url | default('https://github.com/l1x/harrow.git') }}"
+    dest: ~/harrow
+    version: "{{ branch | default('main') }}"
+    force: true
+
+- name: Build harrow-server Docker image
+  ansible.builtin.command:
+    cmd: docker build --provenance=false --target harrow-server -t harrow-server .
+    chdir: ~/harrow
+  changed_when: true
+
+- name: Build axum-server Docker image
+  ansible.builtin.command:
+    cmd: docker build --provenance=false --target axum-server -t axum-server .
+    chdir: ~/harrow
+  changed_when: true
+
+- name: Install Rust via rustup
+  ansible.builtin.shell:
+    cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    creates: ~/.cargo/bin/rustc
+
+- name: Clone mcp-load-tester
+  ansible.builtin.git:
+    repo: https://github.com/l1x/mcp-load-tester.git
+    dest: ~/mcp-load-tester
+    version: main
+    force: true
+
+- name: Build mcp-load-tester bench binary
+  ansible.builtin.shell:
+    cmd: source ~/.cargo/env && cargo build --release --bin bench
+    chdir: ~/mcp-load-tester
+    creates: ~/mcp-load-tester/target/release/bench

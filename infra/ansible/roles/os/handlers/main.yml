@@ -1,0 +1,9 @@
+- name: reload sysctl
+  become: true
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-bench.conf
+  changed_when: true
+
+- name: restart chrony
+  become: true
+  ansible.builtin.command: rc-service chronyd restart
+  changed_when: true

@@ -1,0 +1,54 @@
+- name: Deploy sysctl benchmark tuning
+  become: true
+  ansible.builtin.template:
+    src: sysctl.conf.j2
+    dest: /etc/sysctl.d/99-bench.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload sysctl
+
+- name: Deploy file descriptor limits
+  become: true
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.d/99-bench.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install chrony
+  become: true
+  ansible.builtin.package:
+    name: chrony
+    state: present
+
+- name: Deploy chrony configuration
+  become: true
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart chrony
+
+- name: Enable chronyd at boot
+  become: true
+  ansible.builtin.command: rc-update add chronyd default
+  changed_when: false
+
+- name: Start chronyd
+  become: true
+  ansible.builtin.command: rc-service chronyd start
+  changed_when: false
+
+- name: Verify NTP sources
+  become: true
+  ansible.builtin.command: chronyc sources
+  changed_when: false
+  register: chrony_sources
+
+- name: Show NTP sources
+  ansible.builtin.debug:
+    var: chrony_sources.stdout_lines

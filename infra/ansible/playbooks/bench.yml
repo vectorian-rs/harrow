@@ -1,0 +1,5 @@
+- name: Benchmark instances
+  hosts: all
+  roles:
+    - role: os
+    - role: bench
