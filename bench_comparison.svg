@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<rect width="1200" height="600" fill="#ffffff"/>
+<text x="600" y="28" text-anchor="middle" font-size="18" font-weight="600" fill="#212121">Harrow Route Matching: Single-Pass Trie Lookup</text>
+<text x="600" y="48" text-anchor="middle" font-size="12" fill="#616161">Time (ns) vs number of registered routes  |  lower is better</text>
+<text x="225" y="60" text-anchor="middle" font-size="13" font-weight="600" fill="#212121">Param Hit (1 param)</text>
+<line x1="85" y1="308.0" x2="365" y2="308.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="79" y="312.0" text-anchor="end" font-size="10" fill="#616161">0</text>
+<line x1="85" y1="254.7" x2="365" y2="254.7" stroke="#e0e0e0" stroke-width="1"/>
+<text x="79" y="258.7" text-anchor="end" font-size="10" fill="#616161">100</text>
+<line x1="85" y1="201.3" x2="365" y2="201.3" stroke="#e0e0e0" stroke-width="1"/>
+<text x="79" y="205.3" text-anchor="end" font-size="10" fill="#616161">200</text>
+<line x1="85" y1="148.0" x2="365" y2="148.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="79" y="152.0" text-anchor="end" font-size="10" fill="#616161">300</text>
+<line x1="85" y1="94.7" x2="365" y2="94.7" stroke="#e0e0e0" stroke-width="1"/>
+<text x="79" y="98.7" text-anchor="end" font-size="10" fill="#616161">400</text>
+<line x1="85" y1="68" x2="85" y2="308" stroke="#616161" stroke-width="1"/>
+<line x1="85" y1="308" x2="365" y2="308" stroke="#616161" stroke-width="1"/>
+<text x="85.0" y="324" text-anchor="middle" font-size="10" fill="#616161">1</text>
+<line x1="85.0" y1="308" x2="85.0" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="178.3" y="324" text-anchor="middle" font-size="10" fill="#616161">10</text>
+<line x1="178.3" y1="308" x2="178.3" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="271.7" y="324" text-anchor="middle" font-size="10" fill="#616161">100</text>
+<line x1="271.7" y1="308" x2="271.7" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="365.0" y="324" text-anchor="middle" font-size="10" fill="#616161">1000</text>
+<line x1="365.0" y1="308" x2="365.0" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="225" y="338" text-anchor="middle" font-size="10" fill="#616161">routes</text>
+<text x="49" y="188" text-anchor="middle" font-size="10" fill="#616161" transform="rotate(-90,49,188)">ns / lookup</text>
+<polyline points="85.0,249.0 178.3,247.0 243.6,241.0 271.7,230.1 299.8,205.3 336.9,149.9 365.0,73.4" fill="none" stroke="#b71c1c" stroke-width="2" stroke-dasharray="6,3"/>
+  <circle cx="85.0" cy="249.0" r="3" fill="#b71c1c"/>
+    <circle cx="178.3" cy="247.0" r="3" fill="#b71c1c"/>
+    <circle cx="243.6" cy="241.0" r="3" fill="#b71c1c"/>
+    <circle cx="271.7" cy="230.1" r="3" fill="#b71c1c"/>
+    <circle cx="299.8" cy="205.3" r="3" fill="#b71c1c"/>
+    <circle cx="336.9" cy="149.9" r="3" fill="#b71c1c"/>
+    <circle cx="365.0" cy="73.4" r="3" fill="#b71c1c"/>
+<polyline points="85.0,267.5 178.3,265.2 243.6,257.5 271.7,247.8 299.8,223.2 336.9,170.9 365.0,91.5" fill="none" stroke="#1565c0" stroke-width="2"/>
+  <circle cx="85.0" cy="267.5" r="3" fill="#1565c0"/>
+    <circle cx="178.3" cy="265.2" r="3" fill="#1565c0"/>
+    <circle cx="243.6" cy="257.5" r="3" fill="#1565c0"/>
+    <circle cx="271.7" cy="247.8" r="3" fill="#1565c0"/>
+    <circle cx="299.8" cy="223.2" r="3" fill="#1565c0"/>
+    <circle cx="336.9" cy="170.9" r="3" fill="#1565c0"/>
+    <circle cx="365.0" cy="91.5" r="3" fill="#1565c0"/>
+<polyline points="85.0,292.3 178.3,288.2 243.6,288.2 271.7,288.2 299.8,288.2 336.9,288.2 365.0,298.8" fill="none" stroke="#2e7d32" stroke-width="2"/>
+  <circle cx="85.0" cy="292.3" r="3" fill="#2e7d32"/>
+    <circle cx="178.3" cy="288.2" r="3" fill="#2e7d32"/>
+    <circle cx="243.6" cy="288.2" r="3" fill="#2e7d32"/>
+    <circle cx="271.7" cy="288.2" r="3" fill="#2e7d32"/>
+    <circle cx="299.8" cy="288.2" r="3" fill="#2e7d32"/>
+    <circle cx="336.9" cy="288.2" r="3" fill="#2e7d32"/>
+    <circle cx="365.0" cy="298.8" r="3" fill="#2e7d32"/>
+<text x="615" y="60" text-anchor="middle" font-size="13" font-weight="600" fill="#212121">Exact Hit (0 params)</text>
+<line x1="475" y1="308.0" x2="755" y2="308.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="469" y="312.0" text-anchor="end" font-size="10" fill="#616161">0</text>
+<line x1="475" y1="248.0" x2="755" y2="248.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="469" y="252.0" text-anchor="end" font-size="10" fill="#616161">30</text>
+<line x1="475" y1="188.0" x2="755" y2="188.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="469" y="192.0" text-anchor="end" font-size="10" fill="#616161">60</text>
+<line x1="475" y1="128.0" x2="755" y2="128.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="469" y="132.0" text-anchor="end" font-size="10" fill="#616161">90</text>
+<line x1="475" y1="68.0" x2="755" y2="68.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="469" y="72.0" text-anchor="end" font-size="10" fill="#616161">120</text>
+<line x1="475" y1="68" x2="475" y2="308" stroke="#616161" stroke-width="1"/>
+<line x1="475" y1="308" x2="755" y2="308" stroke="#616161" stroke-width="1"/>
+<text x="475.0" y="324" text-anchor="middle" font-size="10" fill="#616161">1</text>
+<line x1="475.0" y1="308" x2="475.0" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="568.3" y="324" text-anchor="middle" font-size="10" fill="#616161">10</text>
+<line x1="568.3" y1="308" x2="568.3" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="661.7" y="324" text-anchor="middle" font-size="10" fill="#616161">100</text>
+<line x1="661.7" y1="308" x2="661.7" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="755.0" y="324" text-anchor="middle" font-size="10" fill="#616161">1000</text>
+<line x1="755.0" y1="308" x2="755.0" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="615" y="338" text-anchor="middle" font-size="10" fill="#616161">routes</text>
+<text x="439" y="188" text-anchor="middle" font-size="10" fill="#616161" transform="rotate(-90,439,188)">ns / lookup</text>
+<polyline points="475.0,81.0 568.3,207.4 633.6,207.2 661.7,204.6 689.8,208.3 726.9,208.2 755.0,209.6" fill="none" stroke="#b71c1c" stroke-width="2" stroke-dasharray="6,3"/>
+  <circle cx="475.0" cy="81.0" r="3" fill="#b71c1c"/>
+    <circle cx="568.3" cy="207.4" r="3" fill="#b71c1c"/>
+    <circle cx="633.6" cy="207.2" r="3" fill="#b71c1c"/>
+    <circle cx="661.7" cy="204.6" r="3" fill="#b71c1c"/>
+    <circle cx="689.8" cy="208.3" r="3" fill="#b71c1c"/>
+    <circle cx="726.9" cy="208.2" r="3" fill="#b71c1c"/>
+    <circle cx="755.0" cy="209.6" r="3" fill="#b71c1c"/>
+<polyline points="475.0,155.2 568.3,241.6 633.6,241.6 661.7,241.2 689.8,241.4 726.9,241.6 755.0,243.6" fill="none" stroke="#1565c0" stroke-width="2"/>
+  <circle cx="475.0" cy="155.2" r="3" fill="#1565c0"/>
+    <circle cx="568.3" cy="241.6" r="3" fill="#1565c0"/>
+    <circle cx="633.6" cy="241.6" r="3" fill="#1565c0"/>
+    <circle cx="661.7" cy="241.2" r="3" fill="#1565c0"/>
+    <circle cx="689.8" cy="241.4" r="3" fill="#1565c0"/>
+    <circle cx="726.9" cy="241.6" r="3" fill="#1565c0"/>
+    <circle cx="755.0" cy="243.6" r="3" fill="#1565c0"/>
+<polyline points="475.0,284.0 568.3,269.8 633.6,264.8 661.7,261.6 689.8,260.8 726.9,261.0 755.0,263.2" fill="none" stroke="#2e7d32" stroke-width="2"/>
+  <circle cx="475.0" cy="284.0" r="3" fill="#2e7d32"/>
+    <circle cx="568.3" cy="269.8" r="3" fill="#2e7d32"/>
+    <circle cx="633.6" cy="264.8" r="3" fill="#2e7d32"/>
+    <circle cx="661.7" cy="261.6" r="3" fill="#2e7d32"/>
+    <circle cx="689.8" cy="260.8" r="3" fill="#2e7d32"/>
+    <circle cx="726.9" cy="261.0" r="3" fill="#2e7d32"/>
+    <circle cx="755.0" cy="263.2" r="3" fill="#2e7d32"/>
+<text x="1005" y="60" text-anchor="middle" font-size="13" font-weight="600" fill="#212121">404 Miss</text>
+<line x1="865" y1="308.0" x2="1145" y2="308.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="859" y="312.0" text-anchor="end" font-size="10" fill="#616161">0</text>
+<line x1="865" y1="248.0" x2="1145" y2="248.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="859" y="252.0" text-anchor="end" font-size="10" fill="#616161">100</text>
+<line x1="865" y1="188.0" x2="1145" y2="188.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="859" y="192.0" text-anchor="end" font-size="10" fill="#616161">200</text>
+<line x1="865" y1="128.0" x2="1145" y2="128.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="859" y="132.0" text-anchor="end" font-size="10" fill="#616161">300</text>
+<line x1="865" y1="68.0" x2="1145" y2="68.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="859" y="72.0" text-anchor="end" font-size="10" fill="#616161">400</text>
+<line x1="865" y1="68" x2="865" y2="308" stroke="#616161" stroke-width="1"/>
+<line x1="865" y1="308" x2="1145" y2="308" stroke="#616161" stroke-width="1"/>
+<text x="865.0" y="324" text-anchor="middle" font-size="10" fill="#616161">1</text>
+<line x1="865.0" y1="308" x2="865.0" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="958.3" y="324" text-anchor="middle" font-size="10" fill="#616161">10</text>
+<line x1="958.3" y1="308" x2="958.3" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="1051.7" y="324" text-anchor="middle" font-size="10" fill="#616161">100</text>
+<line x1="1051.7" y1="308" x2="1051.7" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="1145.0" y="324" text-anchor="middle" font-size="10" fill="#616161">1000</text>
+<line x1="1145.0" y1="308" x2="1145.0" y2="312" stroke="#616161" stroke-width="1"/>
+<text x="1005" y="338" text-anchor="middle" font-size="10" fill="#616161">routes</text>
+<text x="829" y="188" text-anchor="middle" font-size="10" fill="#616161" transform="rotate(-90,829,188)">ns / lookup</text>
+<polyline points="865.0,283.5 958.3,280.6 1023.6,273.5 1051.7,262.9 1079.8,235.1 1116.9,174.0 1145.0,84.6" fill="none" stroke="#b71c1c" stroke-width="2" stroke-dasharray="6,3"/>
+  <circle cx="865.0" cy="283.5" r="3" fill="#b71c1c"/>
+    <circle cx="958.3" cy="280.6" r="3" fill="#b71c1c"/>
+    <circle cx="1023.6" cy="273.5" r="3" fill="#b71c1c"/>
+    <circle cx="1051.7" cy="262.9" r="3" fill="#b71c1c"/>
+    <circle cx="1079.8" cy="235.1" r="3" fill="#b71c1c"/>
+    <circle cx="1116.9" cy="174.0" r="3" fill="#b71c1c"/>
+    <circle cx="1145.0" cy="84.6" r="3" fill="#b71c1c"/>
+<polyline points="865.0,289.3 958.3,287.1 1023.6,279.2 1051.7,269.2 1079.8,240.0 1116.9,180.2 1145.0,90.6" fill="none" stroke="#1565c0" stroke-width="2"/>
+  <circle cx="865.0" cy="289.3" r="3" fill="#1565c0"/>
+    <circle cx="958.3" cy="287.1" r="3" fill="#1565c0"/>
+    <circle cx="1023.6" cy="279.2" r="3" fill="#1565c0"/>
+    <circle cx="1051.7" cy="269.2" r="3" fill="#1565c0"/>
+    <circle cx="1079.8" cy="240.0" r="3" fill="#1565c0"/>
+    <circle cx="1116.9" cy="180.2" r="3" fill="#1565c0"/>
+    <circle cx="1145.0" cy="90.6" r="3" fill="#1565c0"/>
+<polyline points="865.0,304.6 958.3,303.4 1023.6,303.4 1051.7,303.4 1079.8,303.4 1116.9,303.4 1145.0,303.6" fill="none" stroke="#2e7d32" stroke-width="2"/>
+  <circle cx="865.0" cy="304.6" r="3" fill="#2e7d32"/>
+    <circle cx="958.3" cy="303.4" r="3" fill="#2e7d32"/>
+    <circle cx="1023.6" cy="303.4" r="3" fill="#2e7d32"/>
+    <circle cx="1051.7" cy="303.4" r="3" fill="#2e7d32"/>
+    <circle cx="1079.8" cy="303.4" r="3" fill="#2e7d32"/>
+    <circle cx="1116.9" cy="303.4" r="3" fill="#2e7d32"/>
+    <circle cx="1145.0" cy="303.6" r="3" fill="#2e7d32"/>
+<line x1="320" y1="350" x2="344" y2="350" stroke="#b71c1c" stroke-width="2" stroke-dasharray="6,3"/>
+<circle cx="332" cy="350" r="3" fill="#b71c1c"/>
+<text x="350" y="354" font-size="12" fill="#212121">Old Harrow (double-pass)</text>
+<line x1="520" y1="350" x2="544" y2="350" stroke="#1565c0" stroke-width="2"/>
+<circle cx="532" cy="350" r="3" fill="#1565c0"/>
+<text x="550" y="354" font-size="12" fill="#212121">New Harrow (single-pass)</text>
+<line x1="720" y1="350" x2="744" y2="350" stroke="#2e7d32" stroke-width="2"/>
+<circle cx="732" cy="350" r="3" fill="#2e7d32"/>
+<text x="750" y="354" font-size="12" fill="#212121">matchit</text>
+<text x="600" y="385" text-anchor="middle" font-size="14" font-weight="600" fill="#212121">Heap Allocations Per Lookup</text>
+<rect x="300" y="398" width="620" height="28" fill="#f5f5f5" rx="2"/>
+<text x="306" y="418" text-anchor="start" font-size="12" font-weight="600" fill="#212121">Scenario</text>
+<text x="570" y="418" text-anchor="middle" font-size="12" font-weight="600" fill="#212121">Old Harrow</text>
+<text x="710" y="418" text-anchor="middle" font-size="12" font-weight="600" fill="#212121">New Harrow</text>
+<text x="850" y="418" text-anchor="middle" font-size="12" font-weight="600" fill="#212121">matchit</text>
+<line x1="300" y1="427" x2="920" y2="427" stroke="#e0e0e0" stroke-width="1"/>
+<text x="306" y="446" text-anchor="start" font-size="12" font-weight="600" fill="#212121">Exact hit (0 params)</text>
+<text x="570" y="446" text-anchor="middle" font-size="12" fill="#b71c1c">2 allocs</text>
+<text x="710" y="446" text-anchor="middle" font-size="12" fill="#1565c0">1 alloc</text>
+<text x="850" y="446" text-anchor="middle" font-size="12" fill="#2e7d32">0</text>
+<line x1="300" y1="455" x2="920" y2="455" stroke="#e0e0e0" stroke-width="1"/>
+<text x="306" y="474" text-anchor="start" font-size="12" font-weight="600" fill="#212121">Param hit (1 param)</text>
+<text x="570" y="474" text-anchor="middle" font-size="12" fill="#b71c1c">4 allocs</text>
+<text x="710" y="474" text-anchor="middle" font-size="12" fill="#1565c0">3 allocs</text>
+<text x="850" y="474" text-anchor="middle" font-size="12" fill="#2e7d32">0</text>
+<line x1="300" y1="483" x2="920" y2="483" stroke="#e0e0e0" stroke-width="1"/>
+<text x="306" y="502" text-anchor="start" font-size="12" font-weight="600" fill="#212121">404 miss</text>
+<text x="570" y="502" text-anchor="middle" font-size="12" fill="#b71c1c">1 alloc</text>
+<text x="710" y="502" text-anchor="middle" font-size="12" fill="#1565c0">1 alloc</text>
+<text x="850" y="502" text-anchor="middle" font-size="12" fill="#2e7d32">0</text>
+<text x="600" y="588" text-anchor="middle" font-size="10" fill="#616161">Apple M4 Pro  |  cargo bench --bench matchit_compare  |  Old = criterion change% reconstruction  |  matchit 0.8</text>
+</svg>
