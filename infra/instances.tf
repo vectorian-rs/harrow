@@ -9,6 +9,7 @@ resource "aws_spot_instance_request" "server" {
   vpc_security_group_ids = [aws_security_group.bench.id]
   availability_zone      = local.az
   placement_group        = aws_placement_group.bench.name
+  iam_instance_profile   = aws_iam_instance_profile.bench.name
 
   spot_type            = "one-time"
   wait_for_fulfillment = true
@@ -28,6 +29,7 @@ resource "aws_spot_instance_request" "client" {
   vpc_security_group_ids = [aws_security_group.bench.id]
   availability_zone      = local.az
   placement_group        = aws_placement_group.bench.name
+  iam_instance_profile   = aws_iam_instance_profile.bench.name
 
   spot_type            = "one-time"
   wait_for_fulfillment = true

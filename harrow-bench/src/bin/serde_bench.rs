@@ -1,8 +1,13 @@
 //! Serde benchmark orchestrator.
 //!
-//! Replaces `scripts/bench-serde.sh`. Runs on the CLIENT node, orchestrating
-//! Docker containers on the SERVER via SSH, running mcp-load-tester benchmarks
-//! locally, and generating a markdown summary.
+//! Runs on the CLIENT node, orchestrating Docker containers on the SERVER via
+//! SSH, running mcp-load-tester benchmarks locally, and generating a markdown
+//! summary.
+//!
+//! Three-phase bench run:
+//!   Phase A — Serialization comparison (harrow bare vs axum bare)
+//!   Phase B — Per-feature middleware overhead (harrow only)
+//!   Phase C — O11y overhead (harrow only, with Vector)
 //!
 //! Usage:
 //!   serde-bench --server-host IP --client-host IP [OPTIONS]
@@ -25,25 +30,41 @@ use serde_json::Value;
 const DEFAULT_PORT: u16 = 3090;
 const SLEEP_BETWEEN: Duration = Duration::from_secs(2);
 
-const ENDPOINTS: &[(&str, &str)] = &[
-    ("text", "text"),
-    ("json/small", "json_small"),
-    ("json/1kb", "json_1kb"),
-    ("json/10kb", "json_10kb"),
-    ("msgpack/small", "msgpack_small"),
-    ("msgpack/1kb", "msgpack_1kb"),
-    ("msgpack/10kb", "msgpack_10kb"),
+/// Phase A: serialization comparison endpoints (bare prefix, both frameworks).
+const PHASE_A_ENDPOINTS: &[(&str, &str)] = &[
+    ("bare/text", "text"),
+    ("bare/json/1kb", "json_1kb"),
+    ("bare/msgpack/1kb", "msgpack_1kb"),
 ];
 
-const CONCURRENCIES: &[u32] = &[1, 8, 32, 128];
+const PHASE_A_CONCURRENCIES: &[u32] = &[1, 8, 32, 128];
 
-const O11Y_ENDPOINTS: &[(&str, &str)] = &[
+/// Phase B: per-feature middleware overhead (harrow only).
+const PHASE_B_PREFIXES: &[&str] = &[
+    "bare",
+    "timeout",
+    "request-id",
+    "cors",
+    "compression",
+    "full",
+];
+
+const PHASE_B_PAYLOADS: &[(&str, &str)] = &[
     ("text", "text"),
     ("json/1kb", "json_1kb"),
     ("msgpack/1kb", "msgpack_1kb"),
 ];
 
-const O11Y_CONCURRENCIES: &[u32] = &[1, 32, 128];
+const PHASE_B_CONCURRENCIES: &[u32] = &[1, 32, 128];
+
+/// Phase C: o11y overhead endpoints (same payloads as B, harrow only).
+const PHASE_C_ENDPOINTS: &[(&str, &str)] = &[
+    ("text", "text"),
+    ("json/1kb", "json_1kb"),
+    ("msgpack/1kb", "msgpack_1kb"),
+];
+
+const PHASE_C_CONCURRENCIES: &[u32] = &[1, 32, 128];
 
 // ---------------------------------------------------------------------------
 // Args
@@ -64,9 +85,14 @@ fn usage() -> ! {
     eprintln!(
         "Usage: serde-bench --server-host IP --client-host IP [OPTIONS]\n\
          \n\
+         Three-phase benchmark suite:\n\
+         \x20 Phase A — Serialization comparison (harrow bare vs axum bare)\n\
+         \x20 Phase B — Per-feature middleware overhead (harrow only)\n\
+         \x20 Phase C — O11y overhead (harrow only, with Vector)\n\
+         \n\
          Options:\n\
          \x20 --server-host IP      Server node IP (required)\n\
-         \x20 --client-host IP      Client node private IP (required for Phase B)\n\
+         \x20 --client-host IP      Client node private IP (required for Phase C)\n\
          \x20 --server-user USER    SSH user on server (default: alpine)\n\
          \x20 --port PORT           Server port (default: 3090)\n\
          \x20 --bench-bin PATH      Path to mcp-load-tester bench binary (auto-discovered)\n\
@@ -378,10 +404,7 @@ fn run_bench(
 // Report
 // ---------------------------------------------------------------------------
 
-fn generate_report(
-    results: &BTreeMap<String, Value>,
-    args: &Args,
-) {
+fn generate_report(results: &BTreeMap<String, Value>, args: &Args) {
     let now = chrono_lite_utc();
     let mut report = format!(
         "# Serde Benchmark Results\n\
@@ -393,14 +416,18 @@ fn generate_report(
     );
 
     // Phase A
-    report.push_str("\n## Phase A: Raw Serialization\n\n");
-    report.push_str("| Framework | Endpoint | Concurrency | RPS | p50 (ms) | p99 (ms) | p999 (ms) |\n");
-    report.push_str("|-----------|----------|-------------|-----|----------|----------|----------|\n");
+    report.push_str("\n## Phase A: Serialization Comparison (harrow bare vs axum bare)\n\n");
+    report.push_str(
+        "| Framework | Endpoint | Concurrency | RPS | p50 (ms) | p99 (ms) | p999 (ms) |\n",
+    );
+    report.push_str(
+        "|-----------|----------|-------------|-----|----------|----------|----------|\n",
+    );
 
     for fw in ["harrow", "axum"] {
-        for &(path, label) in ENDPOINTS {
-            for &c in CONCURRENCIES {
-                let key = format!("{fw}_{label}_c{c}");
+        for &(path, label) in PHASE_A_ENDPOINTS {
+            for &c in PHASE_A_CONCURRENCIES {
+                let key = format!("a_{fw}_{label}_c{c}");
                 let (rps, p50, p99, p999) = extract_latencies(results.get(&key));
                 report.push_str(&format!(
                     "| {fw} | /{path} | {c} | {rps} | {p50} | {p99} | {p999} |\n"
@@ -410,13 +437,34 @@ fn generate_report(
     }
 
     // Phase B
-    report.push_str("\n## Phase B: O11y Overhead (Harrow)\n\n");
-    report.push_str("| Endpoint | Concurrency | RPS | p50 (ms) | p99 (ms) | p999 (ms) |\n");
+    report.push_str("\n## Phase B: Per-Feature Middleware Overhead (harrow only)\n\n");
+    report.push_str(
+        "| Feature | Payload | Concurrency | RPS | p50 (ms) | p99 (ms) | p999 (ms) |\n",
+    );
+    report
+        .push_str("|---------|---------|-------------|-----|----------|----------|----------|\n");
+
+    for &prefix in PHASE_B_PREFIXES {
+        for &(payload, label) in PHASE_B_PAYLOADS {
+            for &c in PHASE_B_CONCURRENCIES {
+                let key = format!("b_{prefix}_{label}_c{c}");
+                let (rps, p50, p99, p999) = extract_latencies(results.get(&key));
+                report.push_str(&format!(
+                    "| {prefix} | /{payload} | {c} | {rps} | {p50} | {p99} | {p999} |\n"
+                ));
+            }
+        }
+    }
+
+    // Phase C
+    report.push_str("\n## Phase C: O11y Overhead (harrow only, with Vector)\n\n");
+    report
+        .push_str("| Endpoint | Concurrency | RPS | p50 (ms) | p99 (ms) | p999 (ms) |\n");
     report.push_str("|----------|-------------|-----|----------|----------|----------|\n");
 
-    for &(path, label) in O11Y_ENDPOINTS {
-        for &c in O11Y_CONCURRENCIES {
-            let key = format!("harrow_o11y_{label}_c{c}");
+    for &(path, label) in PHASE_C_ENDPOINTS {
+        for &c in PHASE_C_CONCURRENCIES {
+            let key = format!("c_o11y_{label}_c{c}");
             let (rps, p50, p99, p999) = extract_latencies(results.get(&key));
             report.push_str(&format!(
                 "| /{path} | {c} | {rps} | {p50} | {p99} | {p999} |\n"
@@ -479,7 +527,7 @@ fn main() {
     fs::create_dir_all(&args.results_dir).unwrap();
 
     println!("============================================");
-    println!(" Serde Benchmark Suite");
+    println!(" Serde Benchmark Suite (3-phase)");
     println!(" Server: {}:{}", args.server_host, args.port);
     println!(" Duration: {}s  Warmup: {}s", args.duration, args.warmup);
     println!(" Bench binary: {}", args.bench_bin.display());
@@ -490,13 +538,13 @@ fn main() {
     let mut results: BTreeMap<String, Value> = BTreeMap::new();
 
     // -----------------------------------------------------------------------
-    // Phase A: Raw serialization (no o11y)
+    // Phase A: Serialization comparison (harrow bare vs axum bare)
     // -----------------------------------------------------------------------
-    println!("========== PHASE A: Raw serialization ==========");
+    println!("========== PHASE A: Serialization comparison ==========");
 
-    // --- Harrow ---
+    // --- Harrow (bare group, no middleware) ---
     println!();
-    println!("--- Harrow (no o11y) ---");
+    println!("--- Harrow (bare) ---");
     start_container(&args, "serde-bench-server", "serde-bench-server", "");
     if let Err(e) = wait_for_server(&args.server_host, args.port, Duration::from_secs(30)) {
         eprintln!("  {e}");
@@ -504,26 +552,28 @@ fn main() {
         std::process::exit(1);
     }
 
-    for &(path, label) in ENDPOINTS {
-        for &c in CONCURRENCIES {
+    for &(path, label) in PHASE_A_ENDPOINTS {
+        for &c in PHASE_A_CONCURRENCIES {
             let url = format!("http://{}:{}/{path}", args.server_host, args.port);
-            let key = format!("harrow_{label}_c{c}");
+            let key = format!("a_harrow_{label}_c{c}");
             let outfile = args.results_dir.join(format!("{key}.json"));
             println!("  [{key}] c={c} → {url}");
-            if let Some(v) = run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile) {
+            if let Some(v) =
+                run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile)
+            {
                 results.insert(key, v);
             }
             thread::sleep(SLEEP_BETWEEN);
         }
     }
 
-    collect_docker_stats(&args, "harrow_raw");
-    collect_docker_logs(&args, "serde-bench-server", "harrow_raw");
+    collect_docker_stats(&args, "harrow_bare");
+    collect_docker_logs(&args, "serde-bench-server", "harrow_bare");
     stop_container(&args, "serde-bench-server");
 
-    // --- Axum ---
+    // --- Axum (bare group, no middleware) ---
     println!();
-    println!("--- Axum ---");
+    println!("--- Axum (bare) ---");
     start_container(&args, "axum-serde-server", "axum-serde-server", "");
     if let Err(e) = wait_for_server(&args.server_host, args.port, Duration::from_secs(30)) {
         eprintln!("  {e}");
@@ -531,28 +581,69 @@ fn main() {
         std::process::exit(1);
     }
 
-    for &(path, label) in ENDPOINTS {
-        for &c in CONCURRENCIES {
+    for &(path, label) in PHASE_A_ENDPOINTS {
+        for &c in PHASE_A_CONCURRENCIES {
             let url = format!("http://{}:{}/{path}", args.server_host, args.port);
-            let key = format!("axum_{label}_c{c}");
+            let key = format!("a_axum_{label}_c{c}");
             let outfile = args.results_dir.join(format!("{key}.json"));
             println!("  [{key}] c={c} → {url}");
-            if let Some(v) = run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile) {
+            if let Some(v) =
+                run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile)
+            {
                 results.insert(key, v);
             }
             thread::sleep(SLEEP_BETWEEN);
         }
     }
 
-    collect_docker_stats(&args, "axum_raw");
-    collect_docker_logs(&args, "axum-serde-server", "axum_raw");
+    collect_docker_stats(&args, "axum_bare");
+    collect_docker_logs(&args, "axum-serde-server", "axum_bare");
     stop_container(&args, "axum-serde-server");
 
     // -----------------------------------------------------------------------
-    // Phase B: O11y overhead (Harrow only)
+    // Phase B: Per-feature middleware overhead (harrow only)
     // -----------------------------------------------------------------------
     println!();
-    println!("========== PHASE B: O11y overhead (Harrow) ==========");
+    println!("========== PHASE B: Per-feature middleware overhead ==========");
+
+    start_container(&args, "serde-bench-server", "serde-bench-server", "");
+    if let Err(e) = wait_for_server(&args.server_host, args.port, Duration::from_secs(30)) {
+        eprintln!("  {e}");
+        stop_container(&args, "serde-bench-server");
+        std::process::exit(1);
+    }
+
+    for &prefix in PHASE_B_PREFIXES {
+        println!();
+        println!("--- {prefix} ---");
+        for &(payload, label) in PHASE_B_PAYLOADS {
+            for &c in PHASE_B_CONCURRENCIES {
+                let url = format!(
+                    "http://{}:{}/{prefix}/{payload}",
+                    args.server_host, args.port
+                );
+                let key = format!("b_{prefix}_{label}_c{c}");
+                let outfile = args.results_dir.join(format!("{key}.json"));
+                println!("  [{key}] c={c} → {url}");
+                if let Some(v) =
+                    run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile)
+                {
+                    results.insert(key, v);
+                }
+                thread::sleep(SLEEP_BETWEEN);
+            }
+        }
+    }
+
+    collect_docker_stats(&args, "harrow_middleware");
+    collect_docker_logs(&args, "serde-bench-server", "harrow_middleware");
+    stop_container(&args, "serde-bench-server");
+
+    // -----------------------------------------------------------------------
+    // Phase C: O11y overhead (harrow only, with Vector)
+    // -----------------------------------------------------------------------
+    println!();
+    println!("========== PHASE C: O11y overhead (Harrow) ==========");
 
     start_vector();
 
@@ -575,13 +666,15 @@ fn main() {
         std::process::exit(1);
     }
 
-    for &(path, label) in O11Y_ENDPOINTS {
-        for &c in O11Y_CONCURRENCIES {
+    for &(path, label) in PHASE_C_ENDPOINTS {
+        for &c in PHASE_C_CONCURRENCIES {
             let url = format!("http://{}:{}/{path}", args.server_host, args.port);
-            let key = format!("harrow_o11y_{label}_c{c}");
+            let key = format!("c_o11y_{label}_c{c}");
             let outfile = args.results_dir.join(format!("{key}.json"));
             println!("  [{key}] c={c} → {url}");
-            if let Some(v) = run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile) {
+            if let Some(v) =
+                run_bench(&args.bench_bin, &url, c, args.duration, args.warmup, &outfile)
+            {
                 results.insert(key, v);
             }
             thread::sleep(SLEEP_BETWEEN);

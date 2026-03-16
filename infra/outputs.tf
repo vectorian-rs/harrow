@@ -23,19 +23,19 @@ output "ssh_client" {
   value       = "ssh -i ~/.ssh/${var.key_name}.pem alpine@${aws_spot_instance_request.client.public_ip}"
 }
 
-output "run_harrow_server" {
-  description = "Command to run Harrow server (paste on server instance)"
-  value       = "cd ~/harrow && RUST_LOG=error ./target/release/harrow-server --bind 0.0.0.0 --port 3090"
+output "ecr_serde_bench_server" {
+  description = "ECR repo URL for serde-bench-server"
+  value       = module.ecr_serde_bench_server.ecr-repository-url
 }
 
-output "run_axum_server" {
-  description = "Command to run Axum server (paste on server instance)"
-  value       = "cd ~/harrow && RUST_LOG=error ./target/release/axum-server --bind 0.0.0.0 --port 3091"
+output "ecr_axum_serde_server" {
+  description = "ECR repo URL for axum-serde-server"
+  value       = module.ecr_axum_serde_server.ecr-repository-url
 }
 
 output "run_bench" {
-  description = "Command to run full comparison (paste on client instance)"
-  value       = "cd ~/harrow && SERVER_HOST=${aws_spot_instance_request.server.private_ip} ./scripts/compare-frameworks.sh --remote --bench-bin ~/mcp-load-tester/target/release/bench"
+  description = "Command to run serde-bench (paste on client instance)"
+  value       = "serde-bench --server-host ${aws_spot_instance_request.server.private_ip} --client-host ${aws_spot_instance_request.client.private_ip}"
 }
 
 output "ansible_inventory" {

@@ -70,3 +70,79 @@ resource "aws_placement_group" "bench" {
 
   tags = local.common_tags
 }
+
+# ---------------------------------------------------------------------------
+# ECR repositories (via datadeft module)
+# ---------------------------------------------------------------------------
+
+module "ecr_serde_bench_server" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/serde-bench-server"
+  stage           = "bench"
+  force-delete    = true
+}
+
+module "ecr_axum_serde_server" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/axum-serde-server"
+  stage           = "bench"
+  force-delete    = true
+}
+
+# ---------------------------------------------------------------------------
+# IAM — ECR pull for bench instances
+# ---------------------------------------------------------------------------
+
+data "aws_region" "current" {}
+
+resource "aws_iam_role" "bench" {
+  name = "harrow-bench-instance"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "bench_ecr_pull" {
+  name = "ecr-pull"
+  role = aws_iam_role.bench.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchCheckLayerAvailability",
+        ]
+        Resource = [
+          module.ecr_serde_bench_server.ecr-repository-arn,
+          module.ecr_axum_serde_server.ecr-repository-arn,
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "bench" {
+  name = "harrow-bench"
+  role = aws_iam_role.bench.name
+
+  tags = local.common_tags
+}

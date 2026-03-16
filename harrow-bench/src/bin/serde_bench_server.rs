@@ -1,11 +1,27 @@
 //! Harrow serde benchmark server.
 //!
-//! Serves text, JSON, and MessagePack endpoints at various payload sizes.
-//! Optional `--o11y` flag enables observability middleware with OTLP export.
+//! Serves text, JSON, and MessagePack endpoints at various payload sizes,
+//! organized into feature-isolated groups for per-middleware benchmarking.
+//!
+//! Groups:
+//!   /bare/*          — no middleware (routing + serialization baseline)
+//!   /timeout/*       — timeout(30s) middleware
+//!   /request-id/*    — request-id middleware
+//!   /cors/*          — cors(permissive) middleware
+//!   /compression/*   — compression(gzip) middleware
+//!   /full/*          — all 4 middleware stacked
+//!   /health          — top-level health check
+//!
+//! Optional `--o11y` flag enables observability middleware globally.
 //!
 //! Usage: serde-bench-server [--bind ADDR] [--port PORT] [--o11y]
 
-use harrow::{App, Request, Response};
+use std::time::Duration;
+
+use harrow::{App, Group, Request, Response};
+use harrow::{
+    compression_middleware, cors_middleware, request_id_middleware, timeout_middleware, CorsConfig,
+};
 use harrow_bench::{
     json_1kb_typed_handler, json_10kb_typed_handler, json_small_handler, msgpack_1kb_handler,
     msgpack_10kb_handler, msgpack_small_handler, text_handler,
@@ -45,12 +61,26 @@ fn parse_args() -> (String, u16, bool) {
     (bind, port, o11y)
 }
 
+/// Register the standard bench endpoints on a group.
+fn register_group(g: Group) -> Group {
+    g.get("/text", text_handler)
+        .get("/json/small", json_small_handler)
+        .get("/json/1kb", json_1kb_typed_handler)
+        .get("/json/10kb", json_10kb_typed_handler)
+        .get("/msgpack/small", msgpack_small_handler)
+        .get("/msgpack/1kb", msgpack_1kb_handler)
+        .get("/msgpack/10kb", msgpack_10kb_handler)
+}
+
 #[tokio::main]
 async fn main() {
     let (bind, port, o11y) = parse_args();
     let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
+    let cors = CorsConfig::default();
+
     let mut app = App::new()
+        // Backward-compat: flat routes (no middleware)
         .get("/text", text_handler)
         .get("/json/small", json_small_handler)
         .get("/json/1kb", json_1kb_typed_handler)
@@ -58,7 +88,29 @@ async fn main() {
         .get("/msgpack/small", msgpack_small_handler)
         .get("/msgpack/1kb", msgpack_1kb_handler)
         .get("/msgpack/10kb", msgpack_10kb_handler)
-        .get("/health", health);
+        .get("/health", health)
+        // Feature-isolated groups
+        .group("/bare", register_group)
+        .group("/timeout", |g| {
+            register_group(g.middleware(timeout_middleware(Duration::from_secs(30))))
+        })
+        .group("/request-id", |g| {
+            register_group(g.middleware(request_id_middleware))
+        })
+        .group("/cors", |g| {
+            register_group(g.middleware(cors_middleware(cors)))
+        })
+        .group("/compression", |g| {
+            register_group(g.middleware(compression_middleware))
+        })
+        .group("/full", |g| {
+            register_group(
+                g.middleware(timeout_middleware(Duration::from_secs(30)))
+                    .middleware(request_id_middleware)
+                    .middleware(cors_middleware(CorsConfig::default()))
+                    .middleware(compression_middleware),
+            )
+        });
 
     if o11y {
         let otlp_endpoint =

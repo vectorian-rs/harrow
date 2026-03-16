@@ -79,6 +79,11 @@ async fn main() {
     let (bind, port) = parse_args();
     let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
+    let bare_routes = Router::new()
+        .route("/text", get(text_handler))
+        .route("/json/1kb", get(json_1kb_handler))
+        .route("/msgpack/1kb", get(msgpack_1kb_handler));
+
     let app = Router::new()
         .route("/text", get(text_handler))
         .route("/json/small", get(json_small_handler))
@@ -87,7 +92,8 @@ async fn main() {
         .route("/msgpack/small", get(msgpack_small_handler))
         .route("/msgpack/1kb", get(msgpack_1kb_handler))
         .route("/msgpack/10kb", get(msgpack_10kb_handler))
-        .route("/health", get(health));
+        .route("/health", get(health))
+        .nest("/bare", bare_routes);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     eprintln!("axum-serde-server listening on {addr}");
