@@ -6,3 +6,5 @@ flamegraphs/manifest.json
 *.perf.data.old
 perf.data
 perf.data.old
+infra/.terraform/
+infra/.terraform.lock.hcl

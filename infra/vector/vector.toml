@@ -1,0 +1,11 @@
+# Vector config for o11y benchmarking — accepts OTLP and discards everything.
+# Run on the CLIENT node so trace export cost is off the server's CPU.
+
+[sources.otlp]
+type = "opentelemetry"
+grpc.address = "0.0.0.0:4317"
+http.address = "0.0.0.0:4318"
+
+[sinks.blackhole]
+type = "blackhole"
+inputs = ["otlp"]
