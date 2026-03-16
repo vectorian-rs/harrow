@@ -185,7 +185,14 @@ impl Request {
     #[cfg(feature = "json")]
     pub async fn body_json<T: serde::de::DeserializeOwned>(self) -> Result<T, BodyError> {
         let bytes = self.body_bytes().await?;
-        serde_json::from_slice(&bytes).map_err(BodyError::Json)
+        harrow_serde::json::deserialize(&bytes).map_err(BodyError::Json)
+    }
+
+    /// Consume the request and deserialize the MessagePack body.
+    #[cfg(feature = "msgpack")]
+    pub async fn body_msgpack<T: serde::de::DeserializeOwned>(self) -> Result<T, BodyError> {
+        let bytes = self.body_bytes().await?;
+        harrow_serde::msgpack::deserialize(&bytes).map_err(BodyError::MsgPack)
     }
 
     /// Access the underlying `http::Request` headers.
@@ -208,7 +215,9 @@ pub enum BodyError {
     /// Generic body read error.
     BodyRead(String),
     #[cfg(feature = "json")]
-    Json(serde_json::Error),
+    Json(harrow_serde::json::Error),
+    #[cfg(feature = "msgpack")]
+    MsgPack(harrow_serde::msgpack::DecodeError),
 }
 
 impl std::fmt::Display for BodyError {
@@ -218,6 +227,8 @@ impl std::fmt::Display for BodyError {
             BodyError::BodyRead(e) => write!(f, "body read error: {e}"),
             #[cfg(feature = "json")]
             BodyError::Json(e) => write!(f, "json parse error: {e}"),
+            #[cfg(feature = "msgpack")]
+            BodyError::MsgPack(e) => write!(f, "msgpack parse error: {e}"),
         }
     }
 }

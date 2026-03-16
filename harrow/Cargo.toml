@@ -8,6 +8,7 @@ description = "A thin, macro-free HTTP framework over Hyper with built-in observ
 [features]
 default = []
 json = ["harrow-core/json"]
+msgpack = ["harrow-core/msgpack"]
 http2 = ["harrow-server/http2"]
 tls = ["harrow-server/tls"]
 profiling = ["harrow-core/profiling", "harrow-server/profiling"]

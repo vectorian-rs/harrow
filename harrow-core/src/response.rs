@@ -1,6 +1,4 @@
 use bytes::Bytes;
-#[cfg(feature = "json")]
-use bytes::{BufMut, BytesMut};
 use futures_util::Stream;
 use http::StatusCode;
 use http_body_util::combinators::BoxBody;
@@ -69,13 +67,28 @@ impl Response {
     /// 200 OK with a JSON body.
     #[cfg(feature = "json")]
     pub fn json(value: &impl serde::Serialize) -> Self {
-        let mut buf = BytesMut::with_capacity(128);
-        match serde_json::to_writer((&mut buf).writer(), value) {
-            Ok(()) => {
-                let mut resp = Self::new(StatusCode::OK, buf.freeze());
+        match harrow_serde::json::serialize(value) {
+            Ok(bytes) => {
+                let mut resp = Self::new(StatusCode::OK, bytes);
                 resp.set_header_static(
                     http::header::CONTENT_TYPE,
-                    http::header::HeaderValue::from_static("application/json"),
+                    http::header::HeaderValue::from_static(harrow_serde::json::CONTENT_TYPE),
+                );
+                resp
+            }
+            Err(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "serialization error"),
+        }
+    }
+
+    /// 200 OK with a MessagePack body.
+    #[cfg(feature = "msgpack")]
+    pub fn msgpack(value: &impl serde::Serialize) -> Self {
+        match harrow_serde::msgpack::serialize(value) {
+            Ok(bytes) => {
+                let mut resp = Self::new(StatusCode::OK, bytes);
+                resp.set_header_static(
+                    http::header::CONTENT_TYPE,
+                    http::header::HeaderValue::from_static(harrow_serde::msgpack::CONTENT_TYPE),
                 );
                 resp
             }
@@ -203,6 +216,31 @@ mod tests {
         let body = inner.into_body().collect().await.unwrap().to_bytes();
         let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed, serde_json::json!({"key": "val"}));
+    }
+
+    #[cfg(feature = "msgpack")]
+    #[tokio::test]
+    async fn msgpack_sets_content_type_and_body() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct Msg {
+            key: String,
+        }
+
+        let msg = Msg {
+            key: "val".into(),
+        };
+        let resp = Response::msgpack(&msg);
+        assert_eq!(resp.status_code(), StatusCode::OK);
+        let inner = resp.into_inner();
+        assert_eq!(
+            inner.headers().get(http::header::CONTENT_TYPE).unwrap(),
+            "application/msgpack"
+        );
+        let body = inner.into_body().collect().await.unwrap().to_bytes();
+        let parsed: Msg = rmp_serde::from_slice(&body).unwrap();
+        assert_eq!(parsed, msg);
     }
 
     #[test]

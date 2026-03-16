@@ -7,7 +7,8 @@ description = "Core types for Harrow: routing, request/response wrappers, middle
 
 [features]
 default = []
-json = ["serde", "serde_json"]
+json = ["dep:serde", "dep:harrow-serde", "harrow-serde/json"]
+msgpack = ["dep:serde", "dep:harrow-serde", "harrow-serde/msgpack"]
 profiling = []
 
 [dependencies]
@@ -20,8 +21,11 @@ pin-project-lite = { workspace = true }
 matchit = { workspace = true }
 percent-encoding = { workspace = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+harrow-serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
 hyper-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmp-serde = { workspace = true }
