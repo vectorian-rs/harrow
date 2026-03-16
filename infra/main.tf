@@ -24,7 +24,7 @@ data "aws_ami" "alpine" {
 
   filter {
     name   = "name"
-    values = ["alpine-3.*-aarch64-uefi-tiny-*"]
+    values = ["alpine-3.*-aarch64-uefi-cloudinit-r0"]
   }
   filter {
     name   = "architecture"
