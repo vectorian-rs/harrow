@@ -7,8 +7,8 @@
 
 use harrow::{App, Request, Response};
 use harrow_bench::{
-    json_10kb_typed_handler, json_1kb_typed_handler, json_small_handler, msgpack_10kb_handler,
-    msgpack_1kb_handler, msgpack_small_handler, text_handler,
+    json_1kb_typed_handler, json_10kb_typed_handler, json_small_handler, msgpack_1kb_handler,
+    msgpack_10kb_handler, msgpack_small_handler, text_handler,
 };
 
 fn parse_args() -> (String, u16, bool) {
@@ -61,8 +61,8 @@ async fn main() {
         .get("/health", health);
 
     if o11y {
-        let otlp_endpoint = std::env::var("OTLP_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:4318".to_string());
+        let otlp_endpoint =
+            std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:4318".to_string());
 
         use harrow::AppO11yExt;
         use harrow_o11y::O11yConfig;

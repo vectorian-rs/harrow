@@ -228,9 +228,7 @@ mod tests {
             key: String,
         }
 
-        let msg = Msg {
-            key: "val".into(),
-        };
+        let msg = Msg { key: "val".into() };
         let resp = Response::msgpack(&msg);
         assert_eq!(resp.status_code(), StatusCode::OK);
         let inner = resp.into_inner();

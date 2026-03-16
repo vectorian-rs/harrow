@@ -65,6 +65,10 @@ name = "axum-serde-server"
 path = "src/bin/axum_serde_server.rs"
 
 [[bin]]
+name = "serde-bench"
+path = "src/bin/serde_bench.rs"
+
+[[bin]]
 name = "stat-bench"
 path = "src/bin/stat_bench.rs"
 

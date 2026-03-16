@@ -128,6 +128,7 @@ impl TestResponse {
     /// Deserialize the response body as MessagePack.
     #[cfg(feature = "msgpack")]
     pub fn msgpack<T: serde::de::DeserializeOwned>(&self) -> T {
-        harrow_serde::msgpack::deserialize(&self.body).expect("invalid MessagePack in response body")
+        harrow_serde::msgpack::deserialize(&self.body)
+            .expect("invalid MessagePack in response body")
     }
 }

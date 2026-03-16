@@ -61,16 +61,16 @@
     chdir: ~/harrow
   changed_when: true
 
-- name: Pull Jaeger all-in-one image
+- name: Pull Vector image
   ansible.builtin.command:
-    cmd: docker pull jaegertracing/all-in-one:latest
+    cmd: docker pull timberio/vector:latest-alpine
   changed_when: true
 
-- name: Copy bench-serde.sh to home
+- name: Copy vector.toml config
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../scripts/bench-serde.sh"
-    dest: ~/bench-serde.sh
-    mode: "0755"
+    src: "{{ playbook_dir }}/../../infra/vector/vector.toml"
+    dest: ~/vector.toml
+    mode: "0644"
 
 - name: Install Rust via rustup
   ansible.builtin.shell:
@@ -89,3 +89,9 @@
     cmd: source ~/.cargo/env && cargo build --release --bin bench
     chdir: ~/mcp-load-tester
     creates: ~/mcp-load-tester/target/release/bench
+
+- name: Build serde-bench binary
+  ansible.builtin.shell:
+    cmd: source ~/.cargo/env && cargo build --release --bin serde-bench
+    chdir: ~/harrow
+  changed_when: true

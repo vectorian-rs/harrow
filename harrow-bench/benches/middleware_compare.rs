@@ -98,9 +98,12 @@ fn bench_middleware_individual(c: &mut Criterion) {
 
     let axum_client = {
         let addr = rt.block_on(async {
-            let app = Router::new()
-                .route("/echo", get(axum_text_handler))
-                .layer(TimeoutLayer::with_status_code(http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(5)));
+            let app = Router::new().route("/echo", get(axum_text_handler)).layer(
+                TimeoutLayer::with_status_code(
+                    http::StatusCode::REQUEST_TIMEOUT,
+                    Duration::from_secs(5),
+                ),
+            );
             start_axum_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -307,7 +310,10 @@ fn bench_middleware_full_stack(c: &mut Criterion) {
                 .layer(CorsLayer::permissive())
                 .layer(PropagateRequestIdLayer::x_request_id())
                 .layer(SetRequestIdLayer::x_request_id(UuidRequestId))
-                .layer(TimeoutLayer::with_status_code(http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(5)));
+                .layer(TimeoutLayer::with_status_code(
+                    http::StatusCode::REQUEST_TIMEOUT,
+                    Duration::from_secs(5),
+                ));
             start_axum_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -363,7 +369,10 @@ fn bench_middleware_concurrent(c: &mut Criterion) {
             .layer(CorsLayer::permissive())
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(SetRequestIdLayer::x_request_id(UuidRequestId))
-            .layer(TimeoutLayer::with_status_code(http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(5)));
+            .layer(TimeoutLayer::with_status_code(
+                http::StatusCode::REQUEST_TIMEOUT,
+                Duration::from_secs(5),
+            ));
         start_axum_server(app).await
     });
 
