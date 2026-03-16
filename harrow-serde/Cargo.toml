@@ -1,0 +1,17 @@
+[package]
+name = "harrow-serde"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Feature-gated serialization formats (JSON, MessagePack) for Harrow"
+
+[features]
+default = []
+json = ["dep:serde", "dep:serde_json"]
+msgpack = ["dep:serde", "dep:rmp-serde"]
+
+[dependencies]
+bytes = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+rmp-serde = { version = "1", optional = true }
