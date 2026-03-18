@@ -29,7 +29,7 @@ resource "aws_vpc_security_group_ingress_rule" "bench_port" {
   referenced_security_group_id = aws_security_group.bench.id
 }
 
-# OTLP port (4318) between instances (server → client for Phase C)
+# OTLP port (4318) between instances (server -> client for Phase C)
 resource "aws_vpc_security_group_ingress_rule" "otlp_port" {
   security_group_id            = aws_security_group.bench.id
   description                  = "OTLP port between instances"

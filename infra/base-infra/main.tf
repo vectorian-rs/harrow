@@ -17,29 +17,10 @@ provider "aws" {
 # Data sources
 # ---------------------------------------------------------------------------
 
-# Alpine Linux ARM64 AMI
-data "aws_ami" "alpine" {
-  most_recent = true
-  owners      = ["538276064493"] # Official Alpine Linux
-
-  filter {
-    name   = "name"
-    values = ["alpine-3.*-aarch64-uefi-cloudinit-r0"]
-  }
-  filter {
-    name   = "architecture"
-    values = ["arm64"]
-  }
-  filter {
-    name   = "state"
-    values = ["available"]
-  }
-}
-
-# Current caller identity (for tagging)
 data "aws_caller_identity" "current" {}
 
-# Pick a single AZ for the placement group
+data "aws_region" "current" {}
+
 data "aws_availability_zones" "available" {
   state = "available"
 }
@@ -52,7 +33,6 @@ data "http" "my_ip" {
 locals {
   my_ip = "${trimspace(data.http.my_ip.response_body)}/32"
   az    = var.availability_zone != "" ? var.availability_zone : data.aws_availability_zones.available.names[0]
-  ami   = data.aws_ami.alpine.id
 
   common_tags = {
     Project   = "harrow-bench"
@@ -99,8 +79,6 @@ module "ecr_spinr" {
 # ---------------------------------------------------------------------------
 # IAM — ECR pull for bench instances
 # ---------------------------------------------------------------------------
-
-data "aws_region" "current" {}
 
 resource "aws_iam_role" "bench" {
   name = "harrow-bench-instance"

@@ -87,3 +87,48 @@ depends = [
 [tasks."docker:all"]
 description = "Build all ARM64 Docker images"
 depends = ["docker:prod-arm64", "docker:dev-arm64"]
+
+[tasks."bench:infra-up"]
+description = "Create EC2 spot instances for benchmarking"
+dir = "infra/ec2-spot"
+run = "terraform apply -var key_name=harrow-bench"
+
+[tasks."bench:infra-down"]
+description = "Destroy EC2 spot instances"
+dir = "infra/ec2-spot"
+run = "terraform destroy -var key_name=harrow-bench"
+
+[tasks."bench:ecr-push"]
+description = "Push all bench images to ECR"
+run = """
+ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
+aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin $ECR
+docker tag harrow-perf-server:prod-arm64 $ECR/harrow/harrow-perf-server:latest && docker push $ECR/harrow/harrow-perf-server:latest
+docker tag axum-perf-server:prod-arm64 $ECR/harrow/axum-perf-server:latest && docker push $ECR/harrow/axum-perf-server:latest
+docker tag spinr:latest $ECR/harrow/spinr:latest && docker push $ECR/harrow/spinr:latest
+"""
+
+[tasks."bench:setup-linux"]
+description = "Provision bench EC2 instances via Ansible"
+dir = "infra/ansible"
+run = "ansible-playbook playbooks/bench.yml"
+
+[tasks."bench:run"]
+description = "Run remote perf test against bench instances"
+run = """
+cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
+    --server-ssh {{env.BENCH_SERVER_IP}} \
+    --client-ssh {{env.BENCH_CLIENT_IP}} \
+    --server-private {{env.BENCH_SERVER_PRIVATE_IP}} \
+    --instance-type c8g.12xlarge \
+    --duration 60 \
+    --warmup 5 \
+    --os-monitors \
+    --test-case text-c128 \
+    --test-case json-1kb-c128
+"""
+
+[tasks."bench:run".env]
+BENCH_SERVER_IP = "34.244.235.41"
+BENCH_CLIENT_IP = "34.251.252.173"
+BENCH_SERVER_PRIVATE_IP = "172.31.2.238"

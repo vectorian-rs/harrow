@@ -4,12 +4,6 @@ variable "region" {
   default     = "eu-west-1"
 }
 
-variable "availability_zone" {
-  description = "AWS availability zone for both benchmark nodes (empty = auto-select first available AZ)"
-  type        = string
-  default     = "eu-west-1b"
-}
-
 variable "instance_type" {
   description = "EC2 instance type (ARM64 Graviton recommended)"
   type        = string

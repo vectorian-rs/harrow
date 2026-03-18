@@ -173,6 +173,20 @@ struct Args {
     spinr_mode: SpinrMode,
 }
 
+fn client_perf_enabled(args: &Args) -> bool {
+    args.perf_stat && args.spinr_mode == SpinrMode::Host
+}
+
+fn perf_scope_label(args: &Args) -> &'static str {
+    if !args.perf_stat {
+        "off"
+    } else if client_perf_enabled(args) {
+        "server + client"
+    } else {
+        "server only"
+    }
+}
+
 fn find_test_case(name: &str) -> Option<TestCase> {
     TEST_CASES.iter().copied().find(|case| case.name == name)
 }
@@ -217,7 +231,7 @@ fn usage() -> ! {
          \x20 --warmup SECS          Warmup duration per run (default: 5)\n\
          \x20 --results-dir DIR      Override output directory (default: docs/perf/<instance-type>/<timestamp>)\n\
          \x20 --os-monitors          Collect vmstat/sar/iostat/pidstat artifacts on both nodes\n\
-         \x20 --perf                 Collect perf stat artifacts on both nodes (requires --spinr-mode host)\n\
+         \x20 --perf                 Collect perf stat artifacts on the server; also on the client when --spinr-mode host\n\
          \x20 --spinr-mode MODE      Client load generator mode: docker|host (default: docker)\n\
          \n\
          Supported test cases:\n\
@@ -324,11 +338,6 @@ fn parse_args() -> Args {
 
     if list_test_cases {
         print_supported_test_cases_and_exit();
-    }
-
-    if perf_stat && spinr_mode != SpinrMode::Host {
-        eprintln!("error: --perf requires --spinr-mode host for clean client attribution");
-        usage();
     }
 
     if test_cases.is_empty() {
@@ -677,7 +686,12 @@ fn collect_run_artifacts(args: &Args, key: &str) {
     }
 
     if args.perf_stat {
-        for side in [RemoteSide::Server, RemoteSide::Client] {
+        let mut sides = vec![RemoteSide::Server];
+        if client_perf_enabled(args) {
+            sides.push(RemoteSide::Client);
+        }
+
+        for side in sides {
             let remote_path = remote_artifact_path(key, side, "perf-stat.txt");
             let local_path = args
                 .results_dir
@@ -709,6 +723,9 @@ fn write_run_meta(
         "spinr_mode": args.spinr_mode.as_str(),
         "os_monitors": args.os_monitors,
         "perf_stat": args.perf_stat,
+        "server_perf_stat": args.perf_stat,
+        "client_perf_stat": client_perf_enabled(args),
+        "perf_scope": perf_scope_label(args),
         "started_at_utc": started_at_utc,
         "completed_at_utc": completed_at_utc,
     });
@@ -728,18 +745,17 @@ fn run_bench(
         args.duration, args.warmup
     );
 
-    let remote_cmd = match (args.spinr_mode, args.perf_stat) {
-        (SpinrMode::Docker, false) => format!(
+    let remote_cmd = match args.spinr_mode {
+        SpinrMode::Docker => format!(
             "docker run --rm --network host --ulimit nofile=65535:65535 spinr load-test \
              --max-throughput -c {concurrency} -d {} -w {} -j {url}",
             args.duration, args.warmup
         ),
-        (SpinrMode::Host, false) => spinr_cmd.clone(),
-        (SpinrMode::Host, true) => {
+        SpinrMode::Host if args.perf_stat => {
             let perf_path = remote_artifact_path(key, RemoteSide::Client, "perf-stat.txt");
             format!("perf stat -x, -e {PERF_COUNTERS} -o {perf_path} -- {spinr_cmd}")
         }
-        (SpinrMode::Docker, true) => unreachable!("validated in parse_args"),
+        SpinrMode::Host => spinr_cmd.clone(),
     };
 
     match ssh_client(args, &remote_cmd) {
@@ -910,7 +926,7 @@ fn generate_report(results: &BTreeMap<String, Value>, args: &Args) {
         args.warmup,
         args.spinr_mode.as_str(),
         args.os_monitors,
-        args.perf_stat,
+        perf_scope_label(args),
     );
 
     for test_case in &args.test_cases {
@@ -1089,15 +1105,21 @@ fn preflight_checks(args: &Args) {
 
     if args.os_monitors {
         for side in [RemoteSide::Server, RemoteSide::Client] {
-            let host = match side {
-                RemoteSide::Server => &args.server_ssh,
-                RemoteSide::Client => &args.client_ssh,
+            let (host, cmd) = match side {
+                RemoteSide::Server => (
+                    &args.server_ssh,
+                    "command -v vmstat >/dev/null && command -v sar >/dev/null && command -v iostat >/dev/null && command -v pidstat >/dev/null && echo ok",
+                ),
+                RemoteSide::Client if args.spinr_mode == SpinrMode::Host => (
+                    &args.client_ssh,
+                    "command -v vmstat >/dev/null && command -v sar >/dev/null && command -v iostat >/dev/null && command -v pidstat >/dev/null && echo ok",
+                ),
+                RemoteSide::Client => (
+                    &args.client_ssh,
+                    "command -v vmstat >/dev/null && command -v sar >/dev/null && command -v iostat >/dev/null && echo ok",
+                ),
             };
-            let out = ssh_run(
-                &args.ssh_user,
-                host,
-                "command -v vmstat >/dev/null && command -v sar >/dev/null && command -v iostat >/dev/null && command -v pidstat >/dev/null && echo ok",
-            );
+            let out = ssh_run(&args.ssh_user, host, cmd);
             match out {
                 Ok(o) if o.status.success() => {
                     println!("  OS monitor tools on {}: ok", side.label())
@@ -1111,23 +1133,34 @@ fn preflight_checks(args: &Args) {
     }
 
     if args.perf_stat {
-        for side in [RemoteSide::Server, RemoteSide::Client] {
-            let host = match side {
-                RemoteSide::Server => &args.server_ssh,
-                RemoteSide::Client => &args.client_ssh,
-            };
+        let out = ssh_run(
+            &args.ssh_user,
+            &args.server_ssh,
+            "command -v perf >/dev/null && echo ok",
+        );
+        match out {
+            Ok(o) if o.status.success() => println!("  perf on server: ok"),
+            _ => {
+                eprintln!("  perf on server ({}): MISSING", args.server_ssh);
+                std::process::exit(1);
+            }
+        }
+
+        if client_perf_enabled(args) {
             let out = ssh_run(
                 &args.ssh_user,
-                host,
+                &args.client_ssh,
                 "command -v perf >/dev/null && echo ok",
             );
             match out {
-                Ok(o) if o.status.success() => println!("  perf on {}: ok", side.label()),
+                Ok(o) if o.status.success() => println!("  perf on client: ok"),
                 _ => {
-                    eprintln!("  perf on {} ({}): MISSING", side.label(), host);
+                    eprintln!("  perf on client ({}): MISSING", args.client_ssh);
                     std::process::exit(1);
                 }
             }
+        } else {
+            println!("  perf on client: skipped (spinr-mode=docker)");
         }
     }
 
@@ -1152,7 +1185,7 @@ fn main() {
     println!(" Duration: {}s  Warmup: {}s", args.duration, args.warmup);
     println!(" Spinr mode: {}", args.spinr_mode.as_str());
     println!(" OS monitors: {}", args.os_monitors);
-    println!(" Perf stat: {}", args.perf_stat);
+    println!(" Perf stat: {}", perf_scope_label(&args));
     println!(
         " Test cases: {}",
         args.test_cases
