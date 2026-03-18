@@ -417,13 +417,12 @@ fn main() {
             addr
         });
 
-        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
-        let client = std::cell::RefCell::new(client);
+        let mut client = rt.block_on(harrow_bench::BenchClient::connect(addr));
 
         // Warmup
         rt.block_on(async {
             for _ in 0..100 {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
 
@@ -431,7 +430,7 @@ fn main() {
         enable_tracking();
         rt.block_on(async {
             for _ in 0..ITERATIONS {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
         disable_tracking();
@@ -471,12 +470,11 @@ fn main() {
             addr
         });
 
-        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
-        let client = std::cell::RefCell::new(client);
+        let mut client = rt.block_on(harrow_bench::BenchClient::connect(addr));
 
         rt.block_on(async {
             for _ in 0..100 {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
 
@@ -484,7 +482,7 @@ fn main() {
         enable_tracking();
         rt.block_on(async {
             for _ in 0..ITERATIONS {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
         disable_tracking();
@@ -524,12 +522,11 @@ fn main() {
             addr
         });
 
-        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
-        let client = std::cell::RefCell::new(client);
+        let mut client = rt.block_on(harrow_bench::BenchClient::connect(addr));
 
         rt.block_on(async {
             for _ in 0..100 {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
 
@@ -537,7 +534,7 @@ fn main() {
         enable_tracking();
         rt.block_on(async {
             for _ in 0..ITERATIONS {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
         disable_tracking();
@@ -577,12 +574,11 @@ fn main() {
             addr
         });
 
-        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
-        let client = std::cell::RefCell::new(client);
+        let mut client = rt.block_on(harrow_bench::BenchClient::connect(addr));
 
         rt.block_on(async {
             for _ in 0..100 {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
 
@@ -590,7 +586,7 @@ fn main() {
         enable_tracking();
         rt.block_on(async {
             for _ in 0..ITERATIONS {
-                let _ = client.borrow_mut().get("/echo").await;
+                let _ = client.get("/echo").await;
             }
         });
         disable_tracking();
@@ -629,12 +625,11 @@ fn main() {
             addr
         });
 
-        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
-        let client = std::cell::RefCell::new(client);
+        let mut client = rt.block_on(harrow_bench::BenchClient::connect(addr));
 
         rt.block_on(async {
             for _ in 0..100 {
-                let _ = client.borrow_mut().get("/users/42").await;
+                let _ = client.get("/users/42").await;
             }
         });
 
@@ -642,7 +637,7 @@ fn main() {
         enable_tracking();
         rt.block_on(async {
             for _ in 0..ITERATIONS {
-                let _ = client.borrow_mut().get("/users/42").await;
+                let _ = client.get("/users/42").await;
             }
         });
         disable_tracking();
@@ -677,12 +672,11 @@ fn main() {
             addr
         });
 
-        let client = rt.block_on(harrow_bench::BenchClient::connect(addr));
-        let client = std::cell::RefCell::new(client);
+        let mut client = rt.block_on(harrow_bench::BenchClient::connect(addr));
 
         rt.block_on(async {
             for _ in 0..100 {
-                let _ = client.borrow_mut().get("/nope").await;
+                let _ = client.get("/nope").await;
             }
         });
 
@@ -690,7 +684,7 @@ fn main() {
         enable_tracking();
         rt.block_on(async {
             for _ in 0..ITERATIONS {
-                let _ = client.borrow_mut().get("/nope").await;
+                let _ = client.get("/nope").await;
             }
         });
         disable_tracking();

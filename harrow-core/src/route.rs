@@ -166,7 +166,7 @@ impl RouteTable {
             .map(|(m, _)| m.clone())
             .collect();
         // RFC 9110 §9.3.2: HEAD is implicitly supported when GET is.
-        if methods.iter().any(|m| m == Method::GET) && !methods.iter().any(|m| m == Method::HEAD) {
+        if methods.contains(&Method::GET) && !methods.contains(&Method::HEAD) {
             methods.push(Method::HEAD);
         }
         methods

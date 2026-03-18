@@ -249,10 +249,9 @@ fn render(baseline: &Baseline) -> String {
     let mut y = 60.0;
 
     // ── Panel 1: All Harrow Benchmarks ──────────────────────────────────
-    write!(
+    writeln!(
         svg,
-        r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Harrow Latency (all benchmarks)</text>
-"#,
+        r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Harrow Latency (all benchmarks)</text>"#,
         y + 16.0
     )
     .unwrap();
@@ -316,10 +315,9 @@ fn render(baseline: &Baseline) -> String {
     // ── Panel 2: Harrow vs Axum Latency ─────────────────────────────────
     if has_axum {
         y += SECTION_GAP;
-        write!(
+        writeln!(
             svg,
-            r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Harrow vs Axum — TCP Latency</text>
-"#,
+            r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Harrow vs Axum — TCP Latency</text>"#,
             y + 16.0
         )
         .unwrap();
@@ -368,10 +366,9 @@ fn render(baseline: &Baseline) -> String {
             let a_w = a_entry.mean_ns * cmp_scale;
 
             // Label
-            write!(
+            writeln!(
                 svg,
-                r#"<text x="{LABEL_WIDTH}" y="{:.1}" text-anchor="end" font-size="11" fill="{TEXT}">{}</text>
-"#,
+                r#"<text x="{LABEL_WIDTH}" y="{:.1}" text-anchor="end" font-size="11" fill="{TEXT}">{}</text>"#,
                 y + BAR_HEIGHT * 0.72,
                 escape_xml(display_name(key)),
             )
@@ -408,10 +405,9 @@ fn render(baseline: &Baseline) -> String {
     // ── Panel 3: Allocation Comparison ──────────────────────────────────
     if has_alloc_data || has_axum_alloc {
         y += SECTION_GAP;
-        write!(
+        writeln!(
             svg,
-            r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Allocation Profile — bytes per operation</text>
-"#,
+            r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Allocation Profile — bytes per operation</text>"#,
             y + 16.0
         )
         .unwrap();
@@ -459,10 +455,9 @@ fn render(baseline: &Baseline) -> String {
                 let h_w = h_entry.alloc_bytes as f64 * alloc_scale;
                 let a_w = a_entry.alloc_bytes as f64 * alloc_scale;
 
-                write!(
+                writeln!(
                     svg,
-                    r#"<text x="{LABEL_WIDTH}" y="{:.1}" text-anchor="end" font-size="11" fill="{TEXT}">{}</text>
-"#,
+                    r#"<text x="{LABEL_WIDTH}" y="{:.1}" text-anchor="end" font-size="11" fill="{TEXT}">{}</text>"#,
                     y + BAR_HEIGHT * 0.72,
                     escape_xml(display_name(key)),
                 )
@@ -540,19 +535,17 @@ fn render(baseline: &Baseline) -> String {
         _ => PENDING_COLOR,
     };
 
-    write!(
+    writeln!(
         svg,
-        r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Resource Budget</text>
-"#,
+        r#"<text x="30" y="{:.0}" font-size="14" font-weight="600" fill="{TEXT}">Resource Budget</text>"#,
         y + 16.0
     )
     .unwrap();
     y += 30.0;
 
-    write!(
+    writeln!(
         svg,
-        r#"<rect x="30" y="{y:.0}" width="840" height="100" rx="8" fill="{BUDGET_BG}" stroke="{GRID}" stroke-width="1"/>
-"#
+        r#"<rect x="30" y="{y:.0}" width="840" height="100" rx="8" fill="{BUDGET_BG}" stroke="{GRID}" stroke-width="1"/>"#
     )
     .unwrap();
 

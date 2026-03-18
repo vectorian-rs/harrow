@@ -1,29 +1,33 @@
 //! Axum performance benchmark server.
 //!
-//! Same endpoints and payloads as harrow_perf_server for framework comparison.
-//! No o11y — raw serialization throughput only.
+//! Exposes the same flat route corpus as `harrow-perf-server`.
 //!
 //! Usage: axum-perf-server [--bind ADDR] [--port PORT]
 
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
-use axum::{Json, Router, routing::get};
+use axum::{Router, routing::get};
 use harrow_bench::{SMALL_PAYLOAD, USERS_10, USERS_100};
 
 async fn text_handler() -> &'static str {
     "ok"
 }
 
-async fn json_small_handler() -> Json<serde_json::Value> {
-    Json(serde_json::to_value(&*SMALL_PAYLOAD).unwrap())
+fn json_response<T: serde::Serialize>(value: &T) -> impl IntoResponse {
+    let bytes = serde_json::to_vec(value).unwrap();
+    ([(CONTENT_TYPE, "application/json")], bytes)
 }
 
-async fn json_1kb_handler() -> Json<serde_json::Value> {
-    Json(serde_json::to_value(&*USERS_10).unwrap())
+async fn json_small_handler() -> impl IntoResponse {
+    json_response(&*SMALL_PAYLOAD)
 }
 
-async fn json_10kb_handler() -> Json<serde_json::Value> {
-    Json(serde_json::to_value(&*USERS_100).unwrap())
+async fn json_1kb_handler() -> impl IntoResponse {
+    json_response(&*USERS_10)
+}
+
+async fn json_10kb_handler() -> impl IntoResponse {
+    json_response(&*USERS_100)
 }
 
 async fn msgpack_small_handler() -> impl IntoResponse {
@@ -79,11 +83,6 @@ async fn main() {
     let (bind, port) = parse_args();
     let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
-    let bare_routes = Router::new()
-        .route("/text", get(text_handler))
-        .route("/json/1kb", get(json_1kb_handler))
-        .route("/msgpack/1kb", get(msgpack_1kb_handler));
-
     let app = Router::new()
         .route("/text", get(text_handler))
         .route("/json/small", get(json_small_handler))
@@ -92,8 +91,7 @@ async fn main() {
         .route("/msgpack/small", get(msgpack_small_handler))
         .route("/msgpack/1kb", get(msgpack_1kb_handler))
         .route("/msgpack/10kb", get(msgpack_10kb_handler))
-        .route("/health", get(health))
-        .nest("/bare", bare_routes);
+        .route("/health", get(health));
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     eprintln!("axum-perf-server listening on {addr}");

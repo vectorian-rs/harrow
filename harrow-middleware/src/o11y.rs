@@ -14,8 +14,7 @@ use harrow_o11y::O11yConfig;
 // --- Fast request-ID generation (atomic counter, no RNG) ----------------
 
 /// URL-safe alphabet (64 characters = 6 bits per character).
-const ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /// Hex digits for trace ID encoding.
 const HEX: &[u8; 16] = b"0123456789abcdef";
