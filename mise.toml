@@ -154,6 +154,6 @@ cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
 """
 
 [tasks."bench:run".env]
-BENCH_SERVER_IP = "63.35.182.97"
-BENCH_CLIENT_IP = "34.254.155.70"
-BENCH_SERVER_PRIVATE_IP = "172.31.4.226"
+BENCH_SERVER_IP = "63.33.64.12"
+BENCH_CLIENT_IP = "54.194.23.97"
+BENCH_SERVER_PRIVATE_IP = "172.31.1.247"
