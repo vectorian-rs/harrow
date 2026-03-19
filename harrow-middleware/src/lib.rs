@@ -18,3 +18,6 @@ pub mod body_limit;
 
 #[cfg(feature = "compression")]
 pub mod compression;
+
+#[cfg(feature = "rate-limit")]
+pub mod rate_limit;

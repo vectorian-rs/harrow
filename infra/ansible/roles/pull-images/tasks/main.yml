@@ -1,37 +1,37 @@
 # Server: pull perf server images
 - name: Pull harrow-perf-server from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server:latest"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server:{{ image_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-perf-server for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server:latest harrow-perf-server"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server:{{ image_version }} harrow-perf-server"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Pull axum-perf-server from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server:latest"
+    cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server:{{ image_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag axum-perf-server for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server:latest axum-perf-server"
+    cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server:{{ image_version }} axum-perf-server"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 # Client: pull load tester
 - name: Pull spinr from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/spinr:latest"
+    cmd: "docker pull {{ ecr_registry }}/harrow/spinr:{{ image_version }}"
   changed_when: true
   when: inventory_hostname in groups['client']
 
 - name: Tag spinr for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/spinr:latest spinr"
+    cmd: "docker tag {{ ecr_registry }}/harrow/spinr:{{ image_version }} spinr"
   changed_when: true
   when: inventory_hostname in groups['client']

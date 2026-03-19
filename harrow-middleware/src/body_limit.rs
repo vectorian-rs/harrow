@@ -29,10 +29,7 @@ impl Middleware for BodyLimitMiddleware {
                 && let Ok(len) = content_length.parse::<u64>()
                 && len > max_size as u64
             {
-                return Response::new(
-                    http::StatusCode::PAYLOAD_TOO_LARGE,
-                    "payload too large",
-                );
+                return Response::new(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large");
             }
             req.set_max_body_size(max_size);
             next.run(req).await

@@ -28,7 +28,7 @@ rustls = { version = "0.23", optional = true }
 
 [dev-dependencies]
 harrow-core = { workspace = true }
-harrow-middleware = { workspace = true, features = ["timeout", "o11y", "body-limit"] }
+harrow-middleware = { workspace = true, features = ["timeout", "o11y", "body-limit", "rate-limit"] }
 harrow-o11y = { workspace = true }
 hyper = { workspace = true, features = ["client"] }
 tokio = { workspace = true }

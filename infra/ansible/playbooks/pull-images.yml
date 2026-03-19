@@ -3,6 +3,7 @@
   vars:
     ecr_registry: "529001354082.dkr.ecr.eu-west-1.amazonaws.com"
     aws_region: "eu-west-1"
+    image_version: "{{ image_version }}"
   roles:
     - role: ecr-login
     - role: pull-images

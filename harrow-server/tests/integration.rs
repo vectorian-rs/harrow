@@ -10,6 +10,7 @@ use harrow_core::route::App;
 extern crate http;
 use harrow_middleware::body_limit::body_limit_middleware;
 use harrow_middleware::o11y::o11y_middleware;
+use harrow_middleware::rate_limit::{HeaderKeyExtractor, InMemoryBackend, rate_limit_middleware};
 use harrow_middleware::timeout::timeout_middleware;
 use harrow_o11y::O11yConfig;
 use http::StatusCode;
@@ -850,4 +851,95 @@ async fn tcp_body_limit_allows_small() {
     let (status, _, body) = http_post(addr, "/upload", b"hello").await;
     assert_eq!(status, 200);
     assert_eq!(body, "got 5 bytes");
+}
+
+// -- Rate Limit Middleware (Client) ------------------------------------------
+
+#[tokio::test]
+async fn client_rate_limit_returns_429_after_exceeding_limit() {
+    let backend = InMemoryBackend::per_second(2).burst(2);
+    let client = App::new()
+        .middleware(rate_limit_middleware(
+            backend,
+            HeaderKeyExtractor::new("x-api-key"),
+        ))
+        .get("/hello", hello)
+        .client();
+
+    // First two requests should pass (burst=2)
+    for _ in 0..2 {
+        let req = http::Request::get("/hello")
+            .header("x-api-key", "test-key")
+            .body(http_body_util::Full::new(bytes::Bytes::new()))
+            .unwrap();
+        let resp = client.request(req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // Third request should be rate limited
+    let req = http::Request::get("/hello")
+        .header("x-api-key", "test-key")
+        .body(http_body_util::Full::new(bytes::Bytes::new()))
+        .unwrap();
+    let resp = client.request(req).await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        resp.header("retry-after").is_some(),
+        "expected retry-after header"
+    );
+}
+
+#[tokio::test]
+async fn client_rate_limit_passes_under_limit_with_headers() {
+    let backend = InMemoryBackend::per_second(10).burst(10);
+    let client = App::new()
+        .middleware(rate_limit_middleware(
+            backend,
+            HeaderKeyExtractor::new("x-api-key"),
+        ))
+        .get("/hello", hello)
+        .client();
+
+    let req = http::Request::get("/hello")
+        .header("x-api-key", "test-key")
+        .body(http_body_util::Full::new(bytes::Bytes::new()))
+        .unwrap();
+    let resp = client.request(req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.text(), "hello");
+    assert!(
+        resp.header("x-ratelimit-limit").is_some(),
+        "expected x-ratelimit-limit header"
+    );
+    assert!(
+        resp.header("x-ratelimit-remaining").is_some(),
+        "expected x-ratelimit-remaining header"
+    );
+    assert!(
+        resp.header("x-ratelimit-reset").is_some(),
+        "expected x-ratelimit-reset header"
+    );
+}
+
+#[tokio::test]
+async fn client_rate_limit_skips_when_key_header_missing() {
+    let backend = InMemoryBackend::per_second(1).burst(1);
+    let client = App::new()
+        .middleware(rate_limit_middleware(
+            backend,
+            HeaderKeyExtractor::new("x-api-key"),
+        ))
+        .get("/hello", hello)
+        .client();
+
+    // No x-api-key header → rate limiting skipped, all pass
+    for _ in 0..5 {
+        let resp = client.get("/hello").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "hello");
+        assert!(
+            resp.header("x-ratelimit-limit").is_none(),
+            "should not have rate limit headers when key missing"
+        );
+    }
 }

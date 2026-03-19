@@ -116,32 +116,38 @@ run = "terraform destroy -var key_name=harrow-bench"
 [tasks."bench:ecr-push"]
 description = "Push prod bench images to ECR"
 run = """
+VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
 ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
 aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin $ECR
-docker tag harrow-perf-server:prod-arm64 $ECR/harrow/harrow-perf-server:latest && docker push $ECR/harrow/harrow-perf-server:latest
-docker tag axum-perf-server:prod-arm64 $ECR/harrow/axum-perf-server:latest && docker push $ECR/harrow/axum-perf-server:latest
-docker tag spinr:latest $ECR/harrow/spinr:latest && docker push $ECR/harrow/spinr:latest
+docker tag harrow-perf-server:prod-arm64 $ECR/harrow/harrow-perf-server:$VERSION && docker push $ECR/harrow/harrow-perf-server:$VERSION
+docker tag axum-perf-server:prod-arm64 $ECR/harrow/axum-perf-server:$VERSION && docker push $ECR/harrow/axum-perf-server:$VERSION
+docker tag spinr:latest $ECR/harrow/spinr:$VERSION && docker push $ECR/harrow/spinr:$VERSION
 """
 
 [tasks."bench:ecr-push-perf"]
 description = "Push perf-profiling bench images to ECR"
 run = """
+VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
 ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
 aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin $ECR
-docker tag harrow-perf-server:perf-arm64 $ECR/harrow/harrow-perf-server:latest && docker push $ECR/harrow/harrow-perf-server:latest
-docker tag axum-perf-server:perf-arm64 $ECR/harrow/axum-perf-server:latest && docker push $ECR/harrow/axum-perf-server:latest
-docker tag spinr:latest $ECR/harrow/spinr:latest && docker push $ECR/harrow/spinr:latest
+docker tag harrow-perf-server:perf-arm64 $ECR/harrow/harrow-perf-server:$VERSION && docker push $ECR/harrow/harrow-perf-server:$VERSION
+docker tag axum-perf-server:perf-arm64 $ECR/harrow/axum-perf-server:$VERSION && docker push $ECR/harrow/axum-perf-server:$VERSION
+docker tag spinr:latest $ECR/harrow/spinr:$VERSION && docker push $ECR/harrow/spinr:$VERSION
 """
 
 [tasks."bench:pull-images"]
-description = "Pull latest bench images from ECR on all instances"
-dir = "infra/ansible"
-run = "ansible-playbook playbooks/pull-images.yml"
+description = "Pull versioned bench images from ECR on all instances"
+run = """
+VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
+cd infra/ansible && ansible-playbook playbooks/pull-images.yml --extra-vars "image_version=$VERSION"
+"""
 
 [tasks."bench:setup-linux"]
 description = "Provision bench EC2 instances via Ansible"
-dir = "infra/ansible"
-run = "ansible-playbook playbooks/bench.yml"
+run = """
+VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
+cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "image_version=$VERSION"
+"""
 
 [tasks."bench:run"]
 description = "Run remote perf test against bench instances"

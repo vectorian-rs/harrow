@@ -31,6 +31,12 @@ pub use harrow_middleware::catch_panic::catch_panic_middleware;
 #[cfg(feature = "compression")]
 pub use harrow_middleware::compression::compression_middleware;
 
+#[cfg(feature = "rate-limit")]
+pub use harrow_middleware::rate_limit::{
+    HeaderKeyExtractor, InMemoryBackend, KeyExtractor, RateLimitBackend, RateLimitHeaderStyle,
+    RateLimitMiddleware, RateLimitOutcome, rate_limit_middleware,
+};
+
 #[cfg(feature = "o11y")]
 pub mod o11y {
     pub use harrow_middleware::o11y::o11y_middleware;

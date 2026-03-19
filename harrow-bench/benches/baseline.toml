@@ -6,6 +6,102 @@ cpu = "Apple M-series"
 rust_version = "1.85.0"
 notes = "Post BoxBody refactor. Measured on AC power, no background load."
 
+[benchmarks.dispatch_json_1kb_0]
+criterion_path = "middleware_dispatch/json_1kb/0"
+description = "In-process dispatch, JSON 1KB, 0 noop middleware"
+mean_ns = 2780.9295305981104
+median_ns = 2778.2712391350433
+alloc_bytes = 5381
+alloc_count = 12
+
+[benchmarks.dispatch_json_1kb_1]
+criterion_path = "middleware_dispatch/json_1kb/1"
+description = "In-process dispatch, JSON 1KB, 1 noop middleware"
+mean_ns = 2905.8707000080267
+median_ns = 2904.285145641835
+alloc_bytes = 6109
+alloc_count = 14
+
+[benchmarks.dispatch_json_1kb_10]
+criterion_path = "middleware_dispatch/json_1kb/10"
+description = "In-process dispatch, JSON 1KB, 10 noop middleware"
+mean_ns = 3890.376536400592
+median_ns = 3888.525365478509
+alloc_bytes = 12661
+alloc_count = 32
+
+[benchmarks.dispatch_json_1kb_2]
+criterion_path = "middleware_dispatch/json_1kb/2"
+description = "In-process dispatch, JSON 1KB, 2 noop middleware"
+mean_ns = 3017.170724231013
+median_ns = 3012.678666688405
+alloc_bytes = 6837
+alloc_count = 16
+
+[benchmarks.dispatch_json_1kb_3]
+criterion_path = "middleware_dispatch/json_1kb/3"
+description = "In-process dispatch, JSON 1KB, 3 noop middleware"
+mean_ns = 3142.4382066712237
+median_ns = 3139.4408342328197
+alloc_bytes = 7565
+alloc_count = 18
+
+[benchmarks.dispatch_json_1kb_5]
+criterion_path = "middleware_dispatch/json_1kb/5"
+description = "In-process dispatch, JSON 1KB, 5 noop middleware"
+mean_ns = 3347.2826079955125
+median_ns = 3344.9719215969217
+alloc_bytes = 9021
+alloc_count = 22
+
+[benchmarks.dispatch_text_0]
+criterion_path = "middleware_dispatch/text/0"
+description = "In-process dispatch, text, 0 noop middleware"
+mean_ns = 324.84673377257036
+median_ns = 324.8748507486769
+alloc_bytes = 1389
+alloc_count = 6
+
+[benchmarks.dispatch_text_1]
+criterion_path = "middleware_dispatch/text/1"
+description = "In-process dispatch, text, 1 noop middleware"
+mean_ns = 448.4179689761339
+median_ns = 447.9803949093973
+alloc_bytes = 2117
+alloc_count = 8
+
+[benchmarks.dispatch_text_10]
+criterion_path = "middleware_dispatch/text/10"
+description = "In-process dispatch, text, 10 noop middleware"
+mean_ns = 1385.9192808029109
+median_ns = 1382.5843331897977
+alloc_bytes = 8669
+alloc_count = 26
+
+[benchmarks.dispatch_text_2]
+criterion_path = "middleware_dispatch/text/2"
+description = "In-process dispatch, text, 2 noop middleware"
+mean_ns = 549.3028193779693
+median_ns = 546.2808171656173
+alloc_bytes = 2845
+alloc_count = 10
+
+[benchmarks.dispatch_text_3]
+criterion_path = "middleware_dispatch/text/3"
+description = "In-process dispatch, text, 3 noop middleware"
+mean_ns = 646.305153181488
+median_ns = 646.3711083661169
+alloc_bytes = 3573
+alloc_count = 12
+
+[benchmarks.dispatch_text_5]
+criterion_path = "middleware_dispatch/text/5"
+description = "In-process dispatch, text, 5 noop middleware"
+mean_ns = 863.8007964992
+median_ns = 857.3201761957555
+alloc_bytes = 5029
+alloc_count = 16
+
 [benchmarks.echo_404]
 criterion_path = "echo_tcp/404_miss"
 description = "404 miss, 0 middleware, TCP round-trip"

@@ -11,8 +11,11 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use bytes::Bytes;
+use http_body_util::Full;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -178,6 +181,86 @@ where
     }
 }
 
+/// Measure allocations for an in-process async closure.
+fn measure_async<F, Fut>(f: F) -> AllocResult
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    disable_tracking();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        for _ in 0..100 {
+            f().await;
+        }
+    });
+
+    reset_tracking();
+    enable_tracking();
+    rt.block_on(async {
+        for _ in 0..ITERATIONS {
+            f().await;
+        }
+    });
+    disable_tracking();
+    let (bytes, count) = snapshot();
+
+    AllocResult {
+        bytes_per_op: bytes / ITERATIONS,
+        count_per_op: count / ITERATIONS,
+    }
+}
+
+fn harrow_request(path: &str) -> http::Request<harrow_core::request::Body> {
+    let body = harrow_core::request::full_body(Full::new(Bytes::new()));
+    http::Request::builder()
+        .method(http::Method::GET)
+        .uri(path)
+        .body(body)
+        .unwrap()
+}
+
+fn shared_state_from_app(app: harrow::App) -> Arc<harrow_core::dispatch::SharedState> {
+    let (route_table, middleware, state, max_body_size) = app.into_parts();
+    Arc::new(harrow_core::dispatch::SharedState {
+        route_table,
+        middleware,
+        state: Arc::new(state),
+        max_body_size,
+    })
+}
+
+fn build_text_shared_state(depth: usize) -> Arc<harrow_core::dispatch::SharedState> {
+    let mut app = harrow::App::new();
+    for _ in 0..depth {
+        app = app.middleware(harrow_bench::noop_middleware);
+    }
+    shared_state_from_app(app.get("/echo", harrow_bench::text_handler))
+}
+
+fn build_json_1kb_shared_state(depth: usize) -> Arc<harrow_core::dispatch::SharedState> {
+    let mut app = harrow::App::new();
+    for _ in 0..depth {
+        app = app.middleware(harrow_bench::noop_middleware);
+    }
+    shared_state_from_app(app.get("/echo", harrow_bench::json_1kb_handler))
+}
+
+fn measure_dispatch(shared: Arc<harrow_core::dispatch::SharedState>, path: &str) -> AllocResult {
+    measure_async(move || {
+        let shared = Arc::clone(&shared);
+        async move {
+            let req = harrow_request(path);
+            let resp = harrow_core::dispatch::dispatch(shared, req).await;
+            std::hint::black_box(resp);
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -240,6 +323,27 @@ fn main() {
         r.bytes_per_op, r.count_per_op
     );
     results.insert("route_lookup_100".into(), r);
+
+    // -- In-process dispatch benchmarks, matched to middleware_dispatch criterion --
+    for depth in [0usize, 1, 2, 3, 5, 10] {
+        let name = format!("dispatch_text_{depth}");
+        let r = measure_dispatch(build_text_shared_state(depth), "/echo");
+        println!(
+            "  {name}: {} bytes, {} allocs per op",
+            r.bytes_per_op, r.count_per_op
+        );
+        results.insert(name, r);
+    }
+
+    for depth in [0usize, 1, 2, 3, 5, 10] {
+        let name = format!("dispatch_json_1kb_{depth}");
+        let r = measure_dispatch(build_json_1kb_shared_state(depth), "/echo");
+        println!(
+            "  {name}: {} bytes, {} allocs per op",
+            r.bytes_per_op, r.count_per_op
+        );
+        results.insert(name, r);
+    }
 
     // -- TCP benchmarks (real listener + BenchClient), matched to criterion --
 

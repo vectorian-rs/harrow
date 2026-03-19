@@ -22,6 +22,7 @@ catch-panic = ["dep:harrow-middleware", "harrow-middleware/catch-panic"]
 compression = ["dep:harrow-middleware", "harrow-middleware/compression"]
 body-limit = ["dep:harrow-middleware", "harrow-middleware/body-limit"]
 compression-br = ["dep:harrow-middleware", "harrow-middleware/compression-br"]
+rate-limit = ["dep:harrow-middleware", "harrow-middleware/rate-limit"]
 
 [dependencies]
 harrow-core = { workspace = true }
