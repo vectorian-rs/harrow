@@ -857,9 +857,10 @@ fn postprocess_remote_perf_record(
 ) {
     let perf_path = remote_artifact_path(key, side, "perf.data");
     let report_path = remote_artifact_path(key, side, "perf-report.txt");
+    let report_stderr_path = remote_artifact_path(key, side, "perf-report.stderr.txt");
     let report_cmd = format!(
-        "sh -lc 'doas perf report --stdio --call-graph graph,caller \
-         -i {perf_path} --symfs {symfs_dir} > {report_path}; \
+        "sh -lc 'doas perf report --stdio --no-children --percent-limit 1 \
+         -i {perf_path} --symfs {symfs_dir} 2>{report_stderr_path} > {report_path}; \
          status=$?; if test -f {report_path}; then chmod 0644 {report_path}; fi; exit $status'"
     );
 
@@ -874,6 +875,27 @@ fn postprocess_remote_perf_record(
         }
         Err(e) => eprintln!(
             "    warning: failed to generate perf report on {}: {e}",
+            side.label()
+        ),
+    }
+
+    let script_path = remote_artifact_path(key, side, "perf.script");
+    let script_cmd = format!(
+        "sh -lc 'doas perf script -i {perf_path} --symfs {symfs_dir} 2>/dev/null > {script_path}; \
+         status=$?; if test -f {script_path}; then chmod 0644 {script_path}; fi; exit $status'"
+    );
+
+    match ssh_side(args, side, &script_cmd) {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            eprintln!(
+                "    warning: failed to generate perf script on {}: {}",
+                side.label(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+        }
+        Err(e) => eprintln!(
+            "    warning: failed to generate perf script on {}: {e}",
             side.label()
         ),
     }
@@ -1043,6 +1065,26 @@ fn collect_run_artifacts(args: &Args, framework: Framework, key: &str) {
                         .results_dir
                         .join(format!("{key}.{}.perf-report.txt", side.label()));
                     pull_remote_file(args, side, &report_remote, &report_local);
+                    cleanup_remote_file(args, side, &report_remote);
+                }
+
+                let report_stderr_remote =
+                    remote_artifact_path(key, side, "perf-report.stderr.txt");
+                if remote_file_exists(args, side, &report_stderr_remote) {
+                    let report_stderr_local = args
+                        .results_dir
+                        .join(format!("{key}.{}.perf-report.stderr.txt", side.label()));
+                    pull_remote_file(args, side, &report_stderr_remote, &report_stderr_local);
+                    cleanup_remote_file(args, side, &report_stderr_remote);
+                }
+
+                let script_remote = remote_artifact_path(key, side, "perf.script");
+                if remote_file_exists(args, side, &script_remote) {
+                    let script_local = args
+                        .results_dir
+                        .join(format!("{key}.{}.perf.script", side.label()));
+                    pull_remote_file(args, side, &script_remote, &script_local);
+                    cleanup_remote_file(args, side, &script_remote);
                 }
 
                 let folded_remote = remote_artifact_path(key, side, "perf.folded");
@@ -1051,6 +1093,7 @@ fn collect_run_artifacts(args: &Args, framework: Framework, key: &str) {
                         .results_dir
                         .join(format!("{key}.{}.perf.folded", side.label()));
                     pull_remote_file(args, side, &folded_remote, &folded_local);
+                    cleanup_remote_file(args, side, &folded_remote);
                 }
 
                 let svg_remote = remote_artifact_path(key, side, "perf.svg");
@@ -1059,6 +1102,7 @@ fn collect_run_artifacts(args: &Args, framework: Framework, key: &str) {
                         .results_dir
                         .join(format!("{key}.{}.perf.svg", side.label()));
                     pull_remote_file(args, side, &svg_remote, &svg_local);
+                    cleanup_remote_file(args, side, &svg_remote);
                 }
 
                 if let Some(symfs_dir) = symfs_dir.as_deref() {
@@ -1247,22 +1291,6 @@ fn run_test_case(
     stop_server_container(args, framework);
 }
 
-fn extract_latencies(v: Option<&Value>) -> (String, String, String, String) {
-    match v {
-        Some(v) => (
-            val_str(v, "rps"),
-            val_str(v, "latency_p50_ms"),
-            val_str(v, "latency_p99_ms"),
-            val_str(v, "latency_p999_ms"),
-        ),
-        None => ("-".into(), "-".into(), "-".into(), "-".into()),
-    }
-}
-
-fn value_as_f64(v: Option<&Value>, key: &str) -> Option<f64> {
-    v.and_then(|val| val.get(key)).and_then(Value::as_f64)
-}
-
 fn val_str(v: &Value, key: &str) -> String {
     match v.get(key) {
         Some(Value::Number(n)) => {
@@ -1281,82 +1309,9 @@ fn val_str(v: &Value, key: &str) -> String {
     }
 }
 
-fn generate_report(results: &BTreeMap<String, Value>, args: &Args) {
-    let now = chrono_lite_utc();
-    let mut report = format!(
-        "# Performance Test Results\n\
-         \n\
-         Instance: {}\n\
-         Server: {} (private: {}:{})\n\
-         Client: {}\n\
-         Duration: {}s | Warmup: {}s\n\
-         Spinr mode: {}\n\
-         OS monitors: {}\n\
-         Perf: {}\n\
-         Date: {now}\n\
-         \n\
-         ## Runs\n\
-         \n\
-         | Test case | Framework | Path | Concurrency | RPS | p50 (ms) | p99 (ms) | p999 (ms) |\n\
-         |-----------|-----------|------|-------------|-----|----------|----------|-----------|\n",
-        args.instance_type,
-        args.server_ssh,
-        args.server_private,
-        args.port,
-        args.client_ssh,
-        args.duration,
-        args.warmup,
-        args.spinr_mode.as_str(),
-        args.os_monitors,
-        perf_scope_label(args),
-    );
-
-    for test_case in &args.test_cases {
-        for framework in [Framework::Harrow, Framework::Axum] {
-            let key = run_key(framework, *test_case);
-            let (rps, p50, p99, p999) = extract_latencies(results.get(&key));
-            report.push_str(&format!(
-                "| {} | {} | /{} | {} | {} | {} | {} | {} |\n",
-                test_case.name,
-                framework.as_str(),
-                test_case.path,
-                test_case.concurrency,
-                rps,
-                p50,
-                p99,
-                p999
-            ));
-        }
-    }
-
-    report.push_str(
-        "\n## Comparison\n\n| Test case | Harrow RPS | Axum RPS | Delta % |\n|-----------|------------|----------|---------|\n",
-    );
-
-    for test_case in &args.test_cases {
-        let harrow = results.get(&run_key(Framework::Harrow, *test_case));
-        let axum = results.get(&run_key(Framework::Axum, *test_case));
-        let harrow_rps = value_as_f64(harrow, "rps");
-        let axum_rps = value_as_f64(axum, "rps");
-        let delta = match (harrow_rps, axum_rps) {
-            (Some(h), Some(a)) if a != 0.0 => format!("{:+.2}%", ((h - a) / a) * 100.0),
-            _ => "-".into(),
-        };
-        report.push_str(&format!(
-            "| {} | {} | {} | {} |\n",
-            test_case.name,
-            harrow_rps
-                .map(|v| format!("{v:.3}"))
-                .unwrap_or_else(|| "-".into()),
-            axum_rps
-                .map(|v| format!("{v:.3}"))
-                .unwrap_or_else(|| "-".into()),
-            delta
-        ));
-    }
-
+fn generate_report(args: &Args) {
+    harrow_bench::perf_summary::render_results_dir(&args.results_dir).unwrap();
     let report_path = args.results_dir.join("summary.md");
-    fs::write(&report_path, &report).unwrap();
     println!("Summary written to {}", report_path.display());
 }
 
@@ -1614,7 +1569,7 @@ fn main() {
 
     println!();
     println!("========== GENERATING SUMMARY ==========");
-    generate_report(&results, &args);
+    generate_report(&args);
     println!();
     println!("Done! Results in {}/", args.results_dir.display());
 }

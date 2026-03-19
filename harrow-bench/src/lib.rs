@@ -3,6 +3,8 @@
 //! Provides a minimal keep-alive HTTP/1.1 client and server helpers
 //! so benchmarks measure framework overhead, not client library cost.
 
+pub mod perf_summary;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::LazyLock;

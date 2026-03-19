@@ -54,6 +54,10 @@ name = "render-baseline"
 path = "src/bin/render_baseline.rs"
 
 [[bin]]
+name = "render-perf-summary"
+path = "src/bin/render_perf_summary.rs"
+
+[[bin]]
 name = "measure-allocs"
 path = "src/bin/measure_allocs.rs"
 

@@ -4,6 +4,8 @@ flamegraphs/*.folded
 flamegraphs/manifest.json
 *.perf.data
 *.perf.data.old
+*.perf.script
+*.perf-report.txt
 perf.data
 perf.data.old
 infra/**/.terraform/
