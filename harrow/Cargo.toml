@@ -18,6 +18,7 @@ timeout = ["dep:harrow-middleware", "harrow-middleware/timeout"]
 request-id = ["dep:harrow-middleware", "harrow-middleware/request-id"]
 cors = ["dep:harrow-middleware", "harrow-middleware/cors"]
 o11y = ["dep:harrow-middleware", "harrow-middleware/o11y", "dep:harrow-o11y", "dep:rolly"]
+catch-panic = ["dep:harrow-middleware", "harrow-middleware/catch-panic"]
 compression = ["dep:harrow-middleware", "harrow-middleware/compression"]
 compression-br = ["dep:harrow-middleware", "harrow-middleware/compression-br"]
 

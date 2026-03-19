@@ -10,5 +10,8 @@ pub mod cors;
 #[cfg(feature = "o11y")]
 pub mod o11y;
 
+#[cfg(feature = "catch-panic")]
+pub mod catch_panic;
+
 #[cfg(feature = "compression")]
 pub mod compression;

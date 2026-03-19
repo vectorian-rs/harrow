@@ -22,6 +22,9 @@ pub use harrow_middleware::request_id::{request_id_middleware, request_id_middle
 #[cfg(feature = "cors")]
 pub use harrow_middleware::cors::{CorsConfig, cors_middleware};
 
+#[cfg(feature = "catch-panic")]
+pub use harrow_middleware::catch_panic::catch_panic_middleware;
+
 #[cfg(feature = "compression")]
 pub use harrow_middleware::compression::compression_middleware;
 

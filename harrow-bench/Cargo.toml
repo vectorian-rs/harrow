@@ -6,7 +6,7 @@ license.workspace = true
 description = "Benchmarks and load driver for Harrow"
 
 [dependencies]
-harrow = { path = "../harrow", features = ["json", "msgpack", "timeout", "request-id", "cors", "compression", "o11y"] }
+harrow = { path = "../harrow", features = ["json", "msgpack", "timeout", "request-id", "cors", "compression", "catch-panic", "o11y"] }
 harrow-core = { workspace = true, features = ["json", "msgpack"] }
 harrow-o11y = { workspace = true }
 axum = { workspace = true }
@@ -123,4 +123,8 @@ harness = false
 
 [[bench]]
 name = "server_variants"
+harness = false
+
+[[bench]]
+name = "catch_panic"
 harness = false
