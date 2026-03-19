@@ -3,6 +3,9 @@
 //! Identical endpoints to harrow_server — raw framework overhead only.
 //! Usage: axum-server [--bind ADDR] [--port PORT]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use axum::{Json, Router, extract::Path, routing::get};
 use serde_json::{Value, json};
 

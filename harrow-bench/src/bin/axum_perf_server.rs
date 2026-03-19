@@ -4,30 +4,28 @@
 //!
 //! Usage: axum-perf-server [--bind ADDR] [--port PORT]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
-use axum::{Router, routing::get};
+use axum::{Json, Router, routing::get};
 use harrow_bench::{SMALL_PAYLOAD, USERS_10, USERS_100};
 
 async fn text_handler() -> &'static str {
     "ok"
 }
 
-fn json_response<T: serde::Serialize>(value: &T) -> impl IntoResponse {
-    let bytes = serde_json::to_vec(value).unwrap();
-    ([(CONTENT_TYPE, "application/json")], bytes)
-}
-
 async fn json_small_handler() -> impl IntoResponse {
-    json_response(&*SMALL_PAYLOAD)
+    Json(&*SMALL_PAYLOAD)
 }
 
 async fn json_1kb_handler() -> impl IntoResponse {
-    json_response(&*USERS_10)
+    Json(&*USERS_10)
 }
 
 async fn json_10kb_handler() -> impl IntoResponse {
-    json_response(&*USERS_100)
+    Json(&*USERS_100)
 }
 
 async fn msgpack_small_handler() -> impl IntoResponse {

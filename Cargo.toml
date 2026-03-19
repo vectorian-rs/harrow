@@ -11,17 +11,17 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/l1x/harrow"
 
 [workspace.dependencies]
-harrow-core = { path = "harrow-core", version = "0.2.3" }
-harrow-o11y = { path = "harrow-o11y", version = "0.2.3" }
-harrow-middleware = { path = "harrow-middleware", version = "0.2.3" }
-harrow-serde = { path = "harrow-serde", version = "0.2.3" }
-harrow-server = { path = "harrow-server", version = "0.2.3" }
+harrow-core = { path = "harrow-core", version = "0.2.4" }
+harrow-o11y = { path = "harrow-o11y", version = "0.2.4" }
+harrow-middleware = { path = "harrow-middleware", version = "0.2.4" }
+harrow-serde = { path = "harrow-serde", version = "0.2.4" }
+harrow-server = { path = "harrow-server", version = "0.2.4" }
 
 bytes = "1"
 http = "1"
@@ -43,6 +43,7 @@ matchit = "0.8"
 flate2 = "1"
 brotli = "7"
 blake3 = "1"
+mimalloc = "0.1"
 
 [profile.bench]
 debug = true

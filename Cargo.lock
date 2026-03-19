@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "harrow"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "harrow-core",
  "harrow-middleware",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-bench"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "bytes",
@@ -692,6 +692,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "matchit",
+ "mimalloc",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -704,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bytes",
  "futures-util",
@@ -724,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-middleware"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "blake3",
  "brotli",
@@ -743,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-o11y"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "harrow-core",
  "rolly",
@@ -752,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-serde"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bytes",
  "rmp-serde",
@@ -762,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1118,6 +1119,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "667f4fec20f29dfc6bc7357c582d91796c169ad7e2fce709468aefeb2c099870"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "litemap"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1164,6 +1175,15 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+
+[[package]]
+name = "mimalloc"
+version = "0.1.48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1ee66a4b64c74f4ef288bcbb9192ad9c3feaad75193129ac8509af543894fd8"
+dependencies = [
+ "libmimalloc-sys",
+]
 
 [[package]]
 name = "mime"

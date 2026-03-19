@@ -17,6 +17,9 @@
 //!
 //! Usage: harrow-perf-server [--bind ADDR] [--port PORT] [--o11y]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use harrow::{App, Request, Response};
 use harrow_bench::{
     json_1kb_typed_handler, json_10kb_typed_handler, json_small_handler, msgpack_1kb_handler,

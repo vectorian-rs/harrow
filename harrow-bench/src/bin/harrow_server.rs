@@ -3,6 +3,9 @@
 //! No o11y, no timeout middleware — raw framework overhead only.
 //! Usage: harrow-server [--bind ADDR] [--port PORT]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use harrow::{App, Request, Response};
 
 async fn hello(_req: Request) -> Response {
