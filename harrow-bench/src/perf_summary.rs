@@ -1196,7 +1196,7 @@ fn render_series_panel(
     let plot_x = x + 20.0;
     let plot_y = y + 56.0;
     let plot_w = w - 40.0;
-    let plot_h = h - 90.0;
+    let plot_h = h - 108.0;
     let max_y = series_max(harrow)
         .max(series_max(axum))
         .max(1.0);
@@ -1223,7 +1223,7 @@ fn render_series_panel(
 
     out.push_str(&mono_text(
         plot_x,
-        y + h - 18.0,
+        y + h - 34.0,
         12,
         600,
         ACCENT_ORANGE,
@@ -1235,7 +1235,7 @@ fn render_series_panel(
         ),
     ));
     out.push_str(&mono_text(
-        plot_x + 260.0,
+        plot_x,
         y + h - 18.0,
         12,
         600,
