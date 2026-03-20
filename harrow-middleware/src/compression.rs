@@ -64,7 +64,7 @@ pub async fn compression_middleware(req: Request, next: Next) -> Response {
 // Encoding negotiation
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Encoding {
     #[cfg(feature = "compression-br")]
     Brotli,
@@ -334,5 +334,100 @@ mod tests {
         let resp = Middleware::call(&compression_middleware, req, large_body_next()).await;
         let inner = resp.into_inner();
         assert_eq!(inner.headers().get("content-encoding").unwrap(), "gzip");
+    }
+
+    // -----------------------------------------------------------------------
+    // proptest: compression round-trip
+    // -----------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    fn decompress_gzip(data: &[u8]) -> Vec<u8> {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(data);
+        let mut buf = Vec::new();
+        decoder.read_to_end(&mut buf).expect("gzip decompress");
+        buf
+    }
+
+    fn decompress_deflate(data: &[u8]) -> Vec<u8> {
+        use flate2::read::DeflateDecoder;
+        use std::io::Read;
+        let mut decoder = DeflateDecoder::new(data);
+        let mut buf = Vec::new();
+        decoder.read_to_end(&mut buf).expect("deflate decompress");
+        buf
+    }
+
+    proptest! {
+        /// Gzip round-trip: decompress(compress(data)) == data.
+        #[test]
+        fn proptest_gzip_roundtrip(data in prop::collection::vec(any::<u8>(), 1..4096)) {
+            if let Some(compressed) = compress_gzip(&data) {
+                let decompressed = decompress_gzip(&compressed);
+                prop_assert_eq!(&decompressed, &data);
+            }
+        }
+
+        /// Deflate round-trip: decompress(compress(data)) == data.
+        #[test]
+        fn proptest_deflate_roundtrip(data in prop::collection::vec(any::<u8>(), 1..4096)) {
+            if let Some(compressed) = compress_deflate(&data) {
+                let decompressed = decompress_deflate(&compressed);
+                prop_assert_eq!(&decompressed, &data);
+            }
+        }
+
+        /// Encoding preference: gzip beats deflate, deflate beats identity.
+        #[test]
+        fn proptest_encoding_preference(
+            has_gzip in any::<bool>(),
+            has_deflate in any::<bool>(),
+        ) {
+            let mut parts = Vec::new();
+            if has_gzip { parts.push("gzip"); }
+            if has_deflate { parts.push("deflate"); }
+            let accept = parts.join(", ");
+            let encoding = pick_encoding(&accept);
+            if has_gzip {
+                prop_assert_eq!(encoding, Encoding::Gzip);
+            } else if has_deflate {
+                prop_assert_eq!(encoding, Encoding::Deflate);
+            } else {
+                prop_assert_eq!(encoding, Encoding::Identity);
+            }
+        }
+
+        /// No double-compress: a response with content-encoding already set
+        /// is returned unchanged.
+        #[test]
+        fn proptest_no_double_compress(
+            existing_enc in prop_oneof![Just("gzip"), Just("deflate"), Just("br")],
+        ) {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let enc = existing_enc.to_string();
+                let next = Next::new(move |_req| {
+                    let enc = enc.clone();
+                    Box::pin(async move {
+                        let body = "x".repeat(1024);
+                        Response::text(body).header("content-encoding", &enc)
+                    })
+                });
+                let req = make_request(&[("accept-encoding", "gzip, deflate, br")]).await;
+                let resp = Middleware::call(&compression_middleware, req, next).await;
+                let inner = resp.into_inner();
+                // Must keep the original encoding, not re-compress
+                prop_assert_eq!(
+                    inner.headers().get("content-encoding").unwrap().to_str().unwrap(),
+                    existing_enc,
+                );
+                Ok::<_, proptest::test_runner::TestCaseError>(())
+            })?;
+        }
     }
 }

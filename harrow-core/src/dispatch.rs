@@ -145,3 +145,196 @@ fn run_middleware_chain(
         route.middleware[route_mw_idx].call(req, next)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::route::App;
+    use proptest::prelude::*;
+    use proptest::test_runner::TestCaseError;
+    use std::sync::Mutex;
+
+    /// Middleware that logs its index into a shared vec when called.
+    struct IndexMiddleware {
+        index: usize,
+        log: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl Middleware for IndexMiddleware {
+        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+            self.log.lock().unwrap().push(self.index);
+            Box::pin(async move { next.run(req).await })
+        }
+    }
+
+    /// Middleware that short-circuits without calling next.
+    struct ShortCircuitMiddleware {
+        index: usize,
+        log: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl Middleware for ShortCircuitMiddleware {
+        fn call(
+            &self,
+            _req: Request,
+            _next: Next,
+        ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+            self.log.lock().unwrap().push(self.index);
+            Box::pin(async { Response::new(http::StatusCode::FORBIDDEN, "blocked") })
+        }
+    }
+
+    proptest! {
+        /// Middleware execute in order: global[0..N], route[N..N+M], then handler.
+        /// Handler is called exactly once.
+        #[test]
+        fn proptest_middleware_ordering(n_global in 0usize..=4, n_route in 0usize..=4) {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let log = Arc::new(Mutex::new(Vec::new()));
+                let handler_log = Arc::clone(&log);
+                let sentinel = usize::MAX;
+
+                let mut app = App::new();
+                // Add N global middleware
+                for i in 0..n_global {
+                    app = app.middleware(IndexMiddleware {
+                        index: i,
+                        log: Arc::clone(&log),
+                    });
+                }
+
+                // Add route with M route-level middleware via group
+                if n_route > 0 {
+                    app = app.group("/", |mut g| {
+                        for i in 0..n_route {
+                            g = g.middleware(IndexMiddleware {
+                                index: n_global + i,
+                                log: Arc::clone(&log),
+                            });
+                        }
+                        g.get("/test", move |_req| {
+                            let log = Arc::clone(&handler_log);
+                            async move {
+                                log.lock().unwrap().push(sentinel);
+                                Response::ok()
+                            }
+                        })
+                    });
+                } else {
+                    app = app.get("/test", move |_req| {
+                        let log = Arc::clone(&handler_log);
+                        async move {
+                            log.lock().unwrap().push(sentinel);
+                            Response::ok()
+                        }
+                    });
+                }
+
+                let client = app.client();
+                let resp = client.get("/test").await;
+                prop_assert_eq!(resp.status(), http::StatusCode::OK);
+
+                let trace = log.lock().unwrap().clone();
+                let total = n_global + n_route;
+                // Expect [0, 1, ..., total-1, MAX]
+                let mut expected: Vec<usize> = (0..total).collect();
+                expected.push(sentinel);
+                prop_assert_eq!(
+                    &trace, &expected,
+                    "n_global={}, n_route={}", n_global, n_route,
+                );
+                Ok::<_, TestCaseError>(())
+            })?;
+        }
+
+        /// Short-circuit: if middleware K returns early, K+1..N and handler are skipped.
+        #[test]
+        fn proptest_short_circuit(
+            n_total in 2usize..=5,
+            cut_at in 0usize..=4,
+        ) {
+            let cut_at = cut_at.min(n_total - 1);
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let log = Arc::new(Mutex::new(Vec::new()));
+                let handler_log = Arc::clone(&log);
+
+                let mut app = App::new();
+                for i in 0..n_total {
+                    if i == cut_at {
+                        app = app.middleware(ShortCircuitMiddleware {
+                            index: i,
+                            log: Arc::clone(&log),
+                        });
+                    } else {
+                        app = app.middleware(IndexMiddleware {
+                            index: i,
+                            log: Arc::clone(&log),
+                        });
+                    }
+                }
+
+                app = app.get("/test", move |_req| {
+                    let log = Arc::clone(&handler_log);
+                    async move {
+                        log.lock().unwrap().push(usize::MAX);
+                        Response::ok()
+                    }
+                });
+
+                let client = app.client();
+                let resp = client.get("/test").await;
+                prop_assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+
+                let trace = log.lock().unwrap().clone();
+                // Only middleware 0..=cut_at should have run
+                let expected: Vec<usize> = (0..=cut_at).collect();
+                prop_assert_eq!(
+                    &trace, &expected,
+                    "n_total={}, cut_at={}", n_total, cut_at,
+                );
+                Ok::<_, TestCaseError>(())
+            })?;
+        }
+
+        /// Fast path (0 middleware) produces the same status as the slow path.
+        #[test]
+        fn proptest_fast_path_agrees_with_slow_path(n_identity in 0usize..=4) {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                // Fast path: no middleware
+                let fast = App::new()
+                    .get("/test", |_req| async { Response::text("hello") })
+                    .client();
+                let fast_resp = fast.get("/test").await;
+
+                // Slow path: N identity middleware
+                let log = Arc::new(Mutex::new(Vec::new()));
+                let mut app = App::new();
+                for i in 0..n_identity {
+                    app = app.middleware(IndexMiddleware {
+                        index: i,
+                        log: Arc::clone(&log),
+                    });
+                }
+                app = app.get("/test", |_req| async { Response::text("hello") });
+                let slow = app.client();
+                let slow_resp = slow.get("/test").await;
+
+                prop_assert_eq!(fast_resp.status(), slow_resp.status());
+                prop_assert_eq!(fast_resp.text(), slow_resp.text());
+                Ok::<_, TestCaseError>(())
+            })?;
+        }
+    }
+}

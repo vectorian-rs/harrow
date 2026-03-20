@@ -420,7 +420,7 @@ mod tests {
         #[test]
         fn proptest_glob_captures_remainder(
             segments in (prop::collection::vec(arb_non_glob_segment(), 0..=2), arb_glob())
-                .prop_map(|(mut segs, glob)| { segs.push(glob); segs }),
+                .prop_map(|(mut segs, glob)| { segs.push(glob); uniquify_names(segs) }),
         ) {
             let pattern = pattern_from_segments(&segments);
             let path_strategy = arb_path_for_pattern(&segments);
