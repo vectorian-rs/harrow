@@ -91,8 +91,8 @@ async fn main() {
     if session {
         use harrow::{InMemorySessionStore, session_middleware};
         use harrow_bench::{
-            bench_session_config, seed_bench_session, session_get_handler,
-            session_no_touch_handler, session_set_handler, session_write_handler,
+            bench_session_config, seed_bench_session, session_get_handler, session_noop_handler,
+            session_set_handler, session_write_handler,
         };
 
         let store = InMemorySessionStore::new();
@@ -100,7 +100,7 @@ async fn main() {
 
         app = app
             .middleware(session_middleware(store, bench_session_config()))
-            .get("/session/noop", session_no_touch_handler)
+            .get("/session/noop", session_noop_handler)
             .get("/session/set", session_set_handler)
             .get("/session/get", session_get_handler)
             .get("/session/write", session_write_handler);

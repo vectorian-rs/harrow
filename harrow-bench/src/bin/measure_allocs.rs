@@ -877,7 +877,7 @@ fn main() {
         );
         results.insert("session_new".into(), r);
 
-        // session_no_touch: no cookie, session inserted but never modified
+        // session_noop: no cookie, session inserted but never modified
         let r = measure_tcp(
             || async {
                 let store = harrow::InMemorySessionStore::new();
@@ -885,7 +885,7 @@ fn main() {
                 harrow_bench::start_server(
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
-                        .get("/echo", harrow_bench::session_no_touch_handler),
+                        .get("/echo", harrow_bench::session_noop_handler),
                 )
                 .await
             },
@@ -893,10 +893,10 @@ fn main() {
             200,
         );
         println!(
-            "  session_no_touch: {} bytes, {} allocs per op",
+            "  session_noop: {} bytes, {} allocs per op",
             r.bytes_per_op, r.count_per_op
         );
-        results.insert("session_no_touch".into(), r);
+        results.insert("session_noop".into(), r);
 
         // session_existing_read: valid cookie, handler reads only
         let cookie_for_read = bench_cookie.clone();

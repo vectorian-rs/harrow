@@ -226,9 +226,7 @@ fn load_metrics(path: PathBuf) -> io::Result<BenchMetrics> {
     let value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     // spinr bench JSON nests metrics under scenarios[0].metrics; fall back to top-level for
     // backwards compatibility with older result files.
-    let m = value
-        .pointer("/scenarios/0/metrics")
-        .unwrap_or(&value);
+    let m = value.pointer("/scenarios/0/metrics").unwrap_or(&value);
     Ok(BenchMetrics {
         rps: m.get("rps").and_then(Value::as_f64).unwrap_or_default(),
         p50: m

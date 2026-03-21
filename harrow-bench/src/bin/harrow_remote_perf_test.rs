@@ -1032,11 +1032,25 @@ fn collect_run_artifacts(args: &Args, framework: Framework, key: &str) {
     }
 }
 
+/// Parse the `connections` value from a spinr TOML template.
+fn parse_connections_from_toml(config_path: &Path) -> u32 {
+    fs::read_to_string(config_path)
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.trim().starts_with("connections"))
+                .and_then(|l| l.split('=').nth(1))
+                .and_then(|v| v.trim().parse::<u32>().ok())
+        })
+        .unwrap_or(0)
+}
+
 fn write_run_meta(
     args: &Args,
     key: &str,
     framework: Framework,
     cfg_name: &str,
+    config_path: &Path,
     started_at_utc: &str,
     completed_at_utc: &str,
 ) {
@@ -1044,8 +1058,8 @@ fn write_run_meta(
         "key": key,
         "framework": framework.as_str(),
         "test_case": cfg_name,
-        "path": format!("harrow-bench/spinr/{cfg_name}.toml"),
-        "concurrency": 0,
+        "path": config_path.display().to_string(),
+        "concurrency": parse_connections_from_toml(config_path),
         "warmup_secs": args.warmup,
         "duration_secs": args.duration,
         "server_host": args.server_ssh,
@@ -1086,9 +1100,7 @@ fn run_bench(args: &Args, key: &str, remote_config_path: &str, outfile: &Path) -
             let val: Option<Value> = serde_json::from_slice(&o.stdout).ok();
             if let Some(ref v) = val {
                 // spinr bench JSON nests metrics under scenarios[0].metrics
-                let metrics = v
-                    .pointer("/scenarios/0/metrics")
-                    .unwrap_or(v);
+                let metrics = v.pointer("/scenarios/0/metrics").unwrap_or(v);
                 println!(
                     "    -> rps={} p99={}ms",
                     val_str(metrics, "rps"),
@@ -1140,11 +1152,16 @@ fn run_config(
     let key = run_key(framework, &cfg_name);
     let is_session = is_session_config(config_path);
 
-    // Server flags: explicit --server-flags, or auto --session for session configs.
-    let server_flags = if let Some(ref flags) = args.server_flags {
-        flags.clone()
-    } else if is_session && framework == Framework::Harrow {
-        "--session".to_string()
+    // Server flags: only Harrow receives extra flags; Axum rejects unknown args.
+    let server_flags = if framework == Framework::Harrow {
+        let mut parts = Vec::new();
+        if is_session {
+            parts.push("--session".to_string());
+        }
+        if let Some(ref flags) = args.server_flags {
+            parts.push(flags.clone());
+        }
+        parts.join(" ")
     } else {
         String::new()
     };
@@ -1213,6 +1230,7 @@ fn run_config(
         &key,
         framework,
         &cfg_name,
+        config_path,
         &started_at_utc,
         &completed_at_utc,
     );

@@ -350,9 +350,9 @@ median_ns = 0.0
 alloc_bytes = 12996
 alloc_count = 37
 
-[benchmarks.session_no_touch]
-criterion_path = "alloc_only/session_no_touch"
-description = "Allocation-only benchmark: session_no_touch"
+[benchmarks.session_noop]
+criterion_path = "alloc_only/session_noop"
+description = "Allocation-only benchmark: session_noop"
 mean_ns = 0.0
 median_ns = 0.0
 alloc_bytes = 11214

@@ -239,9 +239,9 @@ pub async fn large_text_handler(_req: Request) -> Response {
     Response::text(BODY_1KB_TEXT)
 }
 
-pub async fn session_no_touch_handler(req: Request) -> Response {
-    let session = req.ext::<harrow::Session>().unwrap();
-    let _ = session.get("user");
+/// Handler that runs behind session middleware but does NOT access the session.
+/// Measures pure session middleware overhead (cookie parse + store lookup).
+pub async fn session_noop_handler(_req: Request) -> Response {
     Response::text("ok")
 }
 

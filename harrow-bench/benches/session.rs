@@ -7,8 +7,8 @@ use harrow::App;
 use harrow_bench::{
     BenchClient, bench_session_config, bench_session_cookie, large_text_handler, noop_middleware,
     seed_bench_session, session_get_handler, session_large_get_handler,
-    session_large_write_handler, session_no_touch_handler, session_set_handler,
-    session_write_handler, start_server, text_handler,
+    session_large_write_handler, session_noop_handler, session_set_handler, session_write_handler,
+    start_server, text_handler,
 };
 
 const STACK_ACCEPT_ENCODING: &str = "gzip";
@@ -34,13 +34,13 @@ fn bench_session(c: &mut Criterion) {
         start_server(app).await
     });
 
-    // session middleware + handler that does NOT touch session (fast path: no cookie, no mod)
+    // session middleware active but handler does not access the session (pure middleware overhead)
     let noop_addr = rt.block_on(async {
         let store = harrow::InMemorySessionStore::new();
         let config = bench_session_config();
         let app = App::new()
             .middleware(harrow::session_middleware(store, config))
-            .get("/echo", session_no_touch_handler);
+            .get("/echo", session_noop_handler);
         start_server(app).await
     });
 
@@ -133,7 +133,7 @@ fn bench_session(c: &mut Criterion) {
     });
 
     let noop_client = Arc::new(Mutex::new(rt.block_on(BenchClient::connect(noop_addr))));
-    group.bench_function("session_no_touch", |b| {
+    group.bench_function("session_noop", |b| {
         let client = Arc::clone(&noop_client);
         b.to_async(&rt).iter(|| {
             let client = Arc::clone(&client);

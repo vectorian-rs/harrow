@@ -417,7 +417,7 @@ Fresh local run from `cargo bench -p harrow-bench --bench session -- --noplot`:
 | Scenario | Time |
 |---|---:|
 | `baseline_0mw` | about 32.0 us |
-| `session_no_touch` | about 32.7 us |
+| `session_noop` | about 32.7 us |
 | `session_existing_read` | about 32.1 us |
 | `session_existing_write` | about 33.6 us |
 | `session_new` | about 35.3 us |
@@ -436,7 +436,7 @@ From the allocation harness:
 
 | Scenario | Allocations |
 |---|---:|
-| `session_no_touch` | 11214 B / 19 allocs |
+| `session_noop` | 11214 B / 19 allocs |
 | `session_existing_read` | 12108 B / 31 allocs |
 | `session_existing_write` | 13422 B / 53 allocs |
 | `session_new` | 12996 B / 37 allocs |

@@ -89,7 +89,7 @@ async fn start_scenario(name: &str) -> (SocketAddr, HeaderList) {
             let config = harrow_bench::bench_session_config();
             let app = App::new()
                 .middleware(harrow::session_middleware(store, config))
-                .get("/echo", harrow_bench::session_no_touch_handler);
+                .get("/echo", harrow_bench::session_noop_handler);
             (harrow_bench::start_server(app).await, vec![])
         }
         "new" => {
