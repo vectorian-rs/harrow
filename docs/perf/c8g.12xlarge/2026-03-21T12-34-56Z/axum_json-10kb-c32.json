@@ -1,0 +1,34 @@
+{
+  "scenarios": [
+    {
+      "name": "json-10kb-c32",
+      "url": "http://172.31.0.196:3090/json/10kb",
+      "metrics": {
+        "total_requests": 10358959,
+        "successful_requests": 10358959,
+        "failed_requests": 0,
+        "status_codes": {
+          "200": 10358959
+        },
+        "rpm": 31076877.0,
+        "rps": 517947.95,
+        "latency_avg_ms": 0.09,
+        "latency_min_ms": 0.06,
+        "latency_max_ms": 5.93,
+        "latency_p50_ms": 0.09,
+        "latency_p90_ms": 0.11,
+        "latency_p95_ms": 0.12,
+        "latency_p99_ms": 0.15,
+        "latency_p999_ms": 0.19,
+        "latency_p9999_ms": 0.25,
+        "duration_secs": 20.0,
+        "worker_count": 48,
+        "total_bytes": 117677774240,
+        "transfer_per_sec": 5883888712.0,
+        "latency_histogram": "HISTEwAAAwwAAAAAAAAAAwAAAAAAAAABAAAAAAOThwA/8AAAAAAAAHUKRJwCuAjQFqg6/nrk4wHyiAPk5ASy+Aa2xwn4tAyYxQ/a7xKMrBbw0Bmk5ByCyR/MiiKmtCTauSb6gij4mynK7SmWiSrK+Cnosym6zSjkvCfqlCaO2CTIkyOY0iGIjyC+rx7a6hzwixv+xBm++RfKuBbGjhXI2hO+uxKathHKiRCy/g7Qgw60/wykiQy8qQuKyQrg3gmeiQmIvgjc4ge4qQe01Qamnwbi3wWWqAXa9gTWyATcoASQ9wOazwO4rQPykAOy+AL22wKWwwKkqwKGmgLYhQLA9QHS4QG+1gHKxgGeuwG8rwH2pQGomAGOkAHwhwGoggHSebR0mGnOY+JfhFv+UtRO4ErwR6hDxD7KPPI3lDS6MM4uoiyaKqon9CSAI+oioB/sHYobxhrQGdoXlBW8FOAT8BL6EdYQohCAD4YOug3KDLwLvAvsCsgJ2AmeCdgIhAiuB4YHvgbIBqoG1AXgBa4FugWOBcAEoASwBIAEhASwA9QDpgOKA4wDggP2AtgC2ALCArACqgLwAYQCkAKGAuwB7gHwAe4BqgGuAagBvAGwAZwBkgGWAagBogGEAZIBdHJoYmRiVlZiYlY0QkxGKkAuHio2HCoeICQqLBQcGAwYHhASEg4QCBwEEA4IBhIECgoODAgSCgoMDAgOBggGCAgICAIICgoGAggEBAICBgQCCAQAAgAEBgIEAgQDBggCCAMCAgQABAcCBAMCAAQCBQIFBAQJAgUCBwQDAgIJAgIAAgcCAgMCBQICAgMCAAIHBAMCAgkEAAIRAgACAgACAgMCAwIAAgICAgIAAgcCAgILAg0CBAACAAIDAhMEAgIFAgIAAg0CAAIAAgcCAAIFAgMCAAIFAg0CAgUCBQIAAgITAgkECQIFAgUCAAIHBAIHAgIHAgsCCQIFBA0CCwIAAgIAAgACAhMCBQIFAg8CAgMCCQICAgACGwICBwILAhsCEQICAgcCEwILAg0CIQIvAjkCDQIvAgkCHwIFAjUCAisCKwIFAgsCLQItAgUCBwK7JAKNAgQFAg=="
+      }
+    }
+  ],
+  "total_requests": 10358959,
+  "total_duration_secs": 20.0
+}

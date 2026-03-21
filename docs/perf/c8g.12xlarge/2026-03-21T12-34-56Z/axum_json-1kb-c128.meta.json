@@ -1,0 +1,18 @@
+{
+  "client_host": "34.243.15.89",
+  "completed_at_utc": "2026-03-21 12:42:45 UTC",
+  "config": "json-1kb-c128",
+  "duration_secs": 20,
+  "framework": "axum",
+  "key": "axum_json-1kb-c128",
+  "os_monitors": true,
+  "perf_enabled": false,
+  "perf_mode": "stat",
+  "perf_record": false,
+  "perf_scope": "off",
+  "perf_stat": false,
+  "server_host": "3.249.174.124",
+  "spinr_mode": "docker",
+  "started_at_utc": "2026-03-21 12:42:22 UTC",
+  "warmup_secs": 2
+}
