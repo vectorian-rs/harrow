@@ -20,17 +20,17 @@ While visually clean, this introduces three significant "Hidden Costs":
 Harrow handlers use a "Request-First" model. Instead of the framework injecting data, the handler **explicitly asks** for what it needs.
 
 ```rust
-async fn update_profile(mut req: Request) -> Result<Response, AppError> {
+async fn update_profile(req: Request) -> Result<Response, AppError> {
     // 1. Explicitly retrieve state. Returns Result<&T, Error>.
     // If missing, the error is ON THIS LINE, and the IDE knows it.
-    let db = req.get_state::<DbPool>()?; 
+    let db = req.require_state::<DbPool>()?;
 
     // 2. Explicitly access path params. Returns &str.
     let id = req.param("id");
 
     // 3. Explicitly parse the body. 
     // Consumes the request — typically the final step.
-    let body = req.json::<UpdateProfile>().await?;
+    let body = req.body_json::<UpdateProfile>().await?;
 
     // Business Logic...
     db.save(id, body).await?;
@@ -50,7 +50,7 @@ async fn update_profile(mut req: Request) -> Result<Response, AppError> {
 | **Traceability** | Hidden in framework plumbing | Visible in your code |
 
 ### A Note on Performance and Cloning
-In "Magic" systems, the framework must often clone the `Request` or `State` multiple times to satisfy independent asynchronous extractors. In Harrow, you use `&mut Request` to access metadata (params, headers, state) sequentially **without any cloning**. While body extraction (e.g., `req.json()`) still consumes the request, the overall allocation pressure is significantly lower because you control the sequence.
+In "Magic" systems, the framework must often clone the `Request` or `State` multiple times to satisfy independent asynchronous extractors. In Harrow, you access metadata (params, headers, state) explicitly through `Request` methods **without any cloning**. While body extraction (e.g., `req.body_json()`) still consumes the request, the overall allocation pressure is significantly lower because you control the sequence.
 
 ## Security & Observability
 

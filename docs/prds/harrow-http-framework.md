@@ -100,22 +100,24 @@ struct App {
 Handlers are plain async functions. Parameter extraction is explicit — the user destructures from `Request` using methods that return `Result`:
 
 ```rust
-async fn get_user(mut req: Request) -> Result<Response, AppError> {
+async fn get_user(req: Request) -> Result<Response, AppError> {
     let user_id: u64 = req.param("id").parse()?;
-    let db = req.get_state::<DbPool>()?;
+    let db = req.require_state::<DbPool>()?;
     let user = db.find(user_id).await?;
     
     Ok(Response::json(&user))
 }
 ```
 
-No "magic" argument injection. No variadic traits. The `Request` wrapper provides ergonomic methods (`param`, `query`, `json`, `get_state`) that return `Result` types with clear errors, ensuring full IDE support and localizing error logic within the handler body.
+No "magic" argument injection. No variadic traits. The `Request` wrapper provides ergonomic methods (`param`, `query_pairs`, `query_param`, `body_json`, `require_state`, `try_state`) so parsing and dependency errors stay localized in the handler body with clear call sites.
 
 ### 4.3 Routing API
 
 ```rust
 let app = App::new()
-    .get("/health", health_handler)
+    .health("/health")
+    .liveness("/live")
+    .readiness_handler("/ready", readiness_handler)
     .get("/users/:id", get_user)
     .post("/users", create_user)
     .delete("/users/:id", delete_user)
@@ -124,9 +126,13 @@ let app = App::new()
          .get("/items/:id", get_item)
     })
     .with_metadata("/users/:id", |m| {
-        m.name("user_detail").tag("users")
+        m.name = Some("user_detail".into());
+        m.tags.push("users".into());
     });
 ```
+
+Probe helpers register ordinary `GET` routes with probe metadata attached, so they
+show up in `route_table()` introspection the same way as user-defined routes.
 
 ### 4.4 Route Table Introspection
 
@@ -221,12 +227,12 @@ let app = App::new()
 
 // Inside handler:
 async fn get_user(req: Request) -> Result<Response, AppError> {
-    let db = req.get_state::<DbPool>()?; // Returns Result<&DbPool, Error>
+    let db = req.require_state::<DbPool>()?; // Returns Result<&DbPool, MissingStateError>
     // ...
 }
 ```
 
-`get_state::<T>()` returns `Result<&T, Error>`. This ensures that if a dependency is missing, the error is handled gracefully via the `?` operator rather than a runtime panic. `try_state::<T>()` is also available for optional dependencies.
+`require_state::<T>()` returns `Result<&T, MissingStateError>`. This ensures that if a dependency is missing, the error is handled gracefully via the `?` operator rather than a runtime panic. `try_state::<T>()` is also available for optional dependencies.
 
 ---
 
@@ -235,15 +241,37 @@ async fn get_user(req: Request) -> Result<Response, AppError> {
 Handlers return `Result<Response, AppError>`. This enables the "Explicit Extractor" pattern and provides clear observability for middleware.
 
 ```rust
-async fn get_user(mut req: Request) -> Result<Response, AppError> {
+async fn get_user(req: Request) -> Result<Response, AppError> {
     let id: u64 = req.param("id").parse()?; // Error on this specific line
-    let db = req.get_state::<DbPool>()?;
+    let db = req.require_state::<DbPool>()?;
     let user = db.find_user(id).await?;
     Ok(Response::json(&user))
 }
 ```
 
 `AppError` is user-defined and implements `IntoResponse`. Harrow provides a default `ProblemDetail` (RFC 9457) response builder but does not impose it.
+
+Framework-generated 404 and 405 responses are configurable:
+
+```rust
+let app = App::new()
+    .default_problem_details()
+    .not_found_handler(|req| async move {
+        ProblemDetail::new(StatusCode::NOT_FOUND)
+            .detail(format!("no route for {}", req.path()))
+    })
+    .method_not_allowed_handler(|req, allowed| async move {
+        let allow = allowed
+            .iter()
+            .map(|method| method.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        ProblemDetail::new(StatusCode::METHOD_NOT_ALLOWED)
+            .detail(format!("allowed methods: {allow}"))
+            .instance(req.path().to_string())
+    });
+```
 
 ---
 
@@ -461,7 +489,7 @@ Each milestone (v0.1, v0.2, v0.3) has a performance gate:
 - Criterion benchmark suite.
 
 ### v0.2 — Ergonomics & Hardening
-- **Explicit Extractors:** `Result`-based handlers and `get_state()`.
+- **Explicit Extractors:** `Result`-based handlers and `require_state()`.
 - **Graceful Shutdown Drain:** Wait for in-flight requests to finish.
 - **O11y Metrics:** Latency histograms and error counters.
 - `RouteTable` serialization (JSON, TOML).
@@ -472,7 +500,7 @@ Each milestone (v0.1, v0.2, v0.3) has a performance gate:
 
 ## 13. Decisions
 
-1. **State Injection:** Prefer `get_state::<T>() -> Result<&T, Error>` for required state, while providing `try_state::<T>() -> Option<&T>` for optional state.
+1. **State Injection:** Prefer `require_state::<T>() -> Result<&T, MissingStateError>` for required state, while providing `try_state::<T>() -> Option<&T>` for optional state.
 2. **Path Matching:** Radix tree (`matchit`) is the default implementation from v0.1.
 
 ---

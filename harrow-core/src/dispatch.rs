@@ -3,12 +3,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use http::{Method, StatusCode};
 use http_body_util::{BodyExt, Full};
 
 use crate::middleware::{Middleware, Next};
+use crate::path::PathMatch;
 use crate::request::{Body, Request};
 use crate::response::{Response, ResponseBody};
-use crate::route::RouteTable;
+use crate::route::{MethodNotAllowedHandler, NotFoundHandler, RouteTable};
 use crate::state::TypeMap;
 
 /// Shared state passed to every request. Constructed from `App::into_parts()`.
@@ -41,19 +43,12 @@ pub async fn dispatch(
     let (route_idx, path_match) = match match_result {
         Some(found) => found,
         None => {
-            let resp = if shared.route_table.any_route_matches_path(path) {
+            if shared.route_table.any_route_matches_path(path) {
                 let methods = shared.route_table.allowed_methods(path);
-                let allow_value = methods
-                    .iter()
-                    .map(|m| m.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                Response::new(http::StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
-                    .header("allow", &allow_value)
+                return method_not_allowed_response(&shared, hyper_req, methods).await;
             } else {
-                Response::new(http::StatusCode::NOT_FOUND, "not found")
-            };
-            return resp.into_inner();
+                return not_found_response(&shared, hyper_req).await;
+            }
         }
     };
 
@@ -66,8 +61,7 @@ pub async fn dispatch(
             .and_then(|v| v.parse::<usize>().ok())
         && cl > shared.max_body_size
     {
-        return Response::new(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
-            .into_inner();
+        return Response::new(StatusCode::PAYLOAD_TOO_LARGE, "payload too large").into_inner();
     }
 
     let route = shared
@@ -94,6 +88,74 @@ pub async fn dispatch(
 
     // HEAD fallback: strip body, keep status + headers (RFC 9110 §9.3.2).
     if is_head_fallback {
+        let (parts, _body) = response.into_parts();
+        let empty = Full::new(Bytes::new())
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
+            .boxed();
+        http::Response::from_parts(parts, empty)
+    } else {
+        response
+    }
+}
+
+async fn not_found_response(
+    shared: &SharedState,
+    hyper_req: http::Request<Body>,
+) -> http::Response<ResponseBody> {
+    let is_head = hyper_req.method() == Method::HEAD;
+    let req = unmatched_request(shared, hyper_req);
+    let response = if let Some(handler) = shared.state.try_get::<NotFoundHandler>() {
+        let fut = (handler.0)(req);
+        fut.await.status(StatusCode::NOT_FOUND.as_u16())
+    } else {
+        Response::new(StatusCode::NOT_FOUND, "not found")
+    };
+
+    finalize_unmatched_response(response.into_inner(), is_head)
+}
+
+async fn method_not_allowed_response(
+    shared: &SharedState,
+    hyper_req: http::Request<Body>,
+    methods: Vec<Method>,
+) -> http::Response<ResponseBody> {
+    let is_head = hyper_req.method() == Method::HEAD;
+    let allow_value = methods
+        .iter()
+        .map(|method| method.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let req = unmatched_request(shared, hyper_req);
+
+    let response = if let Some(handler) = shared.state.try_get::<MethodNotAllowedHandler>() {
+        let fut = (handler.0)(req, methods);
+        fut.await
+            .status(StatusCode::METHOD_NOT_ALLOWED.as_u16())
+            .header("allow", &allow_value)
+    } else {
+        Response::new(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
+            .header("allow", &allow_value)
+    };
+
+    finalize_unmatched_response(response.into_inner(), is_head)
+}
+
+fn unmatched_request(shared: &SharedState, hyper_req: http::Request<Body>) -> Request {
+    let mut req = Request::new(
+        hyper_req,
+        PathMatch::default(),
+        Arc::clone(&shared.state),
+        None,
+    );
+    req.set_max_body_size(shared.max_body_size);
+    req
+}
+
+fn finalize_unmatched_response(
+    response: http::Response<ResponseBody>,
+    is_head: bool,
+) -> http::Response<ResponseBody> {
+    if is_head {
         let (parts, _body) = response.into_parts();
         let empty = Full::new(Bytes::new())
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })

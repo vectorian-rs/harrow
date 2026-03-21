@@ -654,6 +654,7 @@ mod tests {
     use crate::handler;
     use crate::response::Response;
     use http::StatusCode;
+    use std::sync::Arc;
 
     async fn dummy(_req: Request) -> Response {
         Response::text("ok")
@@ -983,5 +984,155 @@ mod tests {
         assert_eq!(resp.header("allow"), Some("GET, HEAD"));
         assert!(resp.text().contains("\"status\":405"));
         assert!(resp.text().contains("\"allow\":\"GET, HEAD\""));
+    }
+
+    #[tokio::test]
+    async fn custom_probe_handlers_can_use_state() {
+        let client = App::new()
+            .state(Arc::new(String::from("primary-db")))
+            .health_handler("/health", |req| async move {
+                let db = req.require_state::<Arc<String>>().unwrap();
+                Response::text(format!("health {}", db.as_str()))
+            })
+            .liveness_handler("/live", |_req| async move {
+                Response::new(StatusCode::ACCEPTED, "alive-ish")
+            })
+            .readiness_handler("/ready", |req| async move {
+                let db = req.require_state::<Arc<String>>().unwrap();
+                Response::text(format!("ready {}", db.as_str()))
+            })
+            .client();
+
+        let resp = client.get("/health").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "health primary-db");
+
+        let resp = client.get("/live").await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        assert_eq!(resp.text(), "alive-ish");
+
+        let resp = client.get("/ready").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "ready primary-db");
+    }
+
+    #[tokio::test]
+    async fn fallback_handlers_can_access_app_state() {
+        let client = App::new()
+            .state(Arc::new(String::from("stateful")))
+            .get("/users", dummy)
+            .not_found_handler(|req| async move {
+                let state = req.require_state::<Arc<String>>().unwrap();
+                Response::text(format!("{} missing {}", state.as_str(), req.path()))
+            })
+            .method_not_allowed_handler(|req, methods| async move {
+                let state = req.require_state::<Arc<String>>().unwrap();
+                let allow = methods
+                    .iter()
+                    .map(|method| method.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Response::text(format!("{} allow {}", state.as_str(), allow))
+            })
+            .client();
+
+        let resp = client.get("/missing").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.text(), "stateful missing /missing");
+
+        let resp = client.put("/users", "").await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.text(), "stateful allow GET, HEAD");
+    }
+
+    #[tokio::test]
+    async fn last_not_found_configuration_wins() {
+        let client = App::new()
+            .default_problem_details()
+            .not_found_handler(|_req| async move { Response::text("custom 404") })
+            .client();
+
+        let resp = client.get("/missing").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.text(), "custom 404");
+        assert_eq!(
+            resp.header("content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+
+        let client = App::new()
+            .not_found_handler(|_req| async move { Response::text("custom 404") })
+            .default_problem_details()
+            .client();
+
+        let resp = client.get("/missing").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            resp.header("content-type"),
+            Some("application/problem+json")
+        );
+        assert!(resp.text().contains("\"detail\":\"no route for /missing\""));
+    }
+
+    #[tokio::test]
+    async fn last_method_not_allowed_configuration_wins() {
+        let client = App::new()
+            .default_problem_details()
+            .get("/users", dummy)
+            .method_not_allowed_handler(
+                |_req, _methods| async move { Response::text("custom 405") },
+            )
+            .client();
+
+        let resp = client.post("/users", "").await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.text(), "custom 405");
+        assert_eq!(
+            resp.header("content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+        assert_eq!(resp.header("allow"), Some("GET, HEAD"));
+
+        let client = App::new()
+            .get("/users", dummy)
+            .method_not_allowed_handler(
+                |_req, _methods| async move { Response::text("custom 405") },
+            )
+            .default_problem_details()
+            .client();
+
+        let resp = client.post("/users", "").await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            resp.header("content-type"),
+            Some("application/problem+json")
+        );
+        assert_eq!(resp.header("allow"), Some("GET, HEAD"));
+        assert!(resp.text().contains("\"allow\":\"GET, HEAD\""));
+    }
+
+    #[tokio::test]
+    async fn head_generated_404_and_405_strip_the_body() {
+        let client = App::new()
+            .default_problem_details()
+            .post("/submit", dummy)
+            .client();
+
+        let resp = client.head("/missing").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            resp.header("content-type"),
+            Some("application/problem+json")
+        );
+        assert!(resp.text().is_empty(), "HEAD 404 should not include a body");
+
+        let resp = client.head("/submit").await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            resp.header("content-type"),
+            Some("application/problem+json")
+        );
+        assert_eq!(resp.header("allow"), Some("POST"));
+        assert!(resp.text().is_empty(), "HEAD 405 should not include a body");
     }
 }

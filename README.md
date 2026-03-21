@@ -7,16 +7,15 @@ A thin, macro-free HTTP framework over Hyper with built-in observability.
 - **No macros, no magic** -- handlers are plain `async fn(Request) -> Response` functions. No extractors, no trait bounds, no `#[debug_handler]`.
 - **Route introspection** -- the route table is a first-class data structure you can enumerate at startup for OpenAPI generation, health checks, or monitoring config.
 - **Built-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
-- **Feature-gated middleware** -- timeout, request-id, CORS, compression, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
+- **Feature-gated middleware** -- timeout, request-id, CORS, catch-panic, compression, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
 - **Fast** -- built directly on Hyper 1.x and matchit routing. No Tower, no `BoxCloneService`, no deep type nesting.
 
 ## Quickstart
 
 ```toml
 [dependencies]
-harrow = { version = "0.2", features = ["json", "timeout"] }
+harrow = { version = "0.2", features = ["timeout"] }
 tokio = { version = "1", features = ["full"] }
-serde_json = "1"
 ```
 
 ```rust
@@ -32,21 +31,45 @@ async fn greet(req: Request) -> Response {
     Response::text(format!("hello, {name}"))
 }
 
-async fn health(_req: Request) -> Response {
-    Response::json(&serde_json::json!({ "status": "ok" }))
-}
-
 #[tokio::main]
 async fn main() {
     let app = App::new()
         .middleware(timeout_middleware(Duration::from_secs(30)))
+        .health("/health")
         .get("/", hello)
         .get("/greet/:name", greet)
-        .group("/api", |g| g.get("/health", health));
+        .group("/api", |g| g.get("/greet/:name", greet));
 
     let addr = "127.0.0.1:3000".parse().unwrap();
     harrow::serve(app, addr).await.unwrap();
 }
+```
+
+## Probes And Error Responses
+
+```rust
+use harrow::{App, ProblemDetail, Request, Response};
+use http::StatusCode;
+
+async fn readiness(req: Request) -> Result<Response, ProblemDetail> {
+    req.require_state::<String>().map_err(|_| {
+        ProblemDetail::new(StatusCode::SERVICE_UNAVAILABLE)
+            .detail("database unavailable"),
+    })?;
+
+    Ok(Response::text("ready"))
+}
+
+let app = App::new()
+    .state("primary-db".to_string())
+    .health("/health")
+    .liveness("/live")
+    .readiness_handler("/ready", readiness)
+    .default_problem_details()
+    .not_found_handler(|req| async move {
+        ProblemDetail::new(StatusCode::NOT_FOUND)
+            .detail(format!("no route for {}", req.path()))
+    });
 ```
 
 ## Documentation

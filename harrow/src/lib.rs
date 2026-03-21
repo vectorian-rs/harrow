@@ -6,6 +6,7 @@ pub use harrow_core::client::{Client, TestResponse};
 pub use harrow_core::handler;
 pub use harrow_core::middleware::{Middleware, Next};
 pub use harrow_core::path::PathPattern;
+pub use harrow_core::problem::ProblemDetail;
 pub use harrow_core::request::{BodyError, Request};
 pub use harrow_core::response::{IntoResponse, Response, ResponseBody};
 pub use harrow_core::route::{App, Group, Route, RouteMetadata, RouteTable};

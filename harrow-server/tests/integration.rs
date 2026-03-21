@@ -9,6 +9,7 @@ use harrow_core::response::Response;
 use harrow_core::route::App;
 extern crate http;
 use harrow_middleware::body_limit::body_limit_middleware;
+use harrow_middleware::catch_panic::catch_panic_middleware;
 use harrow_middleware::o11y::o11y_middleware;
 use harrow_middleware::rate_limit::{HeaderKeyExtractor, InMemoryBackend, rate_limit_middleware};
 use harrow_middleware::session::{
@@ -459,6 +460,31 @@ async fn client_head_returns_404_for_unknown_path() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn client_head_generated_404_and_405_have_empty_bodies() {
+    let client = App::new()
+        .default_problem_details()
+        .post("/submit", hello)
+        .client();
+
+    let resp = client.head("/nope").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.header("content-type"),
+        Some("application/problem+json")
+    );
+    assert!(resp.text().is_empty());
+
+    let resp = client.head("/submit").await;
+    assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(resp.header("allow"), Some("POST"));
+    assert_eq!(
+        resp.header("content-type"),
+        Some("application/problem+json")
+    );
+    assert!(resp.text().is_empty());
+}
+
 // -- Route Pattern (Client) --------------------------------------------------
 
 async fn echo_route_pattern(req: Request) -> Response {
@@ -629,13 +655,50 @@ async fn tcp_basic_routing() {
     assert_eq!(body, "hello, world");
 }
 
+#[tokio::test]
+async fn tcp_probe_helpers_register_endpoints() {
+    let app = App::new()
+        .state(Arc::new(String::from("primary-db")))
+        .health("/health")
+        .liveness("/live")
+        .readiness_handler("/ready", |req| async move {
+            let db = req.require_state::<Arc<String>>().unwrap();
+            Response::text(format!("ready {}", db.as_str()))
+        });
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/health").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "ok");
+
+    let (status, _, body) = http_get(addr, "/live").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "alive");
+
+    let (status, _, body) = http_get(addr, "/ready").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "ready primary-db");
+}
+
 async fn panicking_handler(_req: Request) -> Response {
     panic!("handler bug");
 }
 
 #[tokio::test]
-async fn tcp_panic_in_handler_returns_500() {
+async fn tcp_panic_in_handler_closes_connection_without_catch_panic() {
     let app = App::new().get("/boom", panicking_handler);
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/boom").await;
+    assert_eq!(status, 0);
+    assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn tcp_catch_panic_middleware_returns_500() {
+    let app = App::new()
+        .middleware(catch_panic_middleware)
+        .get("/boom", panicking_handler);
     let addr = start_server(app).await;
 
     let (status, _, body) = http_get(addr, "/boom").await;
@@ -780,6 +843,89 @@ async fn tcp_head_returns_get_headers_without_body() {
         header_val(&headers, "content-type").is_some(),
         "HEAD response should preserve Content-Type"
     );
+}
+
+#[tokio::test]
+async fn tcp_default_problem_details_formats_404_and_405() {
+    let app = App::new().default_problem_details().get("/users", hello);
+    let addr = start_server(app).await;
+
+    let (status, headers, body) = http_get(addr, "/missing").await;
+    assert_eq!(status, 404);
+    assert_eq!(
+        header_val(&headers, "content-type"),
+        Some("application/problem+json")
+    );
+    assert!(body.contains("\"status\":404"));
+    assert!(body.contains("\"detail\":\"no route for /missing\""));
+
+    let (status, headers, body) = http_request(addr, "POST", "/users").await;
+    assert_eq!(status, 405);
+    assert_eq!(
+        header_val(&headers, "content-type"),
+        Some("application/problem+json")
+    );
+    assert_eq!(header_val(&headers, "allow"), Some("GET, HEAD"));
+    assert!(body.contains("\"status\":405"));
+    assert!(body.contains("\"allow\":\"GET, HEAD\""));
+}
+
+#[tokio::test]
+async fn tcp_custom_fallback_handlers_can_access_state() {
+    let app = App::new()
+        .state(Arc::new(String::from("tcp-state")))
+        .get("/users", hello)
+        .not_found_handler(|req| async move {
+            let state = req.require_state::<Arc<String>>().unwrap();
+            Response::text(format!("{} missing {}", state.as_str(), req.path()))
+        })
+        .method_not_allowed_handler(|req, methods| async move {
+            let state = req.require_state::<Arc<String>>().unwrap();
+            let allow = methods
+                .iter()
+                .map(|method| method.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Response::text(format!(
+                "{} allow {} on {}",
+                state.as_str(),
+                allow,
+                req.path()
+            ))
+        });
+    let addr = start_server(app).await;
+
+    let (status, _, body) = http_get(addr, "/missing").await;
+    assert_eq!(status, 404);
+    assert_eq!(body, "tcp-state missing /missing");
+
+    let (status, headers, body) = http_request(addr, "PUT", "/users").await;
+    assert_eq!(status, 405);
+    assert_eq!(header_val(&headers, "allow"), Some("GET, HEAD"));
+    assert_eq!(body, "tcp-state allow GET, HEAD on /users");
+}
+
+#[tokio::test]
+async fn tcp_head_generated_404_and_405_strip_body() {
+    let app = App::new().default_problem_details().post("/submit", hello);
+    let addr = start_server(app).await;
+
+    let (status, headers, body) = http_request(addr, "HEAD", "/missing").await;
+    assert_eq!(status, 404);
+    assert_eq!(
+        header_val(&headers, "content-type"),
+        Some("application/problem+json")
+    );
+    assert!(body.is_empty(), "HEAD 404 should not include a body");
+
+    let (status, headers, body) = http_request(addr, "HEAD", "/submit").await;
+    assert_eq!(status, 405);
+    assert_eq!(
+        header_val(&headers, "content-type"),
+        Some("application/problem+json")
+    );
+    assert_eq!(header_val(&headers, "allow"), Some("POST"));
+    assert!(body.is_empty(), "HEAD 405 should not include a body");
 }
 
 // -- Body Limit Test (TCP) ---------------------------------------------------
@@ -1178,7 +1324,11 @@ async fn h2c_get_with_headers(
         .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
     let body = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, resp_headers, String::from_utf8_lossy(&body).to_string())
+    (
+        status,
+        resp_headers,
+        String::from_utf8_lossy(&body).to_string(),
+    )
 }
 
 #[tokio::test]
@@ -1252,9 +1402,7 @@ async fn h2c_middleware_runs() {
 
 #[tokio::test]
 async fn h2c_multiplexed_requests() {
-    let app = App::new()
-        .get("/hello", hello)
-        .get("/greet/:name", greet);
+    let app = App::new().get("/hello", hello).get("/greet/:name", greet);
     let addr = start_server(app).await;
 
     // Open a single h2c connection and send multiple concurrent requests.
@@ -1296,7 +1444,9 @@ async fn h2c_multiplexed_requests() {
 #[tokio::test]
 async fn h2c_state_works() {
     let counter = Arc::new(HitCounter(AtomicUsize::new(0)));
-    let app = App::new().state(counter.clone()).get("/count", state_handler);
+    let app = App::new()
+        .state(counter.clone())
+        .get("/count", state_handler);
     let addr = start_server(app).await;
 
     let (status, body) = h2c_get(addr, "/count").await;
