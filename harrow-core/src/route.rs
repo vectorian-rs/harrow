@@ -1,13 +1,48 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use http::Method;
+use http::{Method, StatusCode};
 
 use crate::handler::{self, HandlerFn};
 use crate::middleware::Middleware;
 use crate::path::{PathMatch, PathPattern, to_matchit_pattern};
+use crate::problem::ProblemDetail;
 use crate::request::Request;
-use crate::response::Response;
+use crate::response::{IntoResponse, Response};
+
+pub(crate) type NotFoundHandlerFn =
+    Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+
+pub(crate) type MethodNotAllowedHandlerFn = Box<
+    dyn Fn(Request, Vec<Method>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync,
+>;
+
+pub(crate) struct NotFoundHandler(pub NotFoundHandlerFn);
+
+pub(crate) struct MethodNotAllowedHandler(pub MethodNotAllowedHandlerFn);
+
+fn wrap_not_found_handler<F, Fut, T>(f: F) -> NotFoundHandlerFn
+where
+    F: Fn(Request) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+    T: IntoResponse + 'static,
+{
+    handler::wrap(f)
+}
+
+fn wrap_method_not_allowed_handler<F, Fut, T>(f: F) -> MethodNotAllowedHandlerFn
+where
+    F: Fn(Request, Vec<Method>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+    T: IntoResponse + 'static,
+{
+    Box::new(move |req, methods| {
+        let fut = f(req, methods);
+        Box::pin(async move { fut.await.into_response() })
+    })
+}
 
 // ---------------------------------------------------------------------------
 // MethodMap — maps HTTP methods to route indices for a single path pattern
@@ -185,6 +220,8 @@ pub struct App {
     middleware: Vec<Box<dyn Middleware>>,
     state: crate::state::TypeMap,
     max_body_size: usize,
+    not_found_handler: Option<NotFoundHandlerFn>,
+    method_not_allowed_handler: Option<MethodNotAllowedHandlerFn>,
 }
 
 impl App {
@@ -194,14 +231,17 @@ impl App {
             middleware: Vec::new(),
             state: crate::state::TypeMap::new(),
             max_body_size: crate::request::DEFAULT_MAX_BODY_SIZE,
+            not_found_handler: None,
+            method_not_allowed_handler: None,
         }
     }
 
     /// Register a route (no route-level middleware).
-    fn route<F, Fut>(mut self, method: Method, pattern: &str, handler: F) -> Self
+    fn route<F, Fut, T>(mut self, method: Method, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route_table.push(Route {
             method,
@@ -213,44 +253,153 @@ impl App {
         self
     }
 
-    pub fn get<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn get<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::GET, pattern, handler)
     }
 
-    pub fn post<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn post<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::POST, pattern, handler)
     }
 
-    pub fn put<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn put<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::PUT, pattern, handler)
     }
 
-    pub fn delete<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn delete<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::DELETE, pattern, handler)
     }
 
-    pub fn patch<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn patch<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::PATCH, pattern, handler)
+    }
+
+    fn probe<F, Fut, T>(self, kind: &'static str, pattern: &str, handler: F) -> Self
+    where
+        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
+    {
+        self.route(Method::GET, pattern, handler)
+            .with_metadata(pattern, |metadata| {
+                metadata.name = Some(kind.to_string());
+                metadata.tags.push("probe".to_string());
+                metadata.tags.push(kind.to_string());
+            })
+    }
+
+    /// Register a static health endpoint that returns `200 OK` with body `ok`.
+    pub fn health(self, pattern: &str) -> Self {
+        self.health_handler(pattern, |_req| async { Response::text("ok") })
+    }
+
+    /// Register a custom health endpoint.
+    pub fn health_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
+    where
+        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
+    {
+        self.probe("health", pattern, handler)
+    }
+
+    /// Register a static liveness endpoint that returns `200 OK` with body `alive`.
+    pub fn liveness(self, pattern: &str) -> Self {
+        self.liveness_handler(pattern, |_req| async { Response::text("alive") })
+    }
+
+    /// Register a custom liveness endpoint.
+    pub fn liveness_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
+    where
+        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
+    {
+        self.probe("liveness", pattern, handler)
+    }
+
+    /// Register a static readiness endpoint that returns `200 OK` with body `ready`.
+    pub fn readiness(self, pattern: &str) -> Self {
+        self.readiness_handler(pattern, |_req| async { Response::text("ready") })
+    }
+
+    /// Register a custom readiness endpoint.
+    pub fn readiness_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
+    where
+        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
+    {
+        self.probe("readiness", pattern, handler)
+    }
+
+    /// Customize the framework-generated 404 response.
+    pub fn not_found_handler<F, Fut, T>(mut self, handler: F) -> Self
+    where
+        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
+    {
+        self.not_found_handler = Some(wrap_not_found_handler(handler));
+        self
+    }
+
+    /// Customize the framework-generated 405 response.
+    pub fn method_not_allowed_handler<F, Fut, T>(mut self, handler: F) -> Self
+    where
+        F: Fn(Request, Vec<Method>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
+    {
+        self.method_not_allowed_handler = Some(wrap_method_not_allowed_handler(handler));
+        self
+    }
+
+    /// Use RFC 9457 problem details for framework-generated 404 and 405 responses.
+    pub fn default_problem_details(self) -> Self {
+        self.not_found_handler(|req| async move {
+            let path = req.path().to_string();
+            ProblemDetail::new(StatusCode::NOT_FOUND)
+                .detail(format!("no route for {path}"))
+                .instance(path)
+        })
+        .method_not_allowed_handler(|req, allowed| async move {
+            let path = req.path().to_string();
+            let allow = allowed
+                .iter()
+                .map(|method| method.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            ProblemDetail::new(StatusCode::METHOD_NOT_ALLOWED)
+                .detail(format!("allowed methods: {allow}"))
+                .instance(path)
+                .extension("allow", allow)
+        })
     }
 
     /// Attach metadata to the most recently added route matching this pattern.
@@ -330,13 +479,20 @@ impl App {
 
     /// Consume the builder, returning the parts needed by the server.
     pub fn into_parts(
-        self,
+        mut self,
     ) -> (
         RouteTable,
         Vec<Box<dyn Middleware>>,
         crate::state::TypeMap,
         usize,
     ) {
+        if let Some(handler) = self.not_found_handler.take() {
+            self.state.insert(NotFoundHandler(handler));
+        }
+        if let Some(handler) = self.method_not_allowed_handler.take() {
+            self.state.insert(MethodNotAllowedHandler(handler));
+        }
+
         (
             self.route_table,
             self.middleware,
@@ -383,10 +539,11 @@ impl Group {
 
     /// Register a route within this group. The group prefix is prepended.
     /// Group middleware is attached later in `into_routes()`.
-    fn route<F, Fut>(mut self, method: Method, pattern: &str, handler: F) -> Self
+    fn route<F, Fut, T>(mut self, method: Method, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         let full_pattern = format!("{}{}", self.prefix, pattern);
         self.routes.push(Route {
@@ -399,42 +556,47 @@ impl Group {
         self
     }
 
-    pub fn get<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn get<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::GET, pattern, handler)
     }
 
-    pub fn post<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn post<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::POST, pattern, handler)
     }
 
-    pub fn put<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn put<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::PUT, pattern, handler)
     }
 
-    pub fn delete<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn delete<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::DELETE, pattern, handler)
     }
 
-    pub fn patch<F, Fut>(self, pattern: &str, handler: F) -> Self
+    pub fn patch<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Response> + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: IntoResponse + 'static,
     {
         self.route(Method::PATCH, pattern, handler)
     }
@@ -490,6 +652,8 @@ impl Group {
 mod tests {
     use super::*;
     use crate::handler;
+    use crate::response::Response;
+    use http::StatusCode;
 
     async fn dummy(_req: Request) -> Response {
         Response::text("ok")
@@ -660,5 +824,164 @@ mod tests {
         let (route, pm) = table.match_route(&Method::GET, "/users/99").unwrap();
         assert_eq!(route.pattern.as_str(), "/users/:id");
         assert_eq!(pm.get("id"), Some("99"));
+    }
+
+    struct TestError;
+
+    impl IntoResponse for TestError {
+        fn into_response(self) -> Response {
+            Response::new(StatusCode::BAD_REQUEST, "bad request")
+        }
+    }
+
+    #[tokio::test]
+    async fn app_get_accepts_fallible_handlers() {
+        async fn fallible(_req: Request) -> Result<Response, TestError> {
+            Err(TestError)
+        }
+
+        let client = App::new().get("/fallible", fallible).client();
+        let resp = client.get("/fallible").await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.text(), "bad request");
+    }
+
+    #[tokio::test]
+    async fn group_get_accepts_fallible_handlers() {
+        async fn fallible(_req: Request) -> Result<Response, TestError> {
+            Err(TestError)
+        }
+
+        let client = App::new()
+            .group("/api", |g| g.get("/fallible", fallible))
+            .client();
+        let resp = client.get("/api/fallible").await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.text(), "bad request");
+    }
+
+    #[tokio::test]
+    async fn probe_helpers_register_routes_and_attach_metadata() {
+        let app = App::new()
+            .health("/health")
+            .liveness("/live")
+            .readiness("/ready");
+
+        let routes: Vec<(String, String, Vec<String>)> = app
+            .route_table()
+            .iter()
+            .map(|route| {
+                (
+                    route.pattern.as_str().to_string(),
+                    route.metadata.name.clone().unwrap_or_default(),
+                    route.metadata.tags.to_vec(),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            routes,
+            vec![
+                (
+                    "/health".to_string(),
+                    "health".to_string(),
+                    vec!["probe".to_string(), "health".to_string()],
+                ),
+                (
+                    "/live".to_string(),
+                    "liveness".to_string(),
+                    vec!["probe".to_string(), "liveness".to_string()],
+                ),
+                (
+                    "/ready".to_string(),
+                    "readiness".to_string(),
+                    vec!["probe".to_string(), "readiness".to_string()],
+                ),
+            ]
+        );
+
+        let client = app.client();
+
+        let resp = client.get("/health").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "ok");
+
+        let resp = client.get("/live").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "alive");
+
+        let resp = client.get("/ready").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "ready");
+    }
+
+    #[tokio::test]
+    async fn custom_not_found_handler_is_used_but_status_stays_404() {
+        let client = App::new()
+            .not_found_handler(|req| async move {
+                Response::text(format!("missing {}", req.path())).status(200)
+            })
+            .client();
+
+        let resp = client.get("/nope").await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.text(), "missing /nope");
+    }
+
+    #[tokio::test]
+    async fn custom_method_not_allowed_handler_is_used_and_allow_is_enforced() {
+        let client = App::new()
+            .get("/users", dummy)
+            .post("/users", dummy)
+            .method_not_allowed_handler(|_req, methods| async move {
+                let body = methods
+                    .iter()
+                    .map(|method| method.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                Response::text(body).status(200).header("allow", "CUSTOM")
+            })
+            .client();
+
+        let resp = client.put("/users", "").await;
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.text(), "GET, POST, HEAD");
+
+        let allow = resp.header("allow").expect("expected Allow header on 405");
+        let mut methods: Vec<&str> = allow.split(", ").collect();
+        methods.sort();
+        assert_eq!(methods, vec!["GET", "HEAD", "POST"]);
+    }
+
+    #[tokio::test]
+    async fn default_problem_details_formats_framework_404_and_405() {
+        let client = App::new()
+            .default_problem_details()
+            .get("/users", dummy)
+            .client();
+
+        let resp = client.get("/nope").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            resp.header("content-type"),
+            Some("application/problem+json")
+        );
+        assert!(resp.text().contains("\"status\":404"));
+        assert!(resp.text().contains("\"detail\":\"no route for /nope\""));
+
+        let resp = client.post("/users", "").await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            resp.header("content-type"),
+            Some("application/problem+json")
+        );
+        assert_eq!(resp.header("allow"), Some("GET, HEAD"));
+        assert!(resp.text().contains("\"status\":405"));
+        assert!(resp.text().contains("\"allow\":\"GET, HEAD\""));
     }
 }

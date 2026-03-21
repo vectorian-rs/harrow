@@ -8,6 +8,7 @@ members = [
     "harrow-o11y",
     "harrow-serde",
     "harrow-server",
+    "harrow-server-monoio",
     "harrow-bench",
 ]
 
@@ -23,6 +24,7 @@ harrow-o11y = { path = "harrow-o11y", version = "0.2.7" }
 harrow-middleware = { path = "harrow-middleware", version = "0.2.7" }
 harrow-serde = { path = "harrow-serde", version = "0.2.7" }
 harrow-server = { path = "harrow-server", version = "0.2.7" }
+harrow-server-monoio = { path = "harrow-server-monoio", version = "0.2.7" }
 
 bytes = "1"
 http = "1"
@@ -47,6 +49,8 @@ blake3 = "1"
 getrandom = "0.3"
 mimalloc = "0.1"
 dashmap = "6"
+monoio = { version = "0.2", features = ["bytes"] }
+httparse = "1.10"
 proptest = "1"
 
 [profile.bench]
