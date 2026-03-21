@@ -1,6 +1,6 @@
 # Middleware Comparison
 
-**Status:** current as of 2026-03-20
+**Status:** current as of 2026-03-21
 
 This document compares the middleware surface that is common in Axum/Tower
 projects with what Harrow currently ships.
@@ -55,6 +55,7 @@ These are defined in `harrow-middleware/src/lib.rs` and re-exported from
 | Buffer | `tower::buffer` | No | Not shipped |
 | Load shed | `tower::load_shed` | No | Not shipped |
 | Request concurrency limit | `tower::limit::ConcurrencyLimitLayer` | Partial | Harrow has server-level `max_connections`, but not a request middleware equivalent |
+| Connection-level timeouts | hyper builder config, framework defaults | Yes | `ServerConfig`: header read timeout, connection lifetime, max connections, drain timeout. See `docs/connection-safety.md` |
 
 ## Short Read
 
@@ -103,5 +104,6 @@ inherit the broader Tower middleware ecosystem.
 
 - Authentication design notes: `docs/auth-middleware.md`
 - Rate limiting design and implementation notes: `docs/rate-limiting-middleware.md`
+- Connection safety and timeout architecture: `docs/connection-safety.md`
 - Broader performance tradeoffs around middleware shape: `docs/article.md`
 - Core framework PRD and non-goals: `docs/prds/harrow-http-framework.md`

@@ -1,7 +1,7 @@
 # Harrow Performance Journal
 
 **Status:** living document  
-**Last updated:** 2026-03-20
+**Last updated:** 2026-03-21
 
 This is not a launch post and not a benchmark victory lap. It is a dated
 engineering log for Harrow's performance work: what we measured, what moved the
@@ -548,7 +548,7 @@ engine.
 
 ## Current Thesis
 
-As of 2026-03-20, the strongest performance conclusions are:
+As of 2026-03-21, the strongest performance conclusions are:
 
 1. Harrow's local routing and dispatch costs are already small.
 2. The big remote throughput regression was caused by per-connection timers.
@@ -557,6 +557,10 @@ As of 2026-03-20, the strongest performance conclusions are:
 4. Pure Tower-style static layers are still the lower-allocation ideal.
 5. The next optimization worth chasing is probably in compression/session work,
    not in rewriting `Next`.
+6. Connection-level timeouts (header read, connection lifetime) are a security
+   feature that has a measurable performance cost. Making them optional and
+   configurable was the right call — it keeps production safe by default while
+   letting benchmark and proxy-shielded deployments remove the overhead.
 
 That last point is the one most worth preserving. We now have enough data to
 avoid a complexity explosion for a marginal win.
@@ -588,6 +592,84 @@ Remote throughput artifacts:
   `docs/perf/c8g.12xlarge/2026-03-19T07-36-57Z/`
 - post-timer fix matched run:
   `docs/perf/c8g.12xlarge/2026-03-19T13-34-49Z/`
+
+## 2026-03-21: Connection Safety — Timers as a Security Feature, Not Just Overhead
+
+The timer story from March 19 had a sequel.
+
+After fixing the benchmark regression by making timers optional, we stepped
+back and asked: what do those timers actually protect against? And what
+connection-level threats does Harrow handle versus leave to the reverse proxy?
+
+### The Threat Model
+
+HTTP servers face four connection-level attacks that happen before the
+application handler ever runs:
+
+1. **Slow-loris:** client trickles headers at 1 byte/sec, never completing.
+2. **Idle connections:** client opens TCP, sends nothing, holds a slot.
+3. **Slow-read:** client reads the response body at 1 byte/sec.
+4. **Connection flood:** thousands of simultaneous connections exhaust FDs.
+
+These are distinct from handler timeouts. `TimeoutMiddleware` only activates
+after the full request is received. Connection-level attacks happen before
+the request is parsed.
+
+### What Harrow Covers Today
+
+| Threat | Defense | Default |
+|---|---|---|
+| Slow-loris | `header_read_timeout` via hyper | 5s |
+| Idle + slow-read | `connection_timeout` (hard lifetime cap) | 5 min |
+| Connection flood | `max_connections` (semaphore) | 8192 |
+| Shutdown stall | `drain_timeout` | 30s |
+
+All of these are configurable through `ServerConfig` and passed to
+`serve_with_config()`.
+
+### What Harrow Cannot Cover
+
+**HTTP/1 keep-alive idle timeout:** hyper's HTTP/1 builder only exposes
+`keep_alive(bool)` — on or off. There is no per-idle-gap timeout. A client
+that finishes a request and then sits on the connection without sending
+another request is protected only by the 5-minute `connection_timeout`.
+This is a hyper limitation, not a Harrow design choice.
+
+**Write timeout (slow-read):** hyper does not expose a server-side write
+timeout. A client that accepts the response at 1 byte/sec will hold the
+connection until `connection_timeout` fires. Proper slow-read protection
+would require wrapping the I/O stream in a custom `AsyncWrite` that
+enforces minimum throughput. That is real work and not yet justified.
+
+### Why This Matters for the Performance Story
+
+The timer decision is not purely a performance optimization. It is a
+security trade-off with measurable performance impact:
+
+- **Timers on** (production default): safer, costs ~2x throughput at 500K+
+  RPS on 48 cores due to Tokio timer-wheel contention.
+- **Timers off** (behind proxy): maximum throughput, relies on the proxy
+  for connection-level safety.
+
+That is a real, defensible split. It is not "we removed safety for speed."
+It is "we made safety configurable because not every deployment needs the
+same defense boundary."
+
+### Comparison
+
+| Feature | Harrow | Axum (default) | Actix-web |
+|---|---|---|---|
+| Header read timeout | Yes (5s) | No | Yes (5s) |
+| Connection lifetime | Yes (5min) | No | Yes |
+| Max connections | Yes (semaphore) | No built-in | Yes (25K) |
+| Keep-alive idle timeout | No (hyper limitation) | No | Yes (5s) |
+| Write timeout | No | No | No |
+
+Harrow ships **safer defaults** than Axum's default serving path. That is
+a deliberate choice. The penalty is measurable at extreme throughput. The
+defense is real.
+
+Full details are in `docs/connection-safety.md`.
 
 ## What This Document Should Become
 
