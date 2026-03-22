@@ -15,5 +15,5 @@ pub use middleware::{Middleware, Next};
 pub use problem::ProblemDetail;
 pub use request::Request;
 pub use response::{Response, ResponseBody};
-pub use route::{Route, RouteMetadata, RouteTable};
+pub use route::{Route, RouteMetadata, RouteSummary, RouteTable};
 pub use state::{MissingStateError, TypeMap};

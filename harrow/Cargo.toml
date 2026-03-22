@@ -3,7 +3,7 @@ name = "harrow"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "A thin, macro-free HTTP framework over Hyper with built-in observability"
+description = "A thin, macro-free HTTP framework over Hyper with opt-in observability"
 
 [features]
 default = []

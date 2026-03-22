@@ -1,6 +1,6 @@
 //! # Harrow
 //!
-//! A thin, macro-free HTTP framework over Hyper with built-in observability.
+//! A thin, macro-free HTTP framework over Hyper with opt-in observability.
 
 pub use harrow_core::client::{Client, TestResponse};
 pub use harrow_core::handler;
@@ -9,7 +9,7 @@ pub use harrow_core::path::PathPattern;
 pub use harrow_core::problem::ProblemDetail;
 pub use harrow_core::request::{BodyError, Request};
 pub use harrow_core::response::{IntoResponse, Response, ResponseBody};
-pub use harrow_core::route::{App, Group, Route, RouteMetadata, RouteTable};
+pub use harrow_core::route::{App, Group, Route, RouteMetadata, RouteSummary, RouteTable};
 pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 
 pub use harrow_server::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
