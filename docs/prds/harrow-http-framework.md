@@ -25,9 +25,9 @@ Harrow aims to be the framework you reach for when you want Hyper's raw performa
 |----------|------|
 | P0 | Zero proc-macros. All routing and handler wiring is plain Rust function calls. |
 | P0 | Route table is a concrete, inspectable data structure available at runtime. |
-| P0 | Built-in structured observability: tracing spans per request, latency histograms, error counters. |
+| P0 | Opt-in structured observability via first-party middleware and extension traits: tracing spans per request, latency histograms, error counters. |
 | P0 | Minimal overhead over raw Hyper. Target < 1 us added latency per request on the hot path. |
-| P0 | Continuous flamegraph profiling. Every milestone, PR, and CI run produces comparable flamecharts to catch regressions before they merge. |
+| P0 | Targeted benchmark runs capture perf records and supporting visualizations so regressions are visible before releases and major changes. |
 | P1 | Compile times competitive with or better than Axum for equivalent service definitions. |
 | P1 | Clear, human-readable compiler errors. No deeply nested generic bounds. |
 | P1 | First-class health check, readiness, and liveness endpoints. |
@@ -46,7 +46,7 @@ Harrow aims to be the framework you reach for when you want Hyper's raw performa
 
 1. **Explicit over implicit.** No hidden trait impls, no inference-dependent dispatch. If the user did not write it, it does not happen.
 2. **Data over types.** Routes, middleware chains, and metadata are runtime values, not encoded in the type system.
-3. **Observability is not optional.** Every request gets a trace span and basic metrics by default. You opt out, not in.
+3. **Observability is first-party, but explicit.** Harrow ships the middleware and extension traits, but applications opt in via feature flags and registration rather than getting telemetry by default.
 4. **Compile-time is developer time.** Minimize generic instantiation. Prefer dynamic dispatch (`Box<dyn Handler>`) on cold paths, monomorphization only where it matters for hot-path throughput.
 5. **Small API surface.** A developer should be able to read the entire public API in one sitting.
 
@@ -142,8 +142,13 @@ for route in app.route_table().iter() {
     println!("{} {} [{}]", route.method, route.pattern, route.metadata.name.as_deref().unwrap_or("-"));
 }
 
+// Export a minimal method + path snapshot
+for route in app.route_table().summary() {
+    println!("{route}");
+}
+
 // Export as JSON for external tooling
-let json = serde_json::to_string_pretty(app.route_table())?;
+let json = serde_json::to_string_pretty(&app.route_table().summary())?;
 
 // Filter routes by tag
 let user_routes: Vec<&Route> = app.route_table()
@@ -171,9 +176,9 @@ let app = App::new()
 
 No `Layer`. No `Service`. No `BoxCloneService`. A middleware is a function with a known signature.
 
-### 4.6 Built-in Observability
+### 4.6 Opt-In Observability
 
-Every request automatically gets:
+When the `o11y` feature is enabled and the observability wiring is registered, requests can get:
 
 | Feature | Implementation | Status |
 |---------|---------------|--------|
@@ -182,7 +187,19 @@ Every request automatically gets:
 | **Latency histogram** | Per-route histogram (`metrics` crate). | **v0.2 Target** |
 | **Error counter** | Counts 4xx/5xx responses per route. | **v0.2 Target** |
 
-Opt-out is handled by not registering the observability middleware.
+Typical application wiring is explicit:
+
+```rust
+#[cfg(feature = "o11y")]
+use harrow::{App, AppO11yExt};
+#[cfg(feature = "o11y")]
+use harrow::o11y::O11yConfig;
+
+#[cfg(feature = "o11y")]
+let app = App::new().o11y(O11yConfig::default().service_name("svc"));
+```
+
+Without the `o11y` feature or middleware, Harrow runs without tracing spans or metrics.
 
 ### 4.7 Startup Diagnostics
 
@@ -297,19 +314,15 @@ harrow/
   harrow-core/       # Route table, Request/Response wrappers, middleware trait
   harrow-o11y/       # Tracing + metrics integration (optional feature)
   harrow-server/     # Hyper binding, connection handling, graceful shutdown
-  harrow-bench/      # Standalone load driver + criterion benchmarks (3 workloads)
+  harrow-bench/      # Criterion benches, remote perf capture, summary rendering
   harrow/            # Facade crate re-exporting everything
-  scripts/
-    profile.sh       # Run all workloads under cargo-flamegraph, output SVGs
-    profile-diff.sh  # Diff current flamegraphs against a saved baseline
-  flamegraphs/       # .gitignore-d, local output directory
 ```
 
 Feature flags on the facade crate:
 
 | Feature | Default | Contents |
 |---------|---------|----------|
-| `o11y` | on | Tracing spans + metrics |
+| `o11y` | off | First-party observability wiring: tracing spans, request IDs, and `O11yConfig` integration |
 | `json` | on | `serde_json` body parsing/response helpers |
 | `tls` | off | rustls integration |
 | `http2` | on | HTTP/2 support via hyper |
@@ -328,94 +341,42 @@ Measured on a simple JSON echo handler (`/echo` — parse JSON body, return it):
 | Binary size (release, stripped, minimal features) | < 2 MB |
 | Compile time (clean build) | < 30s on M-series Apple Silicon |
 
-Benchmarks tracked in CI via `criterion`.
+Criterion microbenches and `harrow-bench` perf runs are executed on demand. CI currently focuses on correctness, formatting, and linting.
 
 ---
 
-## 11. Flamegraph-Driven Performance Verification
+## 11. Performance Verification
 
-Every change to Harrow must be provably non-regressing. Flamegraphs are not a debugging afterthought — they are a continuous verification artifact produced on every CI run and reviewable in every PR.
+Performance validation is driven by targeted benchmark sessions, not automatic PR gates. The current workflow captures benchmark metrics, perf artifacts, and supporting visualizations when profiling is enabled, then reviews them manually during focused performance work and before releases.
 
 ### 11.1 Toolchain
 
 | Tool | Role |
 |------|------|
-| [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph) | Generates SVG flamegraphs from `perf` (Linux) or `dtrace` (macOS) profiles. |
-| [`inferno`](https://github.com/jonhoo/inferno) | Rust-native folded-stack processing. Used in CI where SVG diffing is needed. `inferno-flamegraph` and `inferno-diff-folded` are the key binaries. |
-| `criterion` | Micro-benchmarks that serve as the workloads being profiled. |
-| Custom `harrow-bench` binary | A standalone load driver (wrk2-style) that sends sustained traffic to a running Harrow server for macro-level profiling. |
+| `criterion` | Local micro-benchmarks for isolated workloads. |
+| `harrow-bench` | Remote perf runner and artifact collector for end-to-end benchmark sessions. |
+| `perf stat` / `perf record` | Counter and sampled-stack capture during benchmark runs. |
+| `perf_summary` | Renders markdown/SVG summaries and local flamegraphs from captured perf artifacts when the required tools are available. |
 
-### 11.2 What Gets Profiled
+### 11.2 What Gets Captured
 
-Three standard workloads, each producing its own flamegraph:
+Targeted benchmark runs can capture:
 
-| Workload | Description | What it catches |
-|----------|-------------|-----------------|
-| **echo** | JSON echo handler, no middleware, no state. Pure routing + serialization hot path. | Overhead in core request dispatch, path matching, response construction. |
-| **middleware-chain** | 5-deep middleware stack (logging, auth check, request ID, rate limit stub, compression stub) around a trivial handler. | Cost of middleware traversal, `Next` chaining, per-middleware allocations. |
-| **full-stack** | Realistic service: state injection, path params, JSON body parse, DB stub (async sleep), structured error responses, all o11y enabled. | End-to-end overhead under realistic conditions. Allocation pressure, span creation cost, metrics recording. |
+- request metrics such as throughput and latency percentiles
+- host telemetry such as `vmstat`, `sar`, `iostat`, and `pidstat`
+- `perf stat` counter output
+- `perf record` samples, `perf report`, folded stacks, and flamegraphs when the toolchain is available
 
-### 11.3 CI Pipeline Integration
+### 11.3 Review Workflow
 
-```
-┌─────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  PR opened  │────►│  cargo bench     │────►│  Profile each    │────►│  Diff against   │
-│             │     │  (criterion)     │     │  workload with   │     │  main baseline  │
-│             │     │                  │     │  cargo-flamegraph │     │  flamegraphs    │
-└─────────────┘     └──────────────────┘     └──────────────────┘     └────────┬────────┘
-                                                                               │
-                                                                    ┌──────────▼──────────┐
-                                                                    │  Post artifacts to  │
-                                                                    │  PR as comment:     │
-                                                                    │  - SVG flamegraphs  │
-                                                                    │  - Diff flamegraph  │
-                                                                    │  - criterion report │
-                                                                    │  - Pass/fail gate   │
-                                                                    └─────────────────────┘
-```
+1. Run the relevant benchmark or remote perf scenario.
+2. Capture request metrics plus perf/host-monitor artifacts for the run.
+3. Render summaries and visualizations from the recorded artifacts.
+4. Compare against a known-good baseline manually when investigating regressions or preparing a release.
 
-**Steps in detail:**
+This keeps the perf workflow explicit and reproducible without making it a mandatory CI gate at the current stage of the project.
 
-1. **Baseline capture.** On every merge to `main`, CI runs all three workloads and stores the folded stacks and SVG flamegraphs as versioned artifacts (e.g., `flamegraphs/main/<commit-sha>/echo.folded`).
-
-2. **PR profiling.** On every PR, CI runs the same workloads on the PR branch.
-
-3. **Differential flamegraph.** `inferno-diff-folded` compares the PR's folded stacks against the `main` baseline, producing a red/blue differential SVG:
-   - **Red** = frames that got hotter (more samples).
-   - **Blue** = frames that got cooler (fewer samples).
-
-4. **Regression gate.** CI fails the PR if:
-   - Any criterion benchmark regresses by more than **3%** (configurable via `HARROW_PERF_THRESHOLD`).
-   - Any new frame appears in the hot path that was not present in the baseline (flagged for manual review, not auto-fail).
-
-5. **Artifact posting.** A CI bot comments on the PR with:
-   - Links to the three workload flamegraphs (SVG, viewable in-browser).
-   - The differential flamegraph.
-   - A summary table of criterion results (mean, stddev, change %).
-
-### 11.4 Local Developer Workflow
-
-Developers can reproduce CI profiling locally:
-
-```bash
-# Generate a flamegraph for the echo workload
-cargo flamegraph --bench echo_bench -o flamegraphs/echo.svg
-
-# Run all three workloads and generate flamegraphs
-./scripts/profile.sh
-
-# Compare against a saved baseline
-./scripts/profile-diff.sh baseline/main flamegraphs/
-# Outputs: flamegraphs/diff-echo.svg, diff-middleware-chain.svg, diff-full-stack.svg
-```
-
-The `scripts/profile.sh` script:
-- Builds in release mode with debug symbols (`profile.release.debug = true` in `Cargo.toml`).
-- Runs each criterion benchmark under `cargo-flamegraph`.
-- Launches `harrow-bench` against a local server for the macro-level profile.
-- Outputs all SVGs to `flamegraphs/`.
-
-### 11.5 Cargo Configuration
+### 11.4 Cargo Configuration
 
 ```toml
 # Cargo.toml — workspace root
@@ -431,15 +392,9 @@ lto = "fat"
 codegen-units = 1
 ```
 
-### 11.6 Flamegraph Storage and History
+### 11.5 What We Look For In Review
 
-- `flamegraphs/` directory is `.gitignore`-d. CI artifacts are stored externally (S3, GCS, or GitHub Actions artifact storage).
-- A lightweight manifest (`flamegraphs/manifest.json`) tracks which commit produced which baseline, enabling historical comparison across releases.
-- On tagged releases (v0.1, v0.2, ...), flamegraphs are archived permanently and linked from the release notes, giving a visual performance history of the project.
-
-### 11.7 What We Look For in Review
-
-When reviewing a PR's flamegraph diff:
+When reviewing a profiled run:
 
 | Signal | Action |
 |--------|--------|
@@ -448,17 +403,17 @@ When reviewing a PR's flamegraph diff:
 | `clone()` or `to_string()` appearing in dispatch | Likely a regression. Request path should be zero-copy where possible. |
 | Middleware traversal frame growth | Check if `Next` chaining changed. Should be constant-cost per middleware layer. |
 | `serde` frames growing | Check if serialization path changed. May indicate a schema change, not a regression. |
-| Differential flamegraph is entirely blue | Celebrate. |
+| Hotspots move without an intended code change | Re-check the run and compare against a previous baseline before merging. |
 
-### 11.8 Milestone Gates
+### 11.6 Milestone Checks
 
-Each milestone (v0.1, v0.2, v0.3) has a performance gate:
+Each milestone (v0.1, v0.2, v0.3) should still include a focused perf review:
 
-| Milestone | Gate |
-|-----------|------|
-| **v0.1** | Flamegraph of `echo` workload shows Harrow frames occupy < 5% of total samples (95%+ is Hyper/tokio/kernel). Baseline flamegraphs established for all three workloads. |
-| **v0.2** | No workload regresses by more than 3% vs v0.1 baseline. Route groups and serialization do not introduce new hot-path allocations. |
-| **v0.3** | TLS and timeout handling do not appear in the `echo` workload flamegraph (they should only activate when configured). Full-stack workload remains within 5% of v0.2. |
+| Milestone | Check |
+|-----------|-------|
+| **v0.1** | Establish repeatable perf captures and a baseline set of benchmark artifacts. |
+| **v0.2** | Re-run targeted scenarios for routing, middleware, serialization, and o11y changes; review hotspot shifts manually. |
+| **v0.3** | Validate TLS and timeout overhead with targeted perf runs when those features are enabled. |
 
 ---
 
@@ -507,10 +462,10 @@ Each milestone (v0.1, v0.2, v0.3) has a performance gate:
 
 ## 14. Prior Art and Differentiation
 
-| Framework | Macros | Route Introspection | Built-in O11y | Overhead |
-|-----------|--------|---------------------|---------------|----------|
-| **Axum** | No proc macros, but heavy trait generics | No first-class API | No (Tower layers) | Low |
-| **Actix-web** | Proc macros for routes | Limited | No | Low |
-| **Warp** | No macros, filter combinators | No | No | Low |
-| **Poem** | Proc macros | OpenAPI integration | Partial | Low |
-| **Harrow** | None | First-class, queryable | Built-in | Minimal |
+| Framework | Macros | Route Introspection | O11y Model | Overhead |
+|-----------|--------|---------------------|------------|----------|
+| **Axum** | No proc macros, but heavy trait generics | No first-class API | External Tower layers | Low |
+| **Actix-web** | Proc macros for routes | Limited | External middleware | Low |
+| **Warp** | No macros, filter combinators | No | External filters/middleware | Low |
+| **Poem** | Proc macros | OpenAPI integration | Partial built-in support | Low |
+| **Harrow** | None | First-class, queryable | First-party opt-in | Minimal |

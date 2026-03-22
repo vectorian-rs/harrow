@@ -4,7 +4,7 @@
 **Harrow version:** 0.1.0-dev
 **Platform:** macOS (Darwin 24.6.0), Apple Silicon
 **Rust:** edition 2024, release profile (`opt-level = 3`, `lto = "thin"`, `debug = true`)
-**Benchmark tool:** criterion 0.5
+**Benchmark tools:** criterion 0.5; `spinr` + `harrow-bench` for remote perf runs
 
 ---
 
@@ -23,15 +23,52 @@ cargo bench --bench route_groups
 
 Results are written to `target/criterion/`. Open `target/criterion/report/index.html` for interactive charts.
 
-For flamegraph profiling:
+For remote perf capture and rendered summaries, use the Rust perf runner:
 
 ```bash
-# Requires: cargo install flamegraph
-./scripts/profile.sh
+# Run the remote perf orchestrator directly
+cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
+  --server-ssh <server-public-ip> \
+  --client-ssh <client-public-ip> \
+  --server-private <server-private-ip> \
+  --instance-type c8g.12xlarge \
+  --duration 20 \
+  --warmup 2 \
+  --os-monitors \
+  --perf \
+  --perf-mode both \
+  --config harrow-bench/spinr/text-c128.toml \
+  --config harrow-bench/spinr/json-1kb-c128.toml
 
-# Compare against a baseline
-./scripts/profile-diff.sh flamegraphs/baseline flamegraphs/
+# Or use the checked-in task wrapper
+mise run bench:run
+
+# Re-render a results directory later if needed
+cargo run -p harrow-bench --bin render_perf_summary -- docs/perf/<instance>/<timestamp>
 ```
+
+By default, the runner writes results under `docs/perf/<instance-type>/<timestamp>/`.
+Each run directory contains the raw JSON metrics, host-monitor logs, perf artifacts,
+and rendered outputs such as `summary.md` and `summary.svg`.
+
+---
+
+## Remote Perf Runner
+
+Remote perf sessions are driven by the Rust orchestrator in
+`harrow-bench/src/bin/harrow_remote_perf_test.rs`.
+
+The runner:
+
+1. connects to separate server and client machines over SSH
+2. starts `harrow-perf-server` or `axum-perf-server` in Docker on the server host
+3. renders `spinr` TOML templates by filling `{{ server }}`, `{{ duration }}`, and `{{ warmup }}`
+4. uploads the rendered config to the client and runs `spinr bench ... -j`
+5. optionally collects `vmstat`, `sar`, `iostat`, `pidstat`, `perf stat`, and `perf record`
+6. copies artifacts into the local results directory and writes per-run `*.meta.json`
+7. calls `perf_summary::render_results_dir()` to emit `summary.md`, `summary.svg`, telemetry SVGs, and local flamegraphs when the required tools are available
+
+If you already have a populated results directory, `render_perf_summary` is the thin Rust wrapper around the same summary renderer.
 
 ---
 
@@ -290,15 +327,16 @@ The PRD target of "< 1 µs added latency over raw Hyper" is met for the echo wor
 
 ---
 
-## Regression Detection
+## Perf Review Workflow
 
-These benchmarks run in CI on every PR. A regression is flagged when:
+Performance review is currently manual rather than CI-gated.
 
-- Any micro-benchmark (path matching, route lookup) regresses by **> 5%**.
-- Any TCP benchmark regresses by **> 10%** (wider threshold due to TCP variance).
-- Any new benchmark group appears without a corresponding baseline.
-
-Flamegraph diffs are generated alongside criterion reports. See [`docs/prds/harrow-http-framework.md`](prds/harrow-http-framework.md) § 11 for the full flamegraph CI pipeline.
+- Use `cargo bench` for local microbench and TCP benchmark changes.
+- Use `harrow-remote-perf-test` when you need full remote captures with `perf stat`,
+  `perf record`, host telemetry, and side-by-side Harrow/Axum results.
+- The runner renders `summary.md`, `summary.svg`, telemetry SVGs, and local flamegraphs
+  from captured `perf script` output when the required tools are available.
+- Compare a fresh run against a known-good prior run before treating a hotspot shift as real.
 
 ---
 
@@ -330,17 +368,21 @@ cargo bench --bench echo
 cargo bench --bench axum_echo
 ```
 
-**External load-test comparison** (requires `bench` binary from mcp-load-tester):
+**External load-test comparison** (Rust runner around the `bench` binary):
 
 ```bash
 # Option 1: auto-discover bench binary
-./scripts/compare-frameworks.sh
+cargo run -p harrow-bench --bin compare_frameworks --
 
 # Option 2: explicit path
-BENCH_BIN=/path/to/bench ./scripts/compare-frameworks.sh
+cargo run -p harrow-bench --bin compare_frameworks -- \
+  --bench-bin /path/to/bench
 
-# Option 3: flag
-./scripts/compare-frameworks.sh --bench-bin /path/to/bench
+# Option 3: remote target host
+cargo run -p harrow-bench --bin compare_frameworks -- \
+  --remote \
+  --server-host 10.0.1.5 \
+  --bench-bin /path/to/bench
 ```
 
 Results are written to `target/comparison/`:

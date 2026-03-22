@@ -1,12 +1,12 @@
 # Harrow
 
-A thin, macro-free HTTP framework over Hyper with built-in observability.
+A thin, macro-free HTTP framework over Hyper with opt-in observability.
 
 ## Features
 
 - **No macros, no magic** -- handlers are plain `async fn(Request) -> Response` functions. No extractors, no trait bounds, no `#[debug_handler]`.
 - **Route introspection** -- the route table is a first-class data structure you can enumerate at startup for OpenAPI generation, health checks, or monitoring config.
-- **Built-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
+- **Opt-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
 - **Feature-gated middleware** -- timeout, request-id, CORS, catch-panic, compression, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
 - **Fast** -- built directly on Hyper 1.x and matchit routing. No Tower, no `BoxCloneService`, no deep type nesting.
 
