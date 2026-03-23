@@ -447,7 +447,7 @@ Each milestone (v0.1, v0.2, v0.3) should still include a focused perf review:
 - **Explicit Extractors:** `Result`-based handlers and `require_state()`.
 - **Graceful Shutdown Drain:** Wait for in-flight requests to finish.
 - **O11y Metrics:** Latency histograms and error counters.
-- `RouteTable` serialization (JSON, TOML).
+- `RouteTable` serialization (JSON).
 - `ProblemDetail` (RFC 9457) error response builder.
 - Configurable 404/405 responses.
 
