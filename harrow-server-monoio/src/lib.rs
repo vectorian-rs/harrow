@@ -1,5 +1,41 @@
+//! Monoio-based HTTP/1.1 server for Harrow.
+//!
+//! # Cancellation Safety
+//!
+//! This crate uses io_uring for async I/O. Unlike epoll-based runtimes,
+//! io_uring submits actual kernel operations. Dropping a Rust future does
+//! NOT automatically cancel the in-flight kernel operation.
+//!
+//! This can lead to use-after-free (UAF) vulnerabilities:
+//! 1. A read operation is submitted with a user buffer
+//! 2. The future is dropped (e.g., due to timeout)
+//! 3. The kernel writes to the buffer after it's been freed/reused
+//!
+//! ## Mitigation
+//!
+//! All I/O operations with timeout paths use `CancelableAsyncReadRent` and
+//! explicitly cancel kernel operations before returning:
+//!
+//! ```rust,ignore
+//! let canceller = Canceller::new();
+//! let handle = canceller.handle();
+//!
+//! monoio::select! {
+//!     result = stream.cancelable_read(buf, handle) => result,
+//!     _ = timeout => {
+//!         canceller.cancel(); // Explicit kernel cancellation
+//!         return Err(Timeout);
+//!     }
+//! }
+//! ```
+//!
+//! See `cancel.rs` for the implementation details.
+
+mod cancel;
 mod codec;
 mod connection;
+mod kernel_check;
+mod o11y;
 
 use std::cell::Cell;
 use std::future::Future;
@@ -72,12 +108,21 @@ pub async fn serve_with_shutdown(
 }
 
 /// Serve with a graceful shutdown signal and custom configuration.
+///
+/// # Requirements
+/// This function requires Linux kernel 6.1+ for full io_uring support.
+/// It will fail fast with a clear error on older kernels.
 pub async fn serve_with_config(
     app: App,
     addr: SocketAddr,
     shutdown: impl Future<Output = ()>,
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Fail fast on unsupported kernels
+    if let Err(e) = kernel_check::check_kernel_version() {
+        return Err(Box::new(e));
+    }
+
     let (route_table, middleware, state, max_body_size) = app.into_parts();
     let shared = Arc::new(SharedState {
         route_table,
@@ -89,31 +134,37 @@ pub async fn serve_with_config(
     print_route_table(&shared.route_table);
 
     let listener = TcpListener::bind(addr)?;
-    tracing::info!("harrow-monoio listening on {addr}");
+    o11y::record_server_start(addr, &config);
 
     let active_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
 
     let mut shutdown = std::pin::pin!(shutdown);
 
+    // Accept loop with graceful shutdown.
+    //
+    // # Cancellation Safety
+    // When shutdown fires, the accept() future is dropped. This is generally
+    // safe because accept() doesn't hold user buffers - it just returns a new
+    // socket. The kernel will cancel the pending accept operation.
     loop {
         monoio::select! {
             result = listener.accept() => {
-                let (stream, _remote) = match result {
+                let (stream, remote) = match result {
                     Ok(conn) => conn,
                     Err(e) => {
-                        tracing::error!("accept error: {e}");
+                        o11y::record_accept_error(e);
                         continue;
                     }
                 };
 
                 // Disable Nagle's algorithm for lower latency.
                 if let Err(e) = stream.set_nodelay(true) {
-                    tracing::warn!("failed to set TCP_NODELAY: {e}");
+                    o11y::record_tcp_nodelay_error(e);
                 }
 
                 if active_count.get() >= config.max_connections {
                     drop(stream);
-                    tracing::warn!("connection limit reached, dropping new connection");
+                    o11y::record_connection_limit_rejected(config.max_connections);
                     continue;
                 }
 
@@ -124,6 +175,7 @@ pub async fn serve_with_config(
 
                 monoio::spawn(connection::handle_connection(
                     stream,
+                    Some(remote),
                     shared,
                     header_read_timeout,
                     connection_timeout,
@@ -131,7 +183,7 @@ pub async fn serve_with_config(
                 ));
             }
             () = &mut shutdown => {
-                tracing::info!("harrow-monoio shutting down");
+                o11y::record_server_shutdown();
                 break;
             }
         }
@@ -141,19 +193,13 @@ pub async fn serve_with_config(
     let drain_start = std::time::Instant::now();
     while active_count.get() > 0 {
         if drain_start.elapsed() >= config.drain_timeout {
-            tracing::warn!(
-                "drain timeout ({}s) exceeded, {} connections still active",
-                config.drain_timeout.as_secs(),
-                active_count.get(),
-            );
+            o11y::record_drain_timeout(config.drain_timeout.as_secs(), active_count.get());
             break;
         }
         monoio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    if active_count.get() == 0 {
-        tracing::info!("all connections drained");
-    }
+    o11y::record_drain_complete(active_count.get());
 
     Ok(())
 }

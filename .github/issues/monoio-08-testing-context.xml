@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Add comprehensive testing infrastructure for monoio server</summary>
+    <objective>Add proptest, fuzzing, and comprehensive integration tests to ensure production readiness.</objective>
+    <constraints>
+      - Use proptest for property-based testing
+      - Use cargo-fuzz for HTTP parser fuzzing
+      - Integration tests must cover edge cases and stress scenarios
+      - All tests must pass in CI
+      - No performance regressions
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-server-monoio/">
+      harrow-server-monoio/
+      ├── src/
+      │   ├── lib.rs
+      │   ├── connection.rs
+      │   ├── codec.rs       # HTTP parser - main fuzz target
+      │   ├── cancel.rs
+      │   └── kernel_check.rs
+      ├── tests/
+      │   └── integration.rs # Existing tests
+      └── fuzz/              # To create
+          └── fuzz_targets/
+              └── parse_request.rs
+    </tree>
+
+    <files>
+      <!-- Files to test -->
+      <file path="harrow-server-monoio/src/codec.rs" mode="full"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="slice" lines="48-130"/>
+      <file path="harrow-server-monoio/tests/integration.rs" mode="codemap"/>
+      
+      <!-- Reference: existing test patterns -->
+      <file path="harrow-core/fuzz/fuzz_targets/route.rs" mode="full"/>
+    </files>
+
+    <dependencies>
+      <dep name="proptest" items="proptest, prop_assert, any"/>
+      <dep name="libfuzzer-sys" items="fuzz_target"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>QA engineer with fuzzing experience</role>
+    <style>Thorough, edge-case focused, automated</style>
+    <notes>
+      1. Start with codec proptests - round-trip properties
+      2. Fuzz target for try_parse_request - focus on malformed input
+      3. Integration tests should stress cancellation paths
+      4. Consider using harrow-core/fuzz as template
+    </notes>
+  </guidance>
+</task>

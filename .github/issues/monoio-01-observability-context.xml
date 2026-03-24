@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Add observability integration to harrow-server-monoio</summary>
+    <objective>Integrate tracing/metrics into the monoio server for parity with tokio server. Emit request latency histograms, connection gauges, and error counters via `tracing`.</objective>
+    <constraints>
+      - Use `tracing` crate (already in deps)
+      - Zero-allocation fast path when disabled
+      - Minimal overhead on hot path
+      - Follow patterns from harrow-server if applicable
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-server-monoio/">
+      harrow-server-monoio/
+      ├── src/
+      │   ├── lib.rs          # Server entry, accept loop
+      │   ├── connection.rs   # Per-connection handling, request lifecycle
+      │   └── codec.rs        # HTTP parsing (no changes needed)
+      └── tests/
+          └── integration.rs
+    </tree>
+
+    <files>
+      <!-- Main files to modify -->
+      <file path="harrow-server-monoio/src/lib.rs" mode="full"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="full"/>
+      
+      <!-- Reference: tokio server for comparison -->
+      <file path="harrow-server/src/lib.rs" mode="codemap"/>
+      
+      <!-- Reference: existing o11y crate -->
+      <file path="harrow-o11y/src/lib.rs" mode="codemap"/>
+    </files>
+
+    <dependencies>
+      <dep name="tracing" items="info!, debug!, warn!, error!, span!, instrument"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Rust systems engineer</role>
+    <style>Minimal overhead, production-grade observability</style>
+    <notes>
+      Key insertion points:
+      - lib.rs: connection accepted, connection closed (gauge), shutdown
+      - connection.rs: request start/end (latency), body size, errors
+      Use tracing spans for request context propagation
+    </notes>
+  </guidance>
+</task>

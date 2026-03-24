@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Implement multishot io_uring operations</summary>
+    <objective>Use multishot accept (5.19+), multishot recv (6.0+), and send zero-copy (6.0+) to reduce syscalls and improve throughput.</objective>
+    <constraints>
+      - Graceful fallback to single-shot on older kernels
+      - Handle CQE overflow correctly
+      - Integrate with buffer pooling (issue #28)
+      - Cancellation safety (verify with issue #26)
+      - Target: >20% RPS improvement
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-server-monoio/">
+      harrow-server-monoio/
+      ├── src/
+      │   ├── lib.rs          # Accept loop here
+      │   ├── connection.rs   # Read/write operations
+      │   └── codec.rs
+      └── tests/
+          └── integration.rs
+    </tree>
+
+    <files>
+      <!-- Key files to modify -->
+      <file path="harrow-server-monoio/src/lib.rs" mode="full"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="full"/>
+      
+      <!-- Reference for kernel feature detection pattern -->
+      <file path="harrow-server-monoio/src/connection.rs" mode="slice" lines="40-46"/>
+    </files>
+
+    <dependencies>
+      <dep name="monoio::net" items="TcpListener, TcpStream"/>
+      <dep name="monoio::io" items="AsyncReadRent, AsyncWriteRent"/>
+      <dep name="io_uring" items="opcode::AcceptMulti, RecvMulti, SendZc"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Low-level systems engineer, io_uring specialist</role>
+    <style>Performance-first, kernel-version adaptive</style>
+    <notes>
+      Key changes:
+      
+      1. lib.rs accept loop (lines 98-132):
+         - Replace listener.accept() with multishot_accept
+         - Each CQE spawns a connection handler
+         - Handle ring saturation
+      
+      2. connection.rs read_headers/read_body:
+         - Use recv_multishot instead of repeated read() calls
+         - Kernel fills provided buffer ring, we parse
+      
+      3. connection.rs write_response:
+         - Use send_zc for large bodies
+         - Fallback to write_all for small responses
+      
+      Depends on: Issue #28 (buffer pool) for provided buffers
+    </notes>
+  </guidance>
+</task>

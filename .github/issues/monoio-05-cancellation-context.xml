@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Audit and fix async cancellation safety in io_uring operations</summary>
+    <objective>Fix potential use-after-free and connection leaks when futures are dropped during io_uring operations. Ensure all I/O ops are safely cancellable.</objective>
+    <constraints>
+      - Use monoio's cancellable I/O traits
+      - No UAF under miri/valgrind
+      - No fd leaks under load
+      - All timeout paths audited
+      - Document cancellation safety patterns
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-server-monoio/">
+      harrow-server-monoio/
+      ├── src/
+      │   ├── lib.rs
+      │   ├── connection.rs
+      │   └── codec.rs
+      └── tests/
+          └── integration.rs
+    </tree>
+
+    <files>
+      <!-- Main files to audit -->
+      <file path="harrow-server-monoio/src/lib.rs" mode="full"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="full"/>
+      
+      <!-- Critical sections for audit -->
+      <file path="harrow-server-monoio/src/lib.rs" mode="slice" lines="98-138"/>
+      <file path="harrow-server-monoio/src/lib.rs" mode="slice" lines="140-158"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="slice" lines="26-46"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="slice" lines="136-194"/>
+    </files>
+
+    <dependencies>
+      <dep name="monoio::io" items="CancellableAsyncReadRent, CancellableAsyncWriteRent"/>
+      <dep name="std::pin" items="Pin"/>
+      <dep name="std::future" items="Future, drop"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Security-focused systems engineer</role>
+    <style>Conservative, safety-first, well-documented</style>
+    <notes>
+      CRITICAL: This is a safety issue. Read references first.
+      
+      Problem locations:
+      1. lib.rs:99 - select! { accept vs shutdown } - accept future dropped
+      2. lib.rs:133 - shutdown during accept - connection leak
+      3. connection.rs:30 - connection timeout - inner future dropped
+      4. connection.rs:176 - header read timeout - read op cancelled
+      
+      Solution pattern:
+      ```rust
+      let op = stream.read_cancellable(buf);
+      select! {
+          r = op.fuse() => r,
+          _ = timeout => {
+              op.cancel().await?;  // Explicit kernel cancellation
+              return Err(Timeout);
+          }
+      }
+      ```
+      
+      Testing:
+      - Create test with rapid timeout/cancel cycles
+      - Check /proc/self/fd for leaks
+      - Run under miri if possible
+    </notes>
+  </guidance>
+</task>

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Integrate harrow-server-monoio with main harrow crate</summary>
+    <objective>Make monoio server accessible via the main harrow crate with feature flags. Provide ergonomic API for runtime selection.</objective>
+    <constraints>
+      - Feature flags: tokio (default), monoio
+      - No breaking changes to existing API
+      - Consistent ServerConfig semantics
+      - Document kernel requirements
+      - Example code provided
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow/">
+      harrow/
+      ├── Cargo.toml
+      └── src/
+          └── lib.rs
+      
+      harrow-server-monoio/
+      ├── Cargo.toml
+      └── src/
+          └── lib.rs
+      
+      harrow-server/
+      └── src/
+          └── lib.rs
+    </tree>
+
+    <files>
+      <!-- Main crate to modify -->
+      <file path="harrow/Cargo.toml" mode="full"/>
+      <file path="harrow/src/lib.rs" mode="full"/>
+      
+      <!-- Server APIs to integrate -->
+      <file path="harrow-server-monoio/src/lib.rs" mode="codemap"/>
+      <file path="harrow-server/src/lib.rs" mode="codemap"/>
+    </files>
+
+    <dependencies>
+      <dep name="monoio" items="RuntimeBuilder, FusionDriver, IoUringDriver"/>
+      <dep name="harrow_core" items="App, RouteTable"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Rust API designer</role>
+    <style>Ergonomic, explicit, well-documented</style>
+    <notes>
+      Changes needed:
+      
+      1. harrow/Cargo.toml:
+         ```toml
+         [features]
+         default = ["tokio"]
+         tokio = ["dep:harrow-server"]
+         monoio = ["dep:harrow-server-monoio"]
+         ```
+      
+      2. harrow/src/lib.rs:
+         - Re-export monoio server types under #[cfg(feature = "monoio")]
+         - Consider namespaced exports: harrow::monoio::serve
+         - Or explicit: serve_monoio, serve_tokio
+      
+      3. Configuration parity:
+         - Document differences (Rc<Cell> vs Semaphore for max_connections)
+         - Same defaults where possible
+      
+      4. Create example: examples/monoio_hello.rs
+    </notes>
+  </guidance>
+</task>

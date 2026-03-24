@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Add benchmark parity for monoio server</summary>
+    <objective>Create Criterion benchmarks and perf binaries for harrow-server-monoio to enable fair comparison with tokio/hyper baseline.</objective>
+    <constraints>
+      - Mirror existing tokio benchmarks
+      - Add io_uring-specific benchmarks (buffer pool, multishot)
+      - Support remote EC2 benchmarking
+      - Capture io_uring metrics (syscalls, CQ/SQ utilization)
+      - Document hardware/kernel requirements
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-bench/">
+      harrow-bench/
+      ├── benches/
+      │   ├── echo.rs
+      │   ├── full_stack.rs
+      │   └── server_variants.rs
+      ├── src/
+      │   ├── bin/
+      │   │   ├── harrow_server.rs
+      │   │   ├── harrow_perf_server.rs
+      │   │   └── harrow_remote_perf_test.rs
+      │   └── lib.rs
+      └── Cargo.toml
+    </tree>
+
+    <files>
+      <!-- Reference benchmarks to mirror -->
+      <file path="harrow-bench/benches/echo.rs" mode="codemap"/>
+      <file path="harrow-bench/benches/full_stack.rs" mode="codemap"/>
+      <file path="harrow-bench/benches/server_variants.rs" mode="full"/>
+      
+      <!-- Binary servers to create monoio variants -->
+      <file path="harrow-bench/src/bin/harrow_server.rs" mode="full"/>
+      <file path="harrow-bench/src/bin/harrow_perf_server.rs" mode="codemap"/>
+      
+      <!-- Remote testing -->
+      <file path="harrow-bench/src/bin/harrow_remote_perf_test.rs" mode="slice" lines="1-100"/>
+    </files>
+
+    <dependencies>
+      <dep name="criterion" items="black_box, BenchmarkId, Criterion"/>
+      <dep name="harrow-bench" items="load_test, LatencyDistribution"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Performance engineer</role>
+    <style>Rigorous, reproducible, well-instrumented</style>
+    <notes>
+      Files to create:
+      
+      1. benches/monoio_echo.rs - Mirror echo.rs with monoio runtime
+      2. benches/monoio_full_stack.rs - Mirror full_stack.rs
+      3. benches/uring_features.rs - Buffer pool, multishot comparisons
+      4. src/bin/monoio_server.rs - For external load testing
+      5. src/bin/monoio_perf_server.rs - Instrumented version
+      
+      Key considerations:
+      - Monoio requires specific runtime setup (FusionDriver/IouringDriver)
+      - Criterion async benchmarks need monoio runtime block_on
+      - Remote tests need kernel version check (6.1+ for full features)
+      - Document: Docker Desktop incompatible (no io_uring)
+    </notes>
+  </guidance>
+</task>

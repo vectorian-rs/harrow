@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Implement buffer pool and io_uring registered buffers</summary>
+    <objective>Create a buffer pooling system supporting: userspace pools, io_uring fixed buffers (5.1+), and provided buffer rings (5.19+). Fallback gracefully on older kernels.</objective>
+    <constraints>
+      - Zero-allocation fast path
+      - Kernel feature detection at runtime
+      - Fallback chain: provided → fixed → pooled → allocated
+      - Thread-safe for thread-per-core model
+      - Integrate with connection.rs read paths
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-server-monoio/">
+      harrow-server-monoio/
+      ├── src/
+      │   ├── lib.rs
+      │   ├── connection.rs    # Contains read_headers(), read_body()
+      │   └── codec.rs
+      └── tests/
+          └── integration.rs
+    </tree>
+
+    <files>
+      <!-- Files to modify -->
+      <file path="harrow-server-monoio/src/connection.rs" mode="full"/>
+      
+      <!-- Reference for integration points -->
+      <file path="harrow-server-monoio/src/lib.rs" mode="codemap"/>
+      
+      <!-- Existing buffer usage patterns -->
+      <file path="harrow-server-monoio/src/connection.rs" mode="slice" lines="48-130"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="slice" lines="196-262"/>
+    </files>
+
+    <dependencies>
+      <dep name="monoio::buf" items="IoBuf, IoBufMut, Slice"/>
+      <dep name="monoio::io" items="AsyncReadRent, AsyncWriteRent"/>
+      <dep name="bytes" items="BytesMut, Bytes"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Systems engineer with io_uring expertise</role>
+    <style>Zero-copy, kernel-feature aware, production robust</style>
+    <notes>
+      Create new file: harrow-server-monoio/src/buffer.rs
+      
+      Key structures:
+      - BufferPool: userspace slab allocator
+      - FixedBufferPool: IORING_REGISTER_BUFFERS
+      - BufferRing: IORING_SETUP_BUF_RING (kernel 5.19+)
+      
+      Integration points in connection.rs:
+      - Line 53: BytesMut::with_capacity(8192) → pool.acquire()
+      - Line 173: read buffer allocation → pool.get_read_buf()
+      
+      Kernel detection: check /proc/sys/kernel/osrelease or runtime probe
+    </notes>
+  </guidance>
+</task>

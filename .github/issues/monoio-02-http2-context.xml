@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<task>
+  <instructions>
+    <summary>Add HTTP/2 support to harrow-server-monoio</summary>
+    <objective>Implement HTTP/2 server support using monoio-http crate. Support multiplexed streams, flow control, and graceful degradation.</objective>
+    <constraints>
+      - Use monoio-http crate (ByteDance's official HTTP lib for monoio)
+      - Feature flag: http2 = ["dep:monoio-http"]
+      - Support ALPN negotiation
+      - Pass h2spec compliance tests
+      - Maintain HTTP/1.1 as default
+    </constraints>
+  </instructions>
+
+  <context>
+    <tree root="harrow-server-monoio/">
+      harrow-server-monoio/
+      ├── Cargo.toml
+      ├── src/
+      │   ├── lib.rs
+      │   ├── connection.rs
+      │   └── codec.rs
+      └── tests/
+          └── integration.rs
+    </tree>
+
+    <files>
+      <!-- Main server files -->
+      <file path="harrow-server-monoio/Cargo.toml" mode="full"/>
+      <file path="harrow-server-monoio/src/lib.rs" mode="full"/>
+      <file path="harrow-server-monoio/src/connection.rs" mode="codemap"/>
+      
+      <!-- Codec for reference -->
+      <file path="harrow-server-monoio/src/codec.rs" mode="codemap"/>
+      
+      <!-- Reference: tokio server's HTTP/2 support via hyper -->
+      <file path="harrow-server/src/lib.rs" mode="slice" lines="127-145"/>
+    </files>
+
+    <dependencies>
+      <dep name="monoio-http" items="HttpServer, HttpHandler, Request, Response"/>
+      <dep name="http" items="Request, Response, Version"/>
+    </dependencies>
+  </context>
+
+  <guidance>
+    <role>Senior Rust engineer with HTTP/2 experience</role>
+    <style>Protocol-compliant, feature-gated, incremental</style>
+    <notes>
+      Research monoio-http API first. Key areas:
+      1. Server builder with HTTP/1.1 + HTTP/2 support
+      2. ALPN negotiation in TLS (if TLS support exists)
+      3. Stream handling for multiplexing
+      4. Integration with existing harrow_core::dispatch
+    </notes>
+  </guidance>
+</task>
