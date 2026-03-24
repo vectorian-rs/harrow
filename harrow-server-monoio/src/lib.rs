@@ -31,6 +31,7 @@
 //!
 //! See `cancel.rs` for the implementation details.
 
+mod buffer;
 mod cancel;
 mod codec;
 mod connection;

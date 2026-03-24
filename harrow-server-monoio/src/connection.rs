@@ -12,6 +12,7 @@ use monoio::net::TcpStream;
 use harrow_core::dispatch::{SharedState, dispatch};
 use harrow_core::request::Body;
 
+use crate::buffer::{DEFAULT_BUFFER_SIZE, acquire_buffer, release_buffer};
 use crate::codec;
 use crate::o11y::{ConnectionMetrics, connection_span};
 
@@ -208,8 +209,8 @@ async fn read_headers(
             None => None,
         };
 
-        // Read more data from socket.
-        let read_buf = vec![0u8; 4096];
+        // Read more data from socket using pooled buffer.
+        let read_buf = acquire_buffer(DEFAULT_BUFFER_SIZE);
         let (result, read_buf) = if let Some(rem) = remaining {
             // Use cancellable read with timeout for safety
             // SAFETY: When timeout fires, we cancel and await the operation
@@ -226,8 +227,9 @@ async fn read_headers(
                     // Timeout fired - cancel the kernel operation
                     let _ = canceller.cancel();
                     // CRITICAL: Await the cancelled operation to reclaim the buffer
-                    let (_, _read_buf) = recv_fut.await;
-                    // Buffer is now safely reclaimed, can return timeout error
+                    let (_, read_buf) = recv_fut.await;
+                    // Return buffer to pool before returning error
+                    release_buffer(read_buf);
                     return Err("header read timeout".into());
                 }
             }
@@ -238,6 +240,8 @@ async fn read_headers(
 
         let n = result?;
         if n == 0 {
+            // Return buffer to pool before exiting
+            release_buffer(read_buf);
             if buf.is_empty() {
                 // Clean close — client disconnected between requests.
                 return Err("connection closed".into());
@@ -245,6 +249,8 @@ async fn read_headers(
             return Err("unexpected eof during header read".into());
         }
         buf.extend_from_slice(&read_buf[..n]);
+        // Return buffer to pool for reuse
+        release_buffer(read_buf);
     }
 }
 
@@ -268,16 +274,18 @@ async fn read_body(
         Some(len) => len as usize,
     };
 
-    // Read until we have `length` bytes of body.
+    // Read until we have `length` bytes of body using pooled buffers.
     while buf.len() < length {
         let needed = length - buf.len();
-        let read_buf = vec![0u8; needed.min(8192)];
+        let read_buf = acquire_buffer(needed.min(DEFAULT_BUFFER_SIZE));
         let (result, read_buf) = stream.read(read_buf).await;
         let n = result?;
         if n == 0 {
+            release_buffer(read_buf);
             return Err("unexpected eof during body read".into());
         }
         buf.extend_from_slice(&read_buf[..n]);
+        release_buffer(read_buf);
     }
 
     let body = buf.split_to(length).freeze();
@@ -302,14 +310,16 @@ async fn read_chunked_body(
                 return Ok(body);
             }
             None => {
-                // Need more data
-                let read_buf = vec![0u8; 4096];
+                // Need more data - use pooled buffer
+                let read_buf = acquire_buffer(DEFAULT_BUFFER_SIZE);
                 let (result, read_buf) = stream.read(read_buf).await;
                 let n = result?;
                 if n == 0 {
+                    release_buffer(read_buf);
                     return Err("unexpected eof during chunked body read".into());
                 }
                 buf.extend_from_slice(&read_buf[..n]);
+                release_buffer(read_buf);
             }
         }
     }
