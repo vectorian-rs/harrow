@@ -3,6 +3,7 @@
 //! No o11y, no timeout middleware — raw framework overhead only.
 //! Usage: harrow-server [--bind ADDR] [--port PORT]
 
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

@@ -37,6 +37,11 @@
 !harrow-server/src/
 !harrow-server/src/**
 
+!harrow-server-monoio/
+!harrow-server-monoio/Cargo.toml
+!harrow-server-monoio/src/
+!harrow-server-monoio/src/**
+
 !harrow-bench/
 !harrow-bench/benches/
 !harrow-bench/benches/**

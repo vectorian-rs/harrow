@@ -23,6 +23,31 @@
   changed_when: true
   when: inventory_hostname in groups['server']
 
+# Server: pull sysalloc perf server images
+- name: Pull harrow-perf-server-sysalloc from ECR
+  ansible.builtin.command:
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ harrow_version }}"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
+- name: Tag harrow-perf-server-sysalloc for local use
+  ansible.builtin.command:
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ harrow_version }} harrow-perf-server-sysalloc"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
+- name: Pull axum-perf-server-sysalloc from ECR
+  ansible.builtin.command:
+    cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ harrow_version }}"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
+- name: Tag axum-perf-server-sysalloc for local use
+  ansible.builtin.command:
+    cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ harrow_version }} axum-perf-server-sysalloc"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
 # Client: pull load tester
 - name: Pull spinr from ECR
   ansible.builtin.command:

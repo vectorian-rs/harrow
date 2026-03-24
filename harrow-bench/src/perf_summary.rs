@@ -27,6 +27,8 @@ struct RunMeta {
     /// Accepts either "test_case" or "config" from the JSON.
     #[serde(alias = "config")]
     test_case: String,
+    #[serde(default)]
+    variant: String,
     warmup_secs: u32,
 }
 
@@ -72,8 +74,8 @@ struct PanelRect {
 struct SeriesPanel<'a> {
     title: &'a str,
     unit: &'a str,
-    harrow: &'a [f64],
-    axum: &'a [f64],
+    primary: &'a [f64],
+    secondary: &'a [f64],
 }
 
 #[derive(Clone)]
@@ -116,20 +118,37 @@ const BORDER_LIGHT: &str = "#e2e8f0";
 const TEXT_PRIMARY: &str = "#1e293b";
 const TEXT_SECONDARY: &str = "#64748b";
 const TEXT_MUTED: &str = "#94a3b8";
-const ACCENT_ORANGE: &str = "#ea580c";
-const AXUM_GRAY: &str = "#64748b";
-const HARROW_FILL: &str = "#fff7ed";
-const AXUM_FILL: &str = "#f8fafc";
+const PRIMARY_COLOR: &str = "#ea580c";
+const SECONDARY_COLOR: &str = "#64748b";
+const PRIMARY_FILL: &str = "#fff7ed";
+const SECONDARY_FILL: &str = "#f8fafc";
+
+struct VariantColors {
+    primary_label: String,
+    secondary_label: String,
+}
+
+fn discover_variants(runs: &[RunSummary]) -> VariantColors {
+    let labels: BTreeSet<&str> = runs.iter().map(|r| r.meta.variant.as_str()).collect();
+    let mut iter = labels.into_iter();
+    let primary = iter.next().unwrap_or("primary").to_string();
+    let secondary = iter.next().unwrap_or("secondary").to_string();
+    VariantColors {
+        primary_label: primary,
+        secondary_label: secondary,
+    }
+}
 
 pub fn render_results_dir(results_dir: &Path) -> io::Result<()> {
     let summary = load_results_dir(results_dir)?;
+    let vc = discover_variants(&summary.runs);
     generate_local_flamegraphs(results_dir, &summary.runs)?;
-    generate_telemetry_svgs(results_dir, &summary)?;
-    let svg = render_svg(&summary);
+    generate_telemetry_svgs(results_dir, &summary, &vc)?;
+    let svg = render_svg(&summary, &vc);
     fs::write(results_dir.join("summary.svg"), svg)?;
     fs::write(
         results_dir.join("summary.md"),
-        render_markdown(results_dir, &summary),
+        render_markdown(results_dir, &summary, &vc),
     )?;
     Ok(())
 }
@@ -148,10 +167,16 @@ fn load_results_dir(results_dir: &Path) -> io::Result<ReportSummary> {
         }
     }
 
+    for meta in &mut metas {
+        if meta.variant.is_empty() {
+            meta.variant = meta.framework.clone();
+        }
+    }
+
     metas.sort_by(|a, b| {
         a.test_case
             .cmp(&b.test_case)
-            .then_with(|| a.framework.cmp(&b.framework))
+            .then_with(|| a.variant.cmp(&b.variant))
     });
 
     if metas.is_empty() {
@@ -456,7 +481,7 @@ fn parse_pct(input: &str) -> f64 {
     parse_f64(input.trim_end_matches('%'))
 }
 
-fn render_markdown(results_dir: &Path, summary: &ReportSummary) -> String {
+fn render_markdown(results_dir: &Path, summary: &ReportSummary, vc: &VariantColors) -> String {
     let mut out = String::new();
     writeln!(&mut out, "# Performance Test Results").unwrap();
     writeln!(&mut out).unwrap();
@@ -510,7 +535,8 @@ fn render_markdown(results_dir: &Path, summary: &ReportSummary) -> String {
     writeln!(&mut out).unwrap();
     writeln!(
         &mut out,
-        "| Test case | Harrow RPS | Axum RPS | Delta % | Harrow p99 (ms) | Axum p99 (ms) |"
+        "| Test case | {} RPS | {} RPS | Delta % | {} p99 (ms) | {} p99 (ms) |",
+        vc.primary_label, vc.secondary_label, vc.primary_label, vc.secondary_label
     )
     .unwrap();
     writeln!(
@@ -520,9 +546,9 @@ fn render_markdown(results_dir: &Path, summary: &ReportSummary) -> String {
     .unwrap();
 
     for (test_case, pair) in grouped_runs(&summary.runs) {
-        let harrow = pair.get("harrow");
-        let axum = pair.get("axum");
-        let delta = match (harrow, axum) {
+        let primary = pair.get(vc.primary_label.as_str());
+        let secondary = pair.get(vc.secondary_label.as_str());
+        let delta = match (primary, secondary) {
             (Some(h), Some(a)) if a.metrics.rps != 0.0 => {
                 ((h.metrics.rps - a.metrics.rps) / a.metrics.rps) * 100.0
             }
@@ -532,16 +558,18 @@ fn render_markdown(results_dir: &Path, summary: &ReportSummary) -> String {
             &mut out,
             "| {} | {} | {} | {:+.2}% | {} | {} |",
             test_case,
-            harrow
+            primary
                 .map(|run| format!("{:.3}", run.metrics.rps))
                 .unwrap_or_else(|| "-".into()),
-            axum.map(|run| format!("{:.3}", run.metrics.rps))
+            secondary
+                .map(|run| format!("{:.3}", run.metrics.rps))
                 .unwrap_or_else(|| "-".into()),
             delta,
-            harrow
+            primary
                 .map(|run| format!("{:.3}", run.metrics.p99))
                 .unwrap_or_else(|| "-".into()),
-            axum.map(|run| format!("{:.3}", run.metrics.p99))
+            secondary
+                .map(|run| format!("{:.3}", run.metrics.p99))
                 .unwrap_or_else(|| "-".into()),
         )
         .unwrap();
@@ -671,7 +699,7 @@ fn render_markdown(results_dir: &Path, summary: &ReportSummary) -> String {
     out
 }
 
-fn render_svg(summary: &ReportSummary) -> String {
+fn render_svg(summary: &ReportSummary, vc: &VariantColors) -> String {
     let width = 1400.0;
     let throughput_panel_height = 120.0 + (grouped_runs(&summary.runs).len() as f64 * 72.0);
     let p99_panel_height = throughput_panel_height;
@@ -728,21 +756,21 @@ fn render_svg(summary: &ReportSummary) -> String {
         panel_y,
         panel_w,
         throughput_panel_height,
-        ACCENT_ORANGE,
+        PRIMARY_COLOR,
     ));
     svg.push_str(&panel_card(
         p99_x,
         panel_y,
         panel_w,
         p99_panel_height,
-        ACCENT_ORANGE,
+        PRIMARY_COLOR,
     ));
     svg.push_str(&mono_text(
         throughput_x + 24.0,
         panel_y + 32.0,
         18,
         700,
-        ACCENT_ORANGE,
+        PRIMARY_COLOR,
         "throughput",
     ));
     svg.push_str(&mono_text(
@@ -750,7 +778,7 @@ fn render_svg(summary: &ReportSummary) -> String {
         panel_y + 32.0,
         18,
         700,
-        ACCENT_ORANGE,
+        PRIMARY_COLOR,
         "p99 latency",
     ));
 
@@ -788,12 +816,17 @@ fn render_svg(summary: &ReportSummary) -> String {
         ));
 
         let bars = [
-            ("harrow", ACCENT_ORANGE, HARROW_FILL, 0.0),
-            ("axum", AXUM_GRAY, AXUM_FILL, 26.0),
+            (vc.primary_label.as_str(), PRIMARY_COLOR, PRIMARY_FILL, 0.0),
+            (
+                vc.secondary_label.as_str(),
+                SECONDARY_COLOR,
+                SECONDARY_FILL,
+                26.0,
+            ),
         ];
 
-        for (framework, color, fill, offset) in bars {
-            if let Some(run) = pair.get(framework) {
+        for (variant_label, color, fill, offset) in bars {
+            if let Some(run) = pair.get(variant_label) {
                 let rps_w = ((run.metrics.rps / max_rps) * (panel_w - 210.0)).max(4.0);
                 let p99_w = ((run.metrics.p99 / max_p99) * (panel_w - 210.0)).max(4.0);
                 let y = base_y + 12.0 + offset;
@@ -803,7 +836,7 @@ fn render_svg(summary: &ReportSummary) -> String {
                     12,
                     600,
                     color,
-                    framework,
+                    variant_label,
                 ));
                 svg.push_str(&mono_text(
                     p99_x + 24.0,
@@ -811,7 +844,7 @@ fn render_svg(summary: &ReportSummary) -> String {
                     12,
                     600,
                     color,
-                    framework,
+                    variant_label,
                 ));
                 svg.push_str(&metric_bar(
                     throughput_x + 92.0,
@@ -848,10 +881,10 @@ fn render_svg(summary: &ReportSummary) -> String {
         let row = (idx / 2) as f64;
         let x = 44.0 + col * (panel_w + panel_gap);
         let y = cards_y + row * (card_height + card_gap);
-        let accent = if run.meta.framework == "harrow" {
-            ACCENT_ORANGE
+        let accent = if run.meta.variant == vc.primary_label {
+            PRIMARY_COLOR
         } else {
-            AXUM_GRAY
+            SECONDARY_COLOR
         };
         svg.push_str(&panel_card(x, y, panel_w, card_height, accent));
         svg.push_str(&mono_text(
@@ -860,7 +893,7 @@ fn render_svg(summary: &ReportSummary) -> String {
             18,
             700,
             accent,
-            &format!("{} · {}", run.meta.framework, run.meta.test_case),
+            &format!("{} · {}", run.meta.variant, run.meta.test_case),
         ));
         svg.push_str(&ui_text(
             x + 24.0,
@@ -955,7 +988,7 @@ fn grouped_runs(runs: &[RunSummary]) -> BTreeMap<&str, BTreeMap<&str, &RunSummar
     for run in runs {
         out.entry(run.meta.test_case.as_str())
             .or_default()
-            .insert(run.meta.framework.as_str(), run);
+            .insert(run.meta.variant.as_str(), run);
     }
     out
 }
@@ -995,10 +1028,10 @@ fn metric_chip(x: f64, y: f64, label: &str, value: &str, accent: &str) -> String
     let label_y = y + 14.0;
     let value_x = x + 14.0;
     let value_y = y + 29.0;
-    let fill = if accent == ACCENT_ORANGE {
-        HARROW_FILL
+    let fill = if accent == SECONDARY_COLOR {
+        SECONDARY_FILL
     } else {
-        AXUM_FILL
+        PRIMARY_FILL
     };
     format!(
         r##"<g><rect x="{x:.1}" y="{y:.1}" width="132" height="38" rx="4" fill="{fill}" stroke="{accent}" stroke-width="1"/><text x="{label_x:.1}" y="{label_y:.1}" font-family="monospace" font-size="12" font-weight="700" fill="{accent}">{label}</text><text x="{value_x:.1}" y="{value_y:.1}" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="500" fill="{TEXT_PRIMARY}">{value}</text></g>"##
@@ -1069,22 +1102,30 @@ fn generate_local_flamegraphs(results_dir: &Path, runs: &[RunSummary]) -> io::Re
     Ok(())
 }
 
-fn generate_telemetry_svgs(results_dir: &Path, summary: &ReportSummary) -> io::Result<()> {
+fn generate_telemetry_svgs(
+    results_dir: &Path,
+    summary: &ReportSummary,
+    vc: &VariantColors,
+) -> io::Result<()> {
     for (test_case, pair) in grouped_runs(&summary.runs) {
-        let svg = render_telemetry_svg(test_case, &pair);
+        let svg = render_telemetry_svg(test_case, &pair, vc);
         fs::write(results_dir.join(telemetry_svg_filename(test_case)), svg)?;
     }
     Ok(())
 }
 
-fn render_telemetry_svg(test_case: &str, pair: &BTreeMap<&str, &RunSummary>) -> String {
+fn render_telemetry_svg(
+    test_case: &str,
+    pair: &BTreeMap<&str, &RunSummary>,
+    vc: &VariantColors,
+) -> String {
     let width = 1400.0;
     let height = 860.0;
     let panel_gap = 28.0;
     let panel_w = (width - 44.0 * 2.0 - panel_gap) / 2.0;
     let panel_h = 260.0;
-    let harrow = pair.get("harrow").copied();
-    let axum = pair.get("axum").copied();
+    let primary = pair.get(vc.primary_label.as_str()).copied();
+    let secondary = pair.get(vc.secondary_label.as_str()).copied();
 
     let mut svg = String::new();
     writeln!(
@@ -1111,17 +1152,26 @@ fn render_telemetry_svg(test_case: &str, pair: &BTreeMap<&str, &RunSummary>) -> 
         14,
         500,
         TEXT_SECONDARY,
-        "Harrow overlays Axum for server-side sar and vmstat signals",
+        &format!(
+            "{} overlays {} for server-side sar and vmstat signals",
+            vc.primary_label, vc.secondary_label
+        ),
     ));
 
     svg.push_str(&legend_chip(
         44.0,
         104.0,
-        ACCENT_ORANGE,
-        HARROW_FILL,
-        "harrow",
+        PRIMARY_COLOR,
+        PRIMARY_FILL,
+        &vc.primary_label,
     ));
-    svg.push_str(&legend_chip(156.0, 104.0, AXUM_GRAY, AXUM_FILL, "axum"));
+    svg.push_str(&legend_chip(
+        156.0,
+        104.0,
+        SECONDARY_COLOR,
+        SECONDARY_FILL,
+        &vc.secondary_label,
+    ));
 
     let top_y = 140.0;
     let left_x = 44.0;
@@ -1138,9 +1188,10 @@ fn render_telemetry_svg(test_case: &str, pair: &BTreeMap<&str, &RunSummary>) -> 
         SeriesPanel {
             title: "Server CPU Busy %",
             unit: "%",
-            harrow: harrow.map_or(&[][..], |run| run.telemetry.cpu_busy_pct.as_slice()),
-            axum: axum.map_or(&[][..], |run| run.telemetry.cpu_busy_pct.as_slice()),
+            primary: primary.map_or(&[][..], |run| run.telemetry.cpu_busy_pct.as_slice()),
+            secondary: secondary.map_or(&[][..], |run| run.telemetry.cpu_busy_pct.as_slice()),
         },
+        vc,
     ));
     svg.push_str(&render_series_panel(
         PanelRect {
@@ -1152,9 +1203,10 @@ fn render_telemetry_svg(test_case: &str, pair: &BTreeMap<&str, &RunSummary>) -> 
         SeriesPanel {
             title: "Server Net TX",
             unit: "MB/s",
-            harrow: harrow.map_or(&[][..], |run| run.telemetry.net_tx_mb_s.as_slice()),
-            axum: axum.map_or(&[][..], |run| run.telemetry.net_tx_mb_s.as_slice()),
+            primary: primary.map_or(&[][..], |run| run.telemetry.net_tx_mb_s.as_slice()),
+            secondary: secondary.map_or(&[][..], |run| run.telemetry.net_tx_mb_s.as_slice()),
         },
+        vc,
     ));
     svg.push_str(&render_series_panel(
         PanelRect {
@@ -1166,9 +1218,10 @@ fn render_telemetry_svg(test_case: &str, pair: &BTreeMap<&str, &RunSummary>) -> 
         SeriesPanel {
             title: "VMstat Runnable (r)",
             unit: "threads",
-            harrow: harrow.map_or(&[][..], |run| run.telemetry.run_queue.as_slice()),
-            axum: axum.map_or(&[][..], |run| run.telemetry.run_queue.as_slice()),
+            primary: primary.map_or(&[][..], |run| run.telemetry.run_queue.as_slice()),
+            secondary: secondary.map_or(&[][..], |run| run.telemetry.run_queue.as_slice()),
         },
+        vc,
     ));
     svg.push_str(&render_series_panel(
         PanelRect {
@@ -1180,31 +1233,32 @@ fn render_telemetry_svg(test_case: &str, pair: &BTreeMap<&str, &RunSummary>) -> 
         SeriesPanel {
             title: "VMstat Context Switches",
             unit: "/s",
-            harrow: harrow.map_or(&[][..], |run| run.telemetry.context_switches_s.as_slice()),
-            axum: axum.map_or(&[][..], |run| run.telemetry.context_switches_s.as_slice()),
+            primary: primary.map_or(&[][..], |run| run.telemetry.context_switches_s.as_slice()),
+            secondary: secondary.map_or(&[][..], |run| run.telemetry.context_switches_s.as_slice()),
         },
+        vc,
     ));
 
     svg.push_str("</svg>");
     svg
 }
 
-fn render_series_panel(rect: PanelRect, series: SeriesPanel<'_>) -> String {
+fn render_series_panel(rect: PanelRect, series: SeriesPanel<'_>, vc: &VariantColors) -> String {
     let PanelRect { x, y, w, h } = rect;
     let SeriesPanel {
         title,
         unit,
-        harrow,
-        axum,
+        primary,
+        secondary,
     } = series;
     let mut out = String::new();
-    out.push_str(&panel_card(x, y, w, h, ACCENT_ORANGE));
+    out.push_str(&panel_card(x, y, w, h, PRIMARY_COLOR));
     out.push_str(&mono_text(
         x + 22.0,
         y + 32.0,
         18,
         700,
-        ACCENT_ORANGE,
+        PRIMARY_COLOR,
         title,
     ));
 
@@ -1212,7 +1266,7 @@ fn render_series_panel(rect: PanelRect, series: SeriesPanel<'_>) -> String {
     let plot_y = y + 56.0;
     let plot_w = w - 40.0;
     let plot_h = h - 108.0;
-    let max_y = series_max(harrow).max(series_max(axum)).max(1.0);
+    let max_y = series_max(primary).max(series_max(secondary)).max(1.0);
 
     for idx in 0..=3 {
         let frac = idx as f64 / 3.0;
@@ -1237,11 +1291,17 @@ fn render_series_panel(rect: PanelRect, series: SeriesPanel<'_>) -> String {
         plot_w,
         plot_h,
         max_y,
-        harrow,
-        ACCENT_ORANGE,
+        primary,
+        PRIMARY_COLOR,
     ));
     out.push_str(&polyline(
-        plot_x, plot_y, plot_w, plot_h, max_y, axum, AXUM_GRAY,
+        plot_x,
+        plot_y,
+        plot_w,
+        plot_h,
+        max_y,
+        secondary,
+        SECONDARY_COLOR,
     ));
 
     out.push_str(&mono_text(
@@ -1249,12 +1309,13 @@ fn render_series_panel(rect: PanelRect, series: SeriesPanel<'_>) -> String {
         y + h - 34.0,
         12,
         600,
-        ACCENT_ORANGE,
+        PRIMARY_COLOR,
         &format!(
-            "harrow avg {:.1} {} peak {:.1}",
-            series_avg(harrow),
+            "{} avg {:.1} {} peak {:.1}",
+            vc.primary_label,
+            series_avg(primary),
             unit,
-            series_max(harrow)
+            series_max(primary)
         ),
     ));
     out.push_str(&mono_text(
@@ -1262,12 +1323,13 @@ fn render_series_panel(rect: PanelRect, series: SeriesPanel<'_>) -> String {
         y + h - 18.0,
         12,
         600,
-        AXUM_GRAY,
+        SECONDARY_COLOR,
         &format!(
-            "axum avg {:.1} {} peak {:.1}",
-            series_avg(axum),
+            "{} avg {:.1} {} peak {:.1}",
+            vc.secondary_label,
+            series_avg(secondary),
             unit,
-            series_max(axum)
+            series_max(secondary)
         ),
     ));
     out

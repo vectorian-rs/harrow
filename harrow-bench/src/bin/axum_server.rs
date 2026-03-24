@@ -3,6 +3,7 @@
 //! Identical endpoints to harrow_server — raw framework overhead only.
 //! Usage: axum-server [--bind ADDR] [--port PORT]
 
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
