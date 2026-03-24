@@ -10,7 +10,7 @@ default = ["mimalloc"]
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
-harrow = { path = "../harrow", features = ["json", "msgpack", "timeout", "request-id", "cors", "compression", "catch-panic", "o11y", "body-limit", "rate-limit", "session"] }
+harrow = { path = "../harrow", features = ["json", "msgpack", "timeout", "request-id", "cors", "compression", "compression-br", "catch-panic", "o11y", "body-limit", "rate-limit", "session"] }
 harrow-core = { workspace = true, features = ["json", "msgpack"] }
 harrow-o11y = { workspace = true }
 axum = { workspace = true }
@@ -22,7 +22,7 @@ http = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["compression-gzip"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "compression-br"] }
 toml = "0.8"
 blake3 = { workspace = true }
 mimalloc = { workspace = true, optional = true }
@@ -30,7 +30,7 @@ mimalloc = { workspace = true, optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 matchit = { workspace = true }
-tower-http = { version = "0.6", features = ["timeout", "request-id", "cors", "compression-gzip"] }
+tower-http = { version = "0.6", features = ["timeout", "request-id", "cors", "compression-gzip", "compression-br"] }
 uuid = { version = "1", features = ["v4"] }
 hyper = { workspace = true }
 hyper-util = { workspace = true }

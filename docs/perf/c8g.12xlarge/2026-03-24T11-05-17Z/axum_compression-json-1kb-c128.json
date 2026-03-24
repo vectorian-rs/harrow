@@ -1,0 +1,36 @@
+{
+  "scenarios": [
+    {
+      "name": "compression-json-1kb-c128",
+      "url": "http://172.31.0.170:3090/json/1kb",
+      "metrics": {
+        "total_requests": 19584581,
+        "successful_requests": 19584581,
+        "failed_requests": 0,
+        "status_codes": {
+          "200": 19584581
+        },
+        "rpm": 58753743.0,
+        "rps": 979229.05,
+        "latency_avg_ms": 0.13,
+        "latency_min_ms": 0.04,
+        "latency_max_ms": 0.81,
+        "latency_p50_ms": 0.12,
+        "latency_p90_ms": 0.18,
+        "latency_p95_ms": 0.2,
+        "latency_p99_ms": 0.24,
+        "latency_p999_ms": 0.3,
+        "latency_p9999_ms": 0.35,
+        "duration_secs": 20.0,
+        "worker_count": 48,
+        "payload_bytes": 4484869049,
+        "wire_bytes": 4700299440,
+        "payload_transfer_per_sec": 224243452.45,
+        "wire_transfer_per_sec": 235014972.0,
+        "latency_histogram": "HISTEwAABCwAAAAAAAAAAwAAAAAAAAABAAAAAAOThwA/8AAAAAAAAFUILGzuAeAEvAiWDoYWkh/4KuA32kTyUrxjkm6+hwHMlwHgrgHGxwHc5AGsiQKusAKu4wKQmwOk0QO4jwTkzwTqigWwzwWYnAbm2QbElQem8ge6wgiUoAnC9QmW3AqWwQu2rgzIjg38hw7y9g648g/05xCe3xGU0BLUuRPutxSGphX6iRbi/xbY8RemzBjaoBms9Bn6pRrKxxr26hrUkhvkpBuCzxvG3huohByolxy6uRzE2hye9hyWkx3qtx3EzB228R20/h3G+B2g8R3szB2Anh2q8hzIsRz4ihys4BusnRv09xqKvBralBrijBrk5xm4vxmOnRmu/hii4BiMwhiKmRiu3xeqpBf4+BbqqRb24xW+txXK6RTGtBSo+BPEzhOQlROe2RKOtRKKgRKe2RGWrBHuiBGU2xCCrhDQ/A/wxw+ImQ/65w7QuA709w320g2Apg2O7gyqvwyynwyW8wu2zwuApwuGiAvG2wqitAqulwqM+gmozgmOsgmgkAns7AjozAiWpwj+jwj+5Af+ygemqweAlQe2+wao4gb0xAbergbekQa4/gX83gX60QWEugWipQWUjQXi8wSs5gT80ATYtgTWrASemgSIiATc9QO65gOk1wOMwgPQvgPqqwPYnQP4jQOCgwOA+gLa6gLw3ALIzwLSxwKivAKCswKKpgKcmwLQkALEhgLe/QGS9wHI8AGm5wGk3gHw1QG+zAGGyAG6wgHYuQGiswGArAHYpgHmogHinAH2lQGikgHKjAG8hQHagAG0e/J2gnKwb45rkmXsYexegFvgVaxVhlPiT55N+kfOR8JEpkGyPuo9ijq4OOo2wDPYMbox4i3yK4Yq5Ci2J/wk0CS6I9ohlCDEHa4diBzKGpQapBiYGNoWyBWcFO4T/BK0EsgR9BCUEK4P4A6qDvANhA2UDLYM1AvqCrwLmAnsCdQJ5Ai6CIYI4gf4BvAG/gbeBroGsAaWBuoFogXgBMwEqATsA+QD+APAA8IDsgPkA5YDpgP0AtYCvALgAr4CpgL8AYYC6gHgAe4BsAHOAcgBsAHEAcQBuAGMAWqeAYwBanJyYHZkTkY2RD42MEQuOio0PigoKiQsFCgWFigUEhgWGBgKFhoQEBQUBgwWChAEDgwICAwGBggKDgoGBgwKCgQKCAIICAQGCgYCBAIIAgYGCAwEAgQAAgQABAQIAAYCBAQCAwIEAgICAgACAgAEAAgEAAQCAAIJBAICAAQHAgACBwQFAgUCAAIGAAQCAwICAAICAgIDAgYEBQQGBAIDAgMECQQCAAICAgAEAgICAgMEAggEAAYGBgIDAgIEAgIEAwYEAAIAAgIDBAIEBAQAAgICAAIDDAICAgUCAgYCBQIFAgAEAAgCCwYDAgIDAgACEQIHAgUCEQIDAgUCBQIdAg0CCQIXArcBAg=="
+      }
+    }
+  ],
+  "total_requests": 19584581,
+  "total_duration_secs": 20.0
+}

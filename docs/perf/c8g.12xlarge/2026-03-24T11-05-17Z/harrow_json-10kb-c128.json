@@ -1,0 +1,36 @@
+{
+  "scenarios": [
+    {
+      "name": "json-10kb-c128",
+      "url": "http://172.31.0.170:3090/json/10kb",
+      "metrics": {
+        "total_requests": 16071002,
+        "successful_requests": 16071002,
+        "failed_requests": 0,
+        "status_codes": {
+          "200": 16071002
+        },
+        "rpm": 48213006.0,
+        "rps": 803550.1,
+        "latency_avg_ms": 0.16,
+        "latency_min_ms": 0.06,
+        "latency_max_ms": 0.86,
+        "latency_p50_ms": 0.15,
+        "latency_p90_ms": 0.21,
+        "latency_p95_ms": 0.24,
+        "latency_p99_ms": 0.3,
+        "latency_p999_ms": 0.38,
+        "latency_p9999_ms": 0.46,
+        "duration_secs": 20.0,
+        "worker_count": 48,
+        "payload_bytes": 182566582720,
+        "wire_bytes": 182566582720,
+        "payload_transfer_per_sec": 9128329136.0,
+        "wire_transfer_per_sec": 9128329136.0,
+        "latency_histogram": "HISTEwAABMIAAAAAAAAAAwAAAAAAAAABAAAAAAOThwA/8AAAAAAAAHsCAAoMMjRyggGMAowDvgXIB9oL+A+uFqwdjCfiMrQ/mE+OYoB41o4BzqYBmMQB5OEB7vwB9KIChM0ChvMCuqIDjNgDgoIEoMQErPoE2LIFxvQFlrcG7v0GksoHjJUI+OcIhr8JoJEK1OUK6r8Lwo8M8NcM/LENuokOntgOiLAPioEQ5s0QxJoRgtgRgKESsukS0JUTsNITvI0U8MoUrP0UgqAVsL8V0vIV+oYWzqoWiNYWuOQW7PkWjIcXuJ0XqpYXvKIX7JUX5I4X6IwXzJEX7IsX7PkWmPUWztsWmsQW8KoWqpEW/uIV5tIVgLcVjokV/O8UqtMU/KkUpP4T6tsT9K8T5vkSsN4S6rESiooSns8R0K0RmIIRzN4QpLYQsIUQ2tgPwqYP0IQP/NUO9q4OkIgOtNwNnLUNmoMNxuIMxrwM4JQMiO8LuNELqKsL2oUL4OIKor0KoKIKiv0JttwJ5sEJhJwJ8IEJ0OUI7M0I6qsI/JAItvgH4N0H7MgHtK4HxpAHmoAH4OwG4NMG1roGyKYG1pQGiIEGzO0FnuAF7MQF9LUFlqgFzpQFjoQFrO8EjOAEytQEtsgE6rYEjKoE9J8EuJEEovsDlvED6OcD/twDwNEDmsYDlLkDnKoDuJ8DjpcDlo8DlIMD0vYCuu0C2uUCluECkNYCtswChsYCtL0CtrQC3q0C3KUCrp8C9pkCmI8CyIoC2oMCmPwBoPEBsu4B0OUB3uMB6NwB+NcBlNIBmMoBtMgBqsIB7L8BqLYB8q8B+K0B5KkBlqUB5qAB+pwB1JwBlpgB4pQBpo4B9ooBuIkBsoUBuIEBnn6ueLh3snXecexvlmzoZoxm7GD0YIpflluaWphYwleIUupQ1k7OTd5JjknIR+BF6kKeQfw/tD+qPeg6zjj+N7I3kDaAM+Qx9i+aMMos+i3OK5IrsCqqKM4m8ibCJY4jqiL6I/wgpiG0H9Qdwh2EHYodyhr+GvQZ4Be0GbgX0hbMFugVqBW6FLAT3hLSEoISzBLEEZ4Szg+kELIP9A7GDvINlg6MDeAMygz0C/wLpAvwCqoKwArQCYYKjgnACcgJtAjyCIYIvgfsB/YHpgewB+wF+ga2BtgF3gXQBaYF7gWgBawF0ASUBYgFyASqBOwDlgTmA/oDugPUA/IDrAOMA84ClgOAA5ID3gLmAsICrgK4AsgCuAK0AqgCkgL+AYoCwALeAfQB9AHoAcwB1gG4AeQBsAHGAbQBuAGYAZ4BrgGoAYABoAGEAZQBjAFydoYBclh8XmhYcHBiWmhcSlY+YE5CQjpGPkImQkowNCI4NDJAQD48JjQeKhIoGhweIh4cGCgSHg4WDhIcHhAYFhocGBQUGhIWDBoUFgoWDg4ODggGCggGBgYMCAYKCggQEAgQDAgEBgYIBAYMBAgQCgQGCAACCAQECAoABggGBAYCCgIEAAYGCAoEBgIMAAIECAQECAQEAgIGAgIAAgIECAIACAIIBgAEAAICAAQEBAIAAgACBwQCBAYAAgQCAwIDAgACBQIDAgQCAgICAwIDBAACAAICAgACAwIHBgACCQIEAg0CCQQEAhcCBgMCAAQDAg0CFwINAgIPAhsCGQICDQIVBDECDQIRAg=="
+      }
+    }
+  ],
+  "total_requests": 16071002,
+  "total_duration_secs": 20.0
+}

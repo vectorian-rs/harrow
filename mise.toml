@@ -125,7 +125,7 @@ docker tag spinr:$SPINR_VERSION-prod-arm64 $ECR/harrow/spinr:$SPINR_VERSION && d
 """
 
 [tasks."bench:ecr-push".env]
-SPINR_VERSION = "0.5.0"
+SPINR_VERSION = "0.5.1"
 
 [tasks."bench:ecr-push-perf"]
 description = "Push perf-profiling bench images to ECR"
@@ -139,7 +139,7 @@ docker tag spinr:$SPINR_VERSION-prod-arm64 $ECR/harrow/spinr:$SPINR_VERSION && d
 """
 
 [tasks."bench:ecr-push-perf".env]
-SPINR_VERSION = "0.5.0"
+SPINR_VERSION = "0.5.1"
 
 [tasks."bench:pull-images"]
 description = "Pull versioned bench images from ECR on all instances"
@@ -149,7 +149,7 @@ cd infra/ansible && ansible-playbook playbooks/pull-images.yml --extra-vars "har
 """
 
 [tasks."bench:pull-images".env]
-SPINR_VERSION = "0.5.0"
+SPINR_VERSION = "0.5.1"
 
 [tasks."bench:setup-linux"]
 description = "Provision bench EC2 instances via Ansible"
@@ -159,7 +159,7 @@ cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "harrow_ve
 """
 
 [tasks."bench:setup-linux".env]
-SPINR_VERSION = "0.5.0"
+SPINR_VERSION = "0.5.1"
 
 [tasks."bench:run"]
 description = "Run remote perf test against bench instances"
@@ -177,6 +177,6 @@ cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
 """
 
 [tasks."bench:run".env]
-BENCH_SERVER_IP = "3.249.174.124"
-BENCH_CLIENT_IP = "34.243.15.89"
-BENCH_SERVER_PRIVATE_IP = "172.31.0.196"
+BENCH_SERVER_IP = "3.255.207.229"
+BENCH_CLIENT_IP = "3.254.145.99"
+BENCH_SERVER_PRIVATE_IP = "172.31.0.170"

@@ -1,0 +1,23 @@
+{
+  "allocator": "mimalloc",
+  "client_host": "3.254.145.99",
+  "compare_mode": "allocator",
+  "completed_at_utc": "2026-03-24 11:21:02 UTC",
+  "concurrency": 128,
+  "duration_secs": 20,
+  "framework": "harrow",
+  "key": "mimalloc_json-1kb-c128",
+  "os_monitors": true,
+  "path": "harrow-bench/spinr/json-1kb-c128.toml",
+  "perf_enabled": true,
+  "perf_mode": "stat",
+  "perf_record": false,
+  "perf_scope": "stat (server only)",
+  "perf_stat": true,
+  "server_host": "3.255.207.229",
+  "spinr_mode": "docker",
+  "started_at_utc": "2026-03-24 11:20:39 UTC",
+  "test_case": "json-1kb-c128",
+  "variant": "mimalloc",
+  "warmup_secs": 2
+}

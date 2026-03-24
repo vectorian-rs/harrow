@@ -110,7 +110,8 @@ fn compress_gzip(data: &[u8]) -> Option<Vec<u8>> {
     use flate2::write::GzEncoder;
     use std::io::Write;
 
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    // Use default compression level to match tower-http behavior
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data).ok()?;
     encoder.finish().ok()
 }
@@ -120,7 +121,8 @@ fn compress_deflate(data: &[u8]) -> Option<Vec<u8>> {
     use flate2::write::DeflateEncoder;
     use std::io::Write;
 
-    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
+    // Use default compression level to match tower-http behavior
+    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data).ok()?;
     encoder.finish().ok()
 }

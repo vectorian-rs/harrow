@@ -1,0 +1,36 @@
+{
+  "scenarios": [
+    {
+      "name": "json-1kb-c128",
+      "url": "http://172.31.0.170:3090/json/1kb",
+      "metrics": {
+        "total_requests": 19936057,
+        "successful_requests": 19936057,
+        "failed_requests": 0,
+        "status_codes": {
+          "200": 19936057
+        },
+        "rpm": 59808171.0,
+        "rps": 996802.85,
+        "latency_avg_ms": 0.13,
+        "latency_min_ms": 0.03,
+        "latency_max_ms": 0.66,
+        "latency_p50_ms": 0.12,
+        "latency_p90_ms": 0.19,
+        "latency_p95_ms": 0.21,
+        "latency_p99_ms": 0.25,
+        "latency_p999_ms": 0.29,
+        "latency_p9999_ms": 0.32,
+        "duration_secs": 20.0,
+        "worker_count": 48,
+        "payload_bytes": 21969534814,
+        "wire_bytes": 21969534814,
+        "payload_transfer_per_sec": 1098476740.7,
+        "wire_transfer_per_sec": 1098476740.7,
+        "latency_histogram": "HISTEwAAA4YAAAAAAAAAAwAAAAAAAAABAAAAAAOThwA/8AAAAAAAADsCDErUAdgD6gf2C5QT5hnUIZYq+jSgPNpNyFmQbrqFAYqeAZi8AeLmAcKXAv7GAt6DA6THA+SHBOLXBPSkBYTxBZTHBsikB+T3B6DiCMq/CeajCoyHC/LoC6DGDPCjDZL0DfbFDpyOD6bPD/6PELDTELKSEYi+Ecr9EYCZEozSEvbvEpqXE9y+E7jVE5rvE8SMFISrFMK9FMLOFLzgFJb8FKD+FNaTFaqXFZaqFfCvFYq5Feq+FYDEFfbEFabEFZDGFb6xFabNFYjGFZS1Ffa7FcqlFcqiFbqtFfyUFdCKFdCGFfqDFbr1FIryFOLrFMDZFO7NFMi4FISxFKSaFMKKFIKRFKDwE5LnE5beE/rLE4K9E5ywE7CbE/idE5b5EtruEu7hEoDTEpS2EvibEriQEvz5EYrzEe7dEaTIEZSzEdCfEdqGEbr6ENDgEKy9ENi7EOyhEM7+D5TuD6DXD5C8D9SkD/6ED9ziDtbCDriqDsCGDrrlDY7DDeijDYiDDdrfDJS/DKKmDJD7C9DjC7TIC/aoC8aJC7jtCurOCvyqCoyWCo7xCdjTCeS0CaCbCayFCfbtCJbJCOq3CJKYCMCFCP7pB+TWB/a+B6anB5KQB778BtTvBv7aBq7DBp6qBracBpKTBsb6BYrmBfjRBYy/BbqzBZagBaKPBYCABezwBNblBJrPBLzDBJ62BKCmBOSYBPCMBIT5A5DwA7ziA8rRA7DDA8q3A8awA9qgA7SQA+qIA5D7AsDyApzoApbeAsTTAvDFApq9AsSuApCqAtibAuSOAtaIAuiAAqL0AeLsAaziAZDdAd7WAYzKAczCAfC8AYy0AcKuAbCnAcKgAaiZAcSVAcqNAbyFAb6AAcR59nP8boBu7GOWYtJcwFm0VvRO4EzGR45FpkGIPYo8hDj0Nvwx2C+GLaQr4CegJ8wj7CHIH+YdrBzwGZIYtheSFsQV/BOqEvAQuA+YD/wN9AyYDNIL6guUCsAJwAnACMAH/AasBpoG5AXsBZwFzASWBPID9APSA4oD4gLAAtQCqgKMArwBzgHgAbwB1gHWAagBogF6VFZ+UGBQTEJIMC46Ki4oIBgwIBAoJhIQDAoQFAgSEgYGAggIBhACBAQIBAMEAAQFAgICAgUEBAACBAkCAAIJAgIPAgkCAAIRAg0GAwYFAgMCDQICAwIDAgUCOQJ/ArsBAgMC"
+      }
+    }
+  ],
+  "total_requests": 19936057,
+  "total_duration_secs": 20.0
+}

@@ -69,6 +69,20 @@ module "ecr_axum_perf_server" {
   force-delete    = true
 }
 
+module "ecr_harrow_perf_server_sysalloc" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/harrow-perf-server-sysalloc"
+  stage           = "bench"
+  force-delete    = true
+}
+
+module "ecr_axum_perf_server_sysalloc" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/axum-perf-server-sysalloc"
+  stage           = "bench"
+  force-delete    = true
+}
+
 module "ecr_spinr" {
   source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
   repository-name = "harrow/spinr"
@@ -119,6 +133,8 @@ resource "aws_iam_role_policy" "bench_ecr_pull" {
         Resource = [
           module.ecr_harrow_perf_server.ecr-repository-arn,
           module.ecr_axum_perf_server.ecr-repository-arn,
+          module.ecr_harrow_perf_server_sysalloc.ecr-repository-arn,
+          module.ecr_axum_perf_server_sysalloc.ecr-repository-arn,
           module.ecr_spinr.ecr-repository-arn,
         ]
       }

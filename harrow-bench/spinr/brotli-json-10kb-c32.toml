@@ -1,0 +1,10 @@
+[[scenario]]
+name = "brotli-json-10kb-c32"
+url = "http://{{ server }}/json/10kb"
+connections = 32
+max_throughput = true
+duration = {{ duration }}
+warmup = {{ warmup }}
+
+[scenario.headers]
+Accept-Encoding = "br"

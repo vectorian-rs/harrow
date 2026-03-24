@@ -1,0 +1,298 @@
+Linux 6.6.121-0-virt (ip-172-31-0-170) 	03/24/26 	_aarch64_	(48 CPU)
+
+11:09:50        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:51           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:51         eth0     46.00     30.00      9.17      8.80      0.00      0.00      0.00      0.00
+11:09:51      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:50     active/s passive/s    iseg/s    oseg/s
+11:09:51         0.00      2.00     44.00     30.00
+
+11:09:50     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:51         0.00      0.00      0.00      0.00      0.00
+
+11:09:51        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:52           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:52         eth0     19.00     12.00      2.04      2.40      0.00      0.00      0.00      0.00
+11:09:52      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:51     active/s passive/s    iseg/s    oseg/s
+11:09:52         0.00      0.00     19.00     12.00
+
+11:09:51     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:52         0.00      0.00      0.00      0.00      0.00
+
+11:09:52        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:53           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:53         eth0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:53      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:52     active/s passive/s    iseg/s    oseg/s
+11:09:53         0.00      0.00      0.00      0.00
+
+11:09:52     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:53         0.00      0.00      0.00      0.00      0.00
+
+11:09:53        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:54           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:54         eth0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:54      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:53     active/s passive/s    iseg/s    oseg/s
+11:09:54         0.00      0.00      0.00      0.00
+
+11:09:53     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:54         0.00      0.00      0.00      0.00      0.00
+
+11:09:54        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:55           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:55         eth0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:55      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:54     active/s passive/s    iseg/s    oseg/s
+11:09:55         0.00      0.00      0.00      0.00
+
+11:09:54     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:55         0.00      0.00      0.00      0.00      0.00
+
+11:09:55        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:56           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:56         eth0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:56      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:55     active/s passive/s    iseg/s    oseg/s
+11:09:56         0.00      0.00      0.00      0.00
+
+11:09:55     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:56         0.00      0.00      0.00      0.00      0.00
+
+11:09:56        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:57           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:57         eth0     10.00      7.00      3.33      3.07      0.00      0.00      0.00      0.00
+11:09:57      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:56     active/s passive/s    iseg/s    oseg/s
+11:09:57         0.00      1.00      9.00      7.00
+
+11:09:56     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:57         0.00      0.00      0.00      0.00      0.00
+
+11:09:57        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:58           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:58         eth0     18.00     13.00      2.24      2.47      0.00      0.00      0.00      0.00
+11:09:58      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:57     active/s passive/s    iseg/s    oseg/s
+11:09:58         0.00      0.00     18.00     13.00
+
+11:09:57     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:58         0.00      0.00      0.00      0.00      0.00
+
+11:09:58        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:09:59           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:09:59         eth0 1312508.00 4928683.00 112377.97 7218687.77      0.00      0.00      0.00      0.00
+11:09:59      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:58     active/s passive/s    iseg/s    oseg/s
+11:09:59         0.00    128.00 1312735.00 4929482.00
+
+11:09:58     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:09:59         0.00      0.00      0.00      0.00      0.00
+
+11:09:59        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:00           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:00         eth0 1718127.00 6452831.00 147116.23 9451601.45      0.00      0.00      0.00      0.00
+11:10:00      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:09:59     active/s passive/s    iseg/s    oseg/s
+11:10:00         0.00      0.00 1718048.00 6452752.00
+
+11:09:59     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:00         0.00      0.00      0.00      0.00      0.00
+
+11:10:00        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:01           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:01         eth0 1711841.00 6446307.00 146733.71 9442045.66      0.00      0.00      0.00      0.00
+11:10:01      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:00     active/s passive/s    iseg/s    oseg/s
+11:10:01         0.00      0.00 1711848.00 6446320.00
+
+11:10:00     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:01         0.00      0.00      0.00      0.00      0.00
+
+11:10:01        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:02           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:02         eth0 1701763.00 6412553.00 145907.49 9392604.13      0.00      0.00      0.00      0.00
+11:10:02      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:01     active/s passive/s    iseg/s    oseg/s
+11:10:02         0.00      0.00 1701827.00 6412608.00
+
+11:10:01     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:02         0.00      0.00      0.00      0.00      0.00
+
+11:10:02        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:03           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:03         eth0 1686164.00 6345674.00 144496.94 9294646.42      0.00      0.00      0.00      0.00
+11:10:03      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:02     active/s passive/s    iseg/s    oseg/s
+11:10:03         0.00      0.00 1686139.00 6345736.00
+
+11:10:02     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:03         0.00      0.00      0.00      0.00      0.00
+
+11:10:03        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:04           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:04         eth0 1706801.00 6415240.00 146189.95 9396540.89      0.00      0.00      0.00      0.00
+11:10:04      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:03     active/s passive/s    iseg/s    oseg/s
+11:10:04         0.00      0.00 1706739.00 6414880.00
+
+11:10:03     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:04         0.00      0.00      0.00      0.00      0.00
+
+11:10:04        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:05           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:05         eth0 1719645.00 6450355.00 147169.41 9447974.74      0.00      0.00      0.00      0.00
+11:10:05      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:04     active/s passive/s    iseg/s    oseg/s
+11:10:05         0.00      0.00 1719616.00 6450208.00
+
+11:10:04     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:05         0.00      0.00      0.00      0.00      0.00
+
+11:10:05        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:06           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:06         eth0 1700384.00 6410547.00 145818.96 9389667.21      0.00      0.00      0.00      0.00
+11:10:06      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:05     active/s passive/s    iseg/s    oseg/s
+11:10:06         0.00      0.00 1700455.00 6410928.00
+
+11:10:05     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:06         0.00      0.00      0.00      0.00      0.00
+
+11:10:06        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:07           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:07         eth0 1715466.00 6468384.00 147123.15 9474382.28      0.00      0.00      0.00      0.00
+11:10:07      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:06     active/s passive/s    iseg/s    oseg/s
+11:10:07         0.00      0.00 1715446.00 6468344.00
+
+11:10:06     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:07         0.00      0.00      0.00      0.00      0.00
+
+11:10:07        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:08           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:08         eth0 1712829.00 6445469.00 146775.94 9440818.14      0.00      0.00      0.00      0.00
+11:10:08      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:07     active/s passive/s    iseg/s    oseg/s
+11:10:08         0.00      0.00 1712825.00 6445376.00
+
+11:10:07     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:08         0.00      0.00      0.00      0.00      0.00
+
+11:10:08        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:09           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:09         eth0 1712454.00 6472035.00 147004.49 9479730.02      0.00      0.00      0.00      0.00
+11:10:09      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:08     active/s passive/s    iseg/s    oseg/s
+11:10:09         0.00      0.00 1712435.00 6471968.00
+
+11:10:08     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:09         0.00      0.00      0.00      0.00      0.00
+
+11:10:09        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:10           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:10         eth0 1696430.00 6410419.00 145618.54 9389479.73      0.00      0.00      0.00      0.00
+11:10:10      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:09     active/s passive/s    iseg/s    oseg/s
+11:10:10         0.00      0.00 1696431.00 6410456.00
+
+11:10:09     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:10         0.00      0.00      0.00      0.00      0.00
+
+11:10:10        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:11           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:11         eth0 1718038.00 6459590.00 147171.90 9461501.60      0.00      0.00      0.00      0.00
+11:10:11      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:10     active/s passive/s    iseg/s    oseg/s
+11:10:11         0.00      0.00 1718040.00 6459616.00
+
+11:10:10     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:11         0.00      0.00      0.00      0.00      0.00
+
+11:10:11        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:12           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:12         eth0 1697654.00 6399140.00 145574.42 9372959.03      0.00      0.00      0.00      0.00
+11:10:12      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:11     active/s passive/s    iseg/s    oseg/s
+11:10:12         0.00      0.00 1697674.00 6399288.00
+
+11:10:11     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:12         0.00      0.00      0.00      0.00      0.00
+
+11:10:12        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:13           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:13         eth0 1704811.00 6439257.00 146313.78 9431719.23      0.00      0.00      0.00      0.00
+11:10:13      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:12     active/s passive/s    iseg/s    oseg/s
+11:10:13         0.00      0.00 1704775.00 6439136.00
+
+11:10:12     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:13         0.00      0.00      0.00      0.00      0.00
+
+11:10:13        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:14           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:14         eth0 1688315.00 6375159.00 144877.29 9337833.58      0.00      0.00      0.00      0.00
+11:10:14      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:13     active/s passive/s    iseg/s    oseg/s
+11:10:14         0.00      0.00 1688375.00 6374952.00
+
+11:10:13     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:14         0.00      0.00      0.00      0.00      0.00
+
+11:10:14        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:15           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:15         eth0 1708739.00 6441568.00 146533.36 9435104.30      0.00      0.00      0.00      0.00
+11:10:15      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:14     active/s passive/s    iseg/s    oseg/s
+11:10:15         0.00      0.00 1708712.00 6441872.00
+
+11:10:14     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:15         0.00      0.00      0.00      0.00      0.00
+
+11:10:15        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+11:10:16           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+11:10:16         eth0 1699369.00 6421480.00 145870.66 9405680.97      0.00      0.00      0.00      0.00
+11:10:16      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+11:10:15     active/s passive/s    iseg/s    oseg/s
+11:10:16         0.00      0.00 1699353.00 6421280.00
+
+11:10:15     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+11:10:16         0.00      0.00      0.00      0.00      0.00
+
+Average:        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+Average:           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+Average:         eth0 1165824.27 4392105.88  99949.65 6433192.07      0.00      0.00      0.00      0.00
+Average:      docker0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+
+Average:     active/s passive/s    iseg/s    oseg/s
+Average:         0.00      5.04 1165829.35 4392125.54
+
+Average:     atmptf/s  estres/s retrans/s isegerr/s   orsts/s
+Average:         0.00      0.00      0.00      0.00      0.00
