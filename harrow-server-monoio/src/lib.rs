@@ -1,4 +1,58 @@
-//! Monoio-based HTTP/1.1 server for Harrow.
+//! Monoio-based HTTP/1.1 and HTTP/2 server for Harrow.
+//!
+//! This crate provides a high-performance HTTP server using io_uring.
+//! It supports HTTP/1.1 with keep-alive and chunked transfer encoding,
+//! and HTTP/2 with multiplexed streams.
+//!
+//! # Features
+//!
+//! - **io_uring-based I/O**: Zero-copy where possible, minimal syscalls
+//! - **Cancellation Safety**: Proper handling of io_uring operation cancellation
+//! - **Buffer Pooling**: Reusable buffers to reduce allocator pressure
+//! - **HTTP/2 Support**: Multiplexed streams with flow control
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────┐
+//! │              Server (lib.rs)                │
+//! └─────────────────────┬───────────────────────┘
+//!                       │ TcpStream
+//!                       ▼
+//! ┌─────────────────────────────────────────────┐
+//! │           Connection Handler                │
+//! │            (connection.rs)                  │
+//! └─────────────────────┬───────────────────────┘
+//!                       │
+//!           ┌───────────┴───────────┐
+//!           ▼                       ▼
+//! ┌─────────────────┐   ┌─────────────────────┐
+//! │   H1 Handler    │   │   H2 Handler        │
+//! │    (h1.rs)      │   │    (h2.rs)          │
+//! └─────────────────┘   └─────────────────────┘
+//! ```
+//!
+//! # Example
+//!
+//! ```ignore
+//! fn main() {
+//!     let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+//!         .enable_timer()
+//!         .build()
+//!         .unwrap();
+//!     rt.block_on(async {
+//!         let app = App::new().get("/hello", hello);
+//!         
+//!         // HTTP/1.1 (default)
+//!         harrow_server_monoio::serve(app.clone(), h1_addr).await.unwrap();
+//!         
+//!         // HTTP/2 (with prior knowledge)
+//!         let mut config = ServerConfig::default();
+//!         config.enable_http2 = true;
+//!         harrow_server_monoio::serve_with_config(app, h2_addr, shutdown, config).await.unwrap();
+//!     });
+//! }
+//! ```
 //!
 //! # Cancellation Safety
 //!
@@ -24,6 +78,9 @@
 //!     result = stream.cancelable_read(buf, handle) => result,
 //!     _ = timeout => {
 //!         canceller.cancel(); // Explicit kernel cancellation
+//!         // Await the operation to reclaim buffer
+//!         let (_, buf) = read_fut.await;
+//!         release_buffer(buf);
 //!         return Err(Timeout);
 //!     }
 //! }
@@ -35,8 +92,11 @@ mod buffer;
 mod cancel;
 mod codec;
 mod connection;
+mod h1;
+mod h2;
 mod kernel_check;
 mod o11y;
+mod protocol;
 
 use std::cell::Cell;
 use std::future::Future;
@@ -50,6 +110,8 @@ use monoio::net::TcpListener;
 use harrow_core::dispatch::SharedState;
 use harrow_core::route::{App, RouteTable};
 
+use connection::ProtocolVersion;
+
 /// Configuration for the monoio server.
 pub struct ServerConfig {
     /// Maximum number of concurrent connections. Default: 8192.
@@ -60,6 +122,12 @@ pub struct ServerConfig {
     pub connection_timeout: Option<Duration>,
     /// Time to wait for in-flight requests to complete during shutdown. Default: 30s.
     pub drain_timeout: Duration,
+    /// Enable HTTP/2 support (prior knowledge). Default: false.
+    ///
+    /// When enabled, connections are assumed to use HTTP/2 directly
+    /// (no protocol negotiation). This is suitable for internal services
+    /// or load balancers that route H2 traffic to dedicated ports.
+    pub enable_http2: bool,
 }
 
 impl Default for ServerConfig {
@@ -69,11 +137,12 @@ impl Default for ServerConfig {
             header_read_timeout: Some(Duration::from_secs(5)),
             connection_timeout: Some(Duration::from_secs(300)),
             drain_timeout: Duration::from_secs(30),
+            enable_http2: false,
         }
     }
 }
 
-/// Serve the application on the given address.
+/// Serve the application on the given address using HTTP/1.1.
 ///
 /// This is an async function intended to run inside a monoio runtime:
 ///
@@ -113,6 +182,10 @@ pub async fn serve_with_shutdown(
 /// # Requirements
 /// This function requires Linux kernel 6.1+ for full io_uring support.
 /// It will fail fast with a clear error on older kernels.
+///
+/// # HTTP/2 Support
+/// Set `config.enable_http2 = true` to accept HTTP/2 connections with
+/// prior knowledge (direct H2 without upgrade/ALPN).
 pub async fn serve_with_config(
     app: App,
     addr: SocketAddr,
@@ -139,14 +212,16 @@ pub async fn serve_with_config(
 
     let active_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
 
+    // Determine protocol version based on configuration
+    let protocol = if config.enable_http2 {
+        ProtocolVersion::Http2PriorKnowledge
+    } else {
+        ProtocolVersion::Http11
+    };
+
     let mut shutdown = std::pin::pin!(shutdown);
 
     // Accept loop with graceful shutdown.
-    //
-    // # Cancellation Safety
-    // When shutdown fires, the accept() future is dropped. This is generally
-    // safe because accept() doesn't hold user buffers - it just returns a new
-    // socket. The kernel will cancel the pending accept operation.
     loop {
         monoio::select! {
             result = listener.accept() => {
@@ -181,6 +256,7 @@ pub async fn serve_with_config(
                     header_read_timeout,
                     connection_timeout,
                     counter,
+                    protocol,
                 ));
             }
             () = &mut shutdown => {

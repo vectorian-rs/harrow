@@ -15,6 +15,8 @@ http-body-util = { workspace = true }
 tracing = { workspace = true }
 futures-util = { workspace = true }
 libc = "0.2"
+thiserror = "1"
+monoio-http = "0.3.12"
 
 [dev-dependencies]
 tokio = { workspace = true }
