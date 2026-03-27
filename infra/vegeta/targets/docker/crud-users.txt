@@ -1,0 +1,21 @@
+# Full CRUD operations on /users resource (DOCKER)
+# Create
+POST http://tokio-server:3000/users
+Content-Type: application/json
+{"name": "John Doe", "email": "john@example.com"}
+
+# Read
+GET http://tokio-server:3000/users/123
+
+# Update
+PUT http://tokio-server:3000/users/123
+Content-Type: application/json
+{"name": "John Updated", "email": "john.updated@example.com"}
+
+# Partial Update
+PATCH http://tokio-server:3000/users/123
+Content-Type: application/json
+{"name": "John Patched"}
+
+# Delete
+DELETE http://tokio-server:3000/users/123

@@ -1,0 +1,7 @@
+# Path parameter extraction test (DOCKER)
+GET http://tokio-server:3000/users/123
+GET http://tokio-server:3000/users/456
+GET http://tokio-server:3000/users/789
+GET http://tokio-server:3000/users/abc/posts/1
+GET http://tokio-server:3000/users/abc/posts/2
+GET http://tokio-server:3000/users/def/posts/3

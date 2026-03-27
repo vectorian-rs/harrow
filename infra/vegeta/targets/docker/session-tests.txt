@@ -1,0 +1,9 @@
+# Session middleware tests (DOCKER)
+# 
+# NOTE: Vegeta doesn't maintain cookies between requests by default,
+# so each request creates a fresh session. This tests middleware overhead
+# but not actual session persistence across multiple requests.
+
+GET http://tokio-server:3000/session
+POST http://tokio-server:3000/session/increment
+DELETE http://tokio-server:3000/session

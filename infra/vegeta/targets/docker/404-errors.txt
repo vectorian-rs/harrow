@@ -1,0 +1,4 @@
+# 404 error handling test (DOCKER)
+GET http://tokio-server:3000/nonexistent
+GET http://tokio-server:3000/api/v1/unknown
+GET http://tokio-server:3000/users/

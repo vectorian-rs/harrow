@@ -1,0 +1,6 @@
+# Test middleware chain execution (LOCAL)
+# These endpoints test: request-id, cors, timeout middleware
+GET http://localhost:3000/middleware-test
+GET http://localhost:3000/health
+GET http://localhost:3000/live
+GET http://localhost:3000/ready

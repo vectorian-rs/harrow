@@ -1,0 +1,4 @@
+# 404 error handling test (LOCAL)
+GET http://localhost:3000/nonexistent
+GET http://localhost:3000/api/v1/unknown
+GET http://localhost:3000/users/

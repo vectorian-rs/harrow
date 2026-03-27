@@ -1,0 +1,5 @@
+# Basic GET endpoints - high throughput test (DOCKER)
+GET http://tokio-server:3000/
+GET http://tokio-server:3000/health
+GET http://tokio-server:3000/live
+GET http://tokio-server:3000/ready

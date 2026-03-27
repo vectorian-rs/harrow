@@ -22,6 +22,8 @@ Use it to narrow the search space before opening files.
   - Feature-gated middleware implementations: timeout, request-id, cors, o11y, catch-panic, body-limit, compression, rate-limit, session.
 - `harrow-server/`
   - Hyper server binding, connection lifecycle, graceful shutdown, concurrency limits.
+- `harrow-server-monoio/`
+  - Monoio/io_uring server for high-performance Linux deployments.
 - `harrow-o11y/`
   - `O11yConfig` and observability-facing configuration types.
 - `harrow-serde/`
@@ -147,6 +149,9 @@ Use it to narrow the search space before opening files.
   - `cargo test -p harrow-core`
   - `cargo test -p harrow-middleware`
   - `cargo test -p harrow-server`
+  - `cargo test -p harrow-server-monoio`
+  - `cargo test -p harrow --features tokio` (harrow requires explicit server backend)
+  - `cargo test -p harrow --features monoio` (for io_uring tests)
 - Benchmarks:
   - `cargo bench`
   - or a targeted bench via `cargo bench --bench <name>`

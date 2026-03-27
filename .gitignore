@@ -16,3 +16,5 @@ infra/**/terraform.tfstate.backup
 infra/**/terraform.tfstate.*.backup
 .DS_Store
 **/proptest-regressions/
+results/
+.grakno/

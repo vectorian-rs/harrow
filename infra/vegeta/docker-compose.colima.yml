@@ -1,0 +1,50 @@
+version: "3.8"
+
+# Docker Compose for Colima (Linux VM with io_uring support)
+# Usage: docker-compose -f docker-compose.colima.yml up --build
+
+services:
+  monoio-server:
+    build:
+      context: ../..
+      dockerfile: infra/vegeta/server-monoio.Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - BIND_ADDR=0.0.0.0:3000
+      - RUST_LOG=info
+    # Required for io_uring
+    privileged: true
+    # Resource limits for testing
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Vegeta load tester
+  vegeta:
+    image: peterevans/vegeta:latest
+    depends_on:
+      monoio-server:
+        condition: service_healthy
+    environment:
+      - SERVER_URL=http://monoio-server:3000
+      - DURATION=30s
+      - RATE=1000
+    volumes:
+      - ./targets:/targets:ro
+      - ./results:/results
+      - ./scripts:/scripts:ro
+    # Override entrypoint to run our test script
+    entrypoint: ["/bin/sh"]
+    command: ["/scripts/run-all-tests.sh"]
+
+networks:
+  default:
+    driver: bridge

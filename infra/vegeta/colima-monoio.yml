@@ -1,0 +1,25 @@
+# Colima configuration for io_uring testing
+# Usage: colima start --config infra/vegeta/colima-monoio.yml
+
+# VM configuration optimized for io_uring
+cpu: 4
+memory: 8
+disk: 60
+
+# Use latest Ubuntu for kernel 6.1+ support
+template: ubuntu-lts
+
+# Docker runtime
+runtime: docker
+
+# Volume mounts for testing
+mounts:
+  - location: ~/code/home/projectz/harrow
+    writable: true
+
+# Network configuration
+network:
+  address: true
+  
+# Enable privileged mode for io_uring
+privileged: true

@@ -1,0 +1,9 @@
+# Session middleware tests (LOCAL)
+# 
+# NOTE: Vegeta doesn't maintain cookies between requests by default,
+# so each request creates a fresh session. This tests middleware overhead
+# but not actual session persistence across multiple requests.
+
+GET http://localhost:3000/session
+POST http://localhost:3000/session/increment
+DELETE http://localhost:3000/session

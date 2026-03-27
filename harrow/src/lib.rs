@@ -1,6 +1,29 @@
 //! # Harrow
 //!
 //! A thin, macro-free HTTP framework over Hyper with opt-in observability.
+//!
+//! ## Server Backends (Required)
+//!
+//! Harrow requires you to explicitly select a server backend via Cargo features.
+//! There is no default — you must pick exactly one of:
+//!
+//! - **`tokio`**: Traditional async/await with Tokio + Hyper.
+//!   Use for cross-platform compatibility, development on macOS/Windows,
+//!   or deployment in containers/Lambda where io_uring is unavailable.
+//!
+//! - **`monoio`**: High-performance io_uring backend with thread-per-core.
+//!   Use for maximum throughput on Linux 6.1+ bare metal or EC2.
+//!   Requires custom seccomp profile in containers.
+//!
+//! ### Feature Flag Selection
+//!
+//! ```toml
+//! # Tokio backend (cross-platform)
+//! harrow = { version = "0.5", features = ["tokio"] }
+//!
+//! # io_uring backend (Linux 6.1+ only)
+//! harrow = { version = "0.5", features = ["monoio"] }
+//! ```
 
 pub use harrow_core::client::{Client, TestResponse};
 pub use harrow_core::handler;
@@ -12,7 +35,60 @@ pub use harrow_core::response::{IntoResponse, Response, ResponseBody};
 pub use harrow_core::route::{App, Group, Route, RouteMetadata, RouteSummary, RouteTable};
 pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 
+// Server backend selection via feature flags
+//
+// # Feature Selection
+//
+// You must enable exactly one server backend feature:
+// - `tokio`: Traditional async/await with Tokio + Hyper (cross-platform)
+// - `monoio`: High-performance io_uring with thread-per-core (Linux 6.1+)
+//
+// When exactly one feature is enabled, the server API is re-exported at the
+// crate root for convenience. When both are enabled, use the explicit
+// `runtime::tokio` or `runtime::monoio` modules.
+
+#[cfg(all(feature = "tokio", not(feature = "monoio")))]
 pub use harrow_server::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+
+#[cfg(all(feature = "monoio", not(feature = "tokio")))]
+pub use harrow_server_monoio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+
+// Compile-time checks for feature selection
+#[cfg(not(any(feature = "tokio", feature = "monoio")))]
+compile_error!(
+    "harrow requires a server backend feature. \
+     Enable exactly one of: `tokio` for cross-platform compatibility, \
+     or `monoio` for io_uring performance on Linux 6.1+. \
+     Example: harrow = {{ version = \"0.5\", features = [\"tokio\"] }}"
+);
+
+/// Runtime-specific server APIs.
+///
+/// Use this module when you need to explicitly select a server backend
+/// regardless of which feature flags are enabled.
+pub mod runtime {
+    /// Tokio-based server (Hyper + epoll/kqueue).
+    ///
+    /// Available when the `tokio` feature is enabled.
+    #[cfg(feature = "tokio")]
+    pub mod tokio {
+        pub use harrow_server::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+    }
+
+    /// Monoio-based server (io_uring + thread-per-core).
+    ///
+    /// Available when the `monoio` feature is enabled.
+    ///
+    /// # Requirements
+    /// - Linux kernel 6.1+ for full io_uring support
+    /// - Custom seccomp profile if running in containers
+    #[cfg(feature = "monoio")]
+    pub mod monoio {
+        pub use harrow_server_monoio::{
+            ServerConfig, serve, serve_with_config, serve_with_shutdown,
+        };
+    }
+}
 
 #[cfg(feature = "timeout")]
 pub use harrow_middleware::timeout::timeout_middleware;
