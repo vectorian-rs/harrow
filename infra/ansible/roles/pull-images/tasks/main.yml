@@ -48,6 +48,19 @@
   changed_when: true
   when: inventory_hostname in groups['server']
 
+# Server: pull monoio server image
+- name: Pull harrow-monoio-server from ECR
+  ansible.builtin.command:
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-monoio-server:{{ harrow_version }}"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
+- name: Tag harrow-monoio-server for local use
+  ansible.builtin.command:
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-monoio-server:{{ harrow_version }} harrow-monoio-server"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
 # Client: pull load tester
 - name: Pull spinr from ECR
   ansible.builtin.command:

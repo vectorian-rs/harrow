@@ -289,6 +289,31 @@ enum Framework {
     Axum,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Backend {
+    /// Tokio - standard async runtime (cross-platform)
+    Tokio,
+    /// Monoio - io_uring-based runtime (Linux 6.1+ only)
+    Monoio,
+}
+
+impl Backend {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "tokio" => Some(Self::Tokio),
+            "monoio" => Some(Self::Monoio),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tokio => "tokio",
+            Self::Monoio => "monoio",
+        }
+    }
+}
+
 impl Framework {
     fn as_str(self) -> &'static str {
         match self {
@@ -297,26 +322,39 @@ impl Framework {
         }
     }
 
-    fn image(self, alloc: Allocator) -> String {
-        let suffix = alloc.suffix();
-        match self {
-            Self::Harrow => format!("harrow-perf-server{suffix}"),
-            Self::Axum => format!("axum-perf-server{suffix}"),
+    fn image(self, backend: Backend, alloc: Allocator) -> String {
+        match (self, backend) {
+            (Self::Harrow, Backend::Monoio) => "harrow-monoio-server".to_string(),
+            (Self::Harrow, Backend::Tokio) => {
+                let suffix = alloc.suffix();
+                format!("harrow-perf-server{suffix}")
+            }
+            (Self::Axum, _) => {
+                let suffix = alloc.suffix();
+                format!("axum-perf-server{suffix}")
+            }
         }
     }
 
-    fn container_name(self, alloc: Allocator) -> String {
-        let suffix = alloc.suffix();
-        match self {
-            Self::Harrow => format!("harrow-perf-server{suffix}"),
-            Self::Axum => format!("axum-perf-server{suffix}"),
+    fn container_name(self, backend: Backend, alloc: Allocator) -> String {
+        match (self, backend) {
+            (Self::Harrow, Backend::Monoio) => "harrow-monoio-server".to_string(),
+            (Self::Harrow, Backend::Tokio) => {
+                let suffix = alloc.suffix();
+                format!("harrow-perf-server{suffix}")
+            }
+            (Self::Axum, _) => {
+                let suffix = alloc.suffix();
+                format!("axum-perf-server{suffix}")
+            }
         }
     }
 
-    fn launch_cmd(self, port: u16, extra_flags: &str) -> String {
-        let base = match self {
-            Self::Harrow => format!("/harrow-perf-server --bind 0.0.0.0 --port {port}"),
-            Self::Axum => format!("/axum-perf-server --bind 0.0.0.0 --port {port}"),
+    fn launch_cmd(self, backend: Backend, port: u16, extra_flags: &str) -> String {
+        let base = match (self, backend) {
+            (Self::Harrow, Backend::Monoio) => format!("/harrow-monoio-server"),
+            (Self::Harrow, Backend::Tokio) => format!("/harrow-perf-server --bind 0.0.0.0 --port {port}"),
+            (Self::Axum, _) => format!("/axum-perf-server --bind 0.0.0.0 --port {port}"),
         };
         if extra_flags.is_empty() {
             base
@@ -336,6 +374,14 @@ impl Framework {
         match self {
             Self::Harrow => "/harrow-perf-server",
             Self::Axum => "/axum-perf-server",
+        }
+    }
+
+    fn supports_backend(self, backend: Backend) -> bool {
+        match (self, backend) {
+            (Self::Harrow, _) => true,  // Harrow supports both tokio and monoio
+            (Self::Axum, Backend::Monoio) => false,  // Axum only supports tokio
+            (Self::Axum, Backend::Tokio) => true,
         }
     }
 }
@@ -410,6 +456,7 @@ struct Args {
     allocator: Allocator,
     compare: CompareMode,
     framework: Framework,
+    backend: Backend,
 }
 
 fn client_perf_enabled(args: &Args) -> bool {
@@ -477,6 +524,7 @@ fn usage() -> ! {
          \x20 --allocator ALLOC      Allocator: mimalloc|system (default: mimalloc)\n\
          \x20 --compare MODE         Comparison mode: framework|allocator (spinr only)\n\
          \x20 --framework FW         Framework: harrow|axum (default: harrow)\n\
+         \x20 --backend BACKEND      Runtime backend: tokio|monoio (default: tokio, harrow only)\n\
          \n\
          EXAMPLES:\n\
          \n\
@@ -536,6 +584,7 @@ fn parse_args() -> Args {
     let mut allocator = Allocator::Mimalloc;
     let mut compare = CompareMode::Framework;
     let mut framework = Framework::Harrow;
+    let mut backend = Backend::Tokio;
 
     let mut i = 1;
     while i < args.len() {
@@ -675,6 +724,13 @@ fn parse_args() -> Args {
                 };
                 i += 2;
             }
+            "--backend" => {
+                backend = Backend::parse(&args[i + 1]).unwrap_or_else(|| {
+                    eprintln!("invalid --backend: {}", args[i + 1]);
+                    usage();
+                });
+                i += 2;
+            }
             "-h" | "--help" => usage(),
             other => {
                 eprintln!("unknown option: {other}");
@@ -740,6 +796,14 @@ fn parse_args() -> Args {
         }
     }
 
+    // Validate backend/framework compatibility
+    if !framework.supports_backend(backend) {
+        eprintln!("error: framework '{}' does not support backend '{}'", 
+            framework.as_str(), backend.as_str());
+        eprintln!("note: Axum only supports Tokio backend; use --backend tokio or --framework harrow");
+        usage();
+    }
+
     // Verify all target files exist
     let files_to_check: Vec<_> = match load_generator {
         LoadGenerator::Spintr => config_paths.iter().collect(),
@@ -795,6 +859,7 @@ fn parse_args() -> Args {
         allocator,
         compare,
         framework,
+        backend,
     }
 }
 
@@ -928,9 +993,9 @@ fn run_local(cmd: &str) -> std::io::Result<Output> {
 // ---------------------------------------------------------------------------
 
 fn start_server_container(args: &Args, framework: Framework, allocator: Allocator, server_flags: &str) {
-    let name = framework.container_name(allocator);
-    let image = framework.image(allocator);
-    let command = framework.launch_cmd(args.port, server_flags);
+    let name = framework.container_name(args.backend, allocator);
+    let image = framework.image(args.backend, allocator);
+    let command = framework.launch_cmd(args.backend, args.port, server_flags);
     
     println!(">>> Starting {} server on {}", framework.as_str(), args.deployment_mode.as_str());
     
@@ -970,7 +1035,7 @@ fn start_server_container(args: &Args, framework: Framework, allocator: Allocato
 }
 
 fn stop_server_container(args: &Args, framework: Framework, allocator: Allocator) {
-    let name = framework.container_name(allocator);
+    let name = framework.container_name(args.backend, allocator);
     println!(">>> Stopping {} server", framework.as_str());
     
     match args.deployment_mode {
@@ -1004,7 +1069,7 @@ fn wait_for_server(args: &Args, timeout: Duration) -> Result<(), String> {
 }
 
 fn container_pid(args: &Args, framework: Framework, allocator: Allocator) -> Option<u32> {
-    let name = framework.container_name(allocator);
+    let name = framework.container_name(args.backend, allocator);
     let remote_cmd = format!("docker inspect -f '{{{{.State.Pid}}}}' {name}");
     
     let out = match args.deployment_mode {
@@ -1325,7 +1390,7 @@ fn collect_docker_stats(args: &Args, key: &str) {
 }
 
 fn collect_docker_logs(args: &Args, framework: Framework, allocator: Allocator, key: &str) {
-    let name = framework.container_name(allocator);
+    let name = framework.container_name(args.backend, allocator);
     let cmd = format!("docker logs {name} 2>&1");
     
     let result = match args.deployment_mode {
@@ -1561,7 +1626,7 @@ fn preflight_checks(args: &Args) {
 
     // Check server images exist
     for variant in &comparison_variants(args) {
-        let image = variant.framework.image(variant.allocator);
+        let image = variant.framework.image(args.backend, variant.allocator);
         let cmd = format!("docker image inspect {image} >/dev/null 2>&1 && echo ok");
         
         let result = match args.deployment_mode {
