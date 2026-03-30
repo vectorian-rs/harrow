@@ -39,7 +39,7 @@ hyper-util = { workspace = true }
 futures-util = { workspace = true }
 
 [[bin]]
-name = "harrow-server"
+name = "harrow-server-tokio"
 path = "src/bin/harrow_server.rs"
 
 [[bin]]
@@ -83,7 +83,7 @@ name = "harrow-perf-server"
 path = "src/bin/harrow_perf_server.rs"
 
 [[bin]]
-name = "harrow-monoio-server"
+name = "harrow-server-monoio"
 path = "src/bin/harrow_monoio_perf_server.rs"
 
 [[bin]]

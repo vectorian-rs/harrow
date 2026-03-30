@@ -23,7 +23,7 @@
 //! Optional `--o11y` flag enables observability middleware globally.
 //! Optional `--compression` flag enables response compression middleware.
 //!
-//! Usage: harrow-monoio-server [--bind ADDR] [--port PORT] [--o11y] [--session] [--compression]
+//! Usage: harrow-server-monoio [--bind ADDR] [--port PORT] [--o11y] [--session] [--compression]
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -78,7 +78,7 @@ fn parse_args() -> (String, u16, bool, bool, bool) {
             other => {
                 eprintln!("unknown option: {other}");
                 eprintln!(
-                    "usage: harrow-monoio-server [--bind ADDR] [--port PORT] [--o11y] [--session] [--compression]"
+                    "usage: harrow-server-monoio [--bind ADDR] [--port PORT] [--o11y] [--session] [--compression]"
                 );
                 std::process::exit(1);
             }
@@ -149,7 +149,7 @@ fn main() {
         eprintln!("o11y enabled");
     }
 
-    eprintln!("harrow-monoio-server listening on {addr} [allocator: {ALLOCATOR_NAME}]");
+    eprintln!("harrow-server-monoio listening on {addr} [allocator: {ALLOCATOR_NAME}]");
     harrow::runtime::monoio::run_with_config(
         app,
         addr,

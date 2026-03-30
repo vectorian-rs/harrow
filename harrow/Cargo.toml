@@ -9,7 +9,7 @@ description = "A thin, macro-free HTTP framework over Hyper with opt-in observab
 default = []
 
 # Server backends (pick exactly one)
-tokio = ["dep:harrow-server"]
+tokio = ["dep:harrow-server-tokio"]
 monoio = ["dep:harrow-server-monoio"]
 
 # Content formats
@@ -18,8 +18,8 @@ msgpack = ["harrow-core/msgpack"]
 openapi = ["harrow-core/openapi", "dep:bytes"]
 
 # Server features (only apply when tokio is selected)
-tls = ["harrow-server/tls"]
-profiling = ["harrow-core/profiling", "harrow-server?/profiling"]
+tls = ["harrow-server-tokio/tls"]
+profiling = ["harrow-core/profiling", "harrow-server-tokio?/profiling"]
 
 # Middleware features — each pulls in harrow-middleware with the right feature
 timeout = ["dep:harrow-middleware", "harrow-middleware/timeout"]
@@ -37,7 +37,7 @@ session = ["dep:harrow-middleware", "harrow-middleware/session"]
 harrow-core = { workspace = true }
 harrow-middleware = { workspace = true, optional = true }
 harrow-o11y = { workspace = true, optional = true }
-harrow-server = { workspace = true, optional = true }
+harrow-server-tokio = { workspace = true, optional = true }
 harrow-server-monoio = { workspace = true, optional = true }
 rolly = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
@@ -48,7 +48,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 monoio = { workspace = true }
-chrono = "0.4"
 http = { workspace = true }
 
 [[example]]

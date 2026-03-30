@@ -312,7 +312,7 @@ fn main() {
                 "build",
                 "--release",
                 "--bin",
-                "harrow-server",
+                "harrow-server-tokio",
                 "--bin",
                 "axum-server",
             ])
@@ -352,7 +352,7 @@ fn main() {
     println!();
 
     let frameworks: &[(&str, u16, &str)] = &[
-        ("harrow", HARROW_PORT, "target/release/harrow-server"),
+        ("harrow", HARROW_PORT, "target/release/harrow-server-tokio"),
         ("axum", AXUM_PORT, "target/release/axum-server"),
     ];
 

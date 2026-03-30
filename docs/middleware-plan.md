@@ -151,7 +151,7 @@ Examples:
 
 Target state:
 
-- owned by `harrow-server`
+- owned by `harrow-server-tokio`
 - owned by `harrow-server-monoio`
 - not expressed as general request middleware
 

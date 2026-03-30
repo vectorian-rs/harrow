@@ -1,16 +1,22 @@
 //! Shared handlers and utilities for vegeta load-test examples.
 
-use harrow::{ProblemDetail, Request, Response};
+use std::net::{IpAddr, SocketAddr};
 
-pub fn parse_args(program: &str) -> (String, u16) {
+use harrow::{Request, Response};
+
+pub fn parse_args(program: &str) -> SocketAddr {
     let args: Vec<String> = std::env::args().collect();
-    let mut bind = "0.0.0.0".to_string();
+    let mut bind: IpAddr = [0, 0, 0, 0].into();
     let mut port: u16 = 3000;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--bind" => {
-                bind = args.get(i + 1).expect("--bind requires an address").clone();
+                bind = args
+                    .get(i + 1)
+                    .expect("--bind requires an address")
+                    .parse()
+                    .expect("invalid bind address");
                 i += 2;
             }
             "--port" => {
@@ -28,11 +34,7 @@ pub fn parse_args(program: &str) -> (String, u16) {
             }
         }
     }
-    (bind, port)
-}
-
-pub async fn liveness(_req: Request) -> Response {
-    Response::text("alive")
+    SocketAddr::new(bind, port)
 }
 
 pub async fn readiness(_req: Request) -> Response {
@@ -69,12 +71,19 @@ pub async fn create_user(req: Request) -> Response {
     }
 }
 
-pub async fn not_found_handler(req: Request) -> ProblemDetail {
-    ProblemDetail::new(http::StatusCode::NOT_FOUND).detail(format!(
-        "no route for {} {}",
-        req.method(),
-        req.path()
-    ))
+pub async fn echo(req: Request) -> Response {
+    let method = req.method().as_str().to_string();
+    let path = req.path().to_string();
+    let body = match req.body_json::<serde_json::Value>().await {
+        Ok(json) => json,
+        Err(_) => serde_json::json!(null),
+    };
+
+    Response::json(&serde_json::json!({
+        "method": method,
+        "path": path,
+        "body": body,
+    }))
 }
 
 pub async fn cpu_intensive(_req: Request) -> Response {

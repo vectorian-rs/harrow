@@ -19,10 +19,10 @@
 //!
 //! ```toml
 //! # Tokio backend (cross-platform)
-//! harrow = { version = "0.5", features = ["tokio"] }
+//! harrow = { version = "0.8", features = ["tokio"] }
 //!
 //! # io_uring backend (Linux 6.1+ only)
-//! harrow = { version = "0.5", features = ["monoio"] }
+//! harrow = { version = "0.8", features = ["monoio"] }
 //! ```
 
 pub use harrow_core::client::{Client, TestResponse};
@@ -48,7 +48,7 @@ pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 // `runtime::tokio` or `runtime::monoio` modules.
 
 #[cfg(all(feature = "tokio", not(feature = "monoio")))]
-pub use harrow_server::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+pub use harrow_server_tokio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
 
 #[cfg(all(feature = "monoio", not(feature = "tokio")))]
 pub use harrow_server_monoio::{
@@ -75,7 +75,7 @@ pub mod runtime {
     /// Available when the `tokio` feature is enabled.
     #[cfg(feature = "tokio")]
     pub mod tokio {
-        pub use harrow_server::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+        pub use harrow_server_tokio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
     }
 
     /// Monoio-based server (io_uring + thread-per-core).

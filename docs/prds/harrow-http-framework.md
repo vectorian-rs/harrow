@@ -310,7 +310,7 @@ Current v0.1 behavior terminates in-flight requests immediately.
 harrow/
   harrow-core/       # Route table, Request/Response wrappers, middleware trait
   harrow-o11y/       # Tracing + metrics integration (optional feature)
-  harrow-server/     # Hyper binding, connection handling, graceful shutdown
+  harrow-server-tokio/     # Hyper binding, connection handling, graceful shutdown
   harrow-bench/      # Criterion benches, remote perf capture, summary rendering
   harrow/            # Facade crate re-exporting everything
 ```

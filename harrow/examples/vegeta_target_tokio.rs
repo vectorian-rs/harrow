@@ -12,6 +12,7 @@
 
 mod common;
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use harrow::{
@@ -23,32 +24,12 @@ async fn root(_req: Request) -> Response {
     Response::text("hello, world")
 }
 
-async fn health(_req: Request) -> Response {
-    Response::json(&serde_json::json!({
-        "status": "ok",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-    }))
-}
-
-async fn update_user(req: Request) -> Response {
+async fn mutate_user(req: Request, op: &'static str) -> Response {
     let user_id = req.param("id").to_string();
     match req.body_json::<serde_json::Value>().await {
         Ok(body) => Response::json(&serde_json::json!({
             "id": user_id,
-            "updated": true,
-            "data": body,
-        })),
-        Err(_) => Response::text("invalid json").status(400),
-    }
-}
-
-async fn patch_user(req: Request) -> Response {
-    let user_id = req.param("id").to_string();
-    match req.body_json::<serde_json::Value>().await {
-        Ok(body) => Response::json(&serde_json::json!({
-            "id": user_id,
-            "patched": true,
-            "partial": true,
+            op: true,
             "data": body,
         })),
         Err(_) => Response::text("invalid json").status(400),
@@ -63,27 +44,11 @@ async fn delete_user(req: Request) -> Response {
     }))
 }
 
-async fn echo(req: Request) -> Response {
-    let method = req.method().as_str().to_string();
-    let path = req.path().to_string();
-    let body = match req.body_json::<serde_json::Value>().await {
-        Ok(json) => json,
-        Err(_) => serde_json::json!(null),
-    };
+static COMPRESSION_TEXT: LazyLock<String> = LazyLock::new(|| {
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(100)
+});
 
-    Response::json(&serde_json::json!({
-        "method": method,
-        "path": path,
-        "body": body,
-    }))
-}
-
-async fn compression_test(_req: Request) -> Response {
-    let large_text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(100);
-    Response::text(large_text)
-}
-
-async fn compression_json(_req: Request) -> Response {
+static COMPRESSION_JSON: LazyLock<String> = LazyLock::new(|| {
     let data: Vec<_> = (0..100)
         .map(|i| {
             serde_json::json!({
@@ -94,8 +59,15 @@ async fn compression_json(_req: Request) -> Response {
             })
         })
         .collect();
+    serde_json::json!({ "items": data }).to_string()
+});
 
-    Response::json(&serde_json::json!({ "items": data }))
+async fn compression_test(_req: Request) -> Response {
+    Response::text(COMPRESSION_TEXT.as_str())
+}
+
+async fn compression_json(_req: Request) -> Response {
+    Response::text(COMPRESSION_JSON.as_str()).header("content-type", "application/json")
 }
 
 async fn slow_handler(_req: Request) -> Response {
@@ -107,7 +79,7 @@ async fn middleware_test(req: Request) -> Response {
     let request_id = req.header("x-request-id").unwrap_or("none");
     Response::json(&serde_json::json!({
         "request_id": request_id,
-        "cors": req.header("access-control-allow-origin").is_some(),
+        "cors": req.header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN.as_str()).is_some(),
     }))
 }
 
@@ -153,8 +125,7 @@ async fn session_destroy(req: Request) -> Response {
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let (bind, port) = common::parse_args("vegeta_target_tokio");
-    let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
+    let addr = common::parse_args("vegeta_target_tokio");
 
     let session_config = SessionConfig::new([0u8; 32])
         .cookie_name("sid")
@@ -164,9 +135,9 @@ async fn main() {
     let session_store = InMemorySessionStore::new();
 
     let app = App::new()
-        .not_found_handler(common::not_found_handler)
-        .health_handler("/health", health)
-        .liveness_handler("/live", common::liveness)
+        .default_problem_details()
+        .health("/health")
+        .liveness("/live")
         .readiness_handler("/ready", common::readiness)
         .middleware(request_id_middleware)
         .middleware(cors_middleware(Default::default()))
@@ -175,15 +146,15 @@ async fn main() {
         .get("/", root)
         .get("/users/:id", common::get_user)
         .post("/users", common::create_user)
-        .put("/users/:id", update_user)
-        .patch("/users/:id", patch_user)
+        .put("/users/:id", |req| mutate_user(req, "updated"))
+        .patch("/users/:id", |req| mutate_user(req, "patched"))
         .delete("/users/:id", delete_user)
         .get("/users/:user_id/posts/:post_id", common::get_user_posts)
-        .get("/echo", echo)
-        .post("/echo", echo)
-        .put("/echo", echo)
-        .patch("/echo", echo)
-        .delete("/echo", echo)
+        .get("/echo", common::echo)
+        .post("/echo", common::echo)
+        .put("/echo", common::echo)
+        .patch("/echo", common::echo)
+        .delete("/echo", common::echo)
         .get("/compress/text", compression_test)
         .get("/compress/json", compression_json)
         .get("/middleware-test", middleware_test)
@@ -194,5 +165,5 @@ async fn main() {
         .get("/cpu", common::cpu_intensive);
 
     tracing::info!("Tokio server starting on http://{}", addr);
-    harrow::serve(app, addr).await.unwrap();
+    harrow::runtime::tokio::serve(app, addr).await.unwrap();
 }

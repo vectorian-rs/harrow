@@ -227,5 +227,5 @@ Both are needed.
 
 ## Source
 
-The implementation lives in `harrow-server/src/lib.rs`. The `ServerConfig`
+The implementation lives in `harrow-server-tokio/src/lib.rs`. The `ServerConfig`
 struct and all wiring is in `serve_with_config()`.

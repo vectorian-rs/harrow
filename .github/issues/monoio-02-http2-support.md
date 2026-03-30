@@ -63,4 +63,4 @@ http2 = ["dep:monoio-http"]
 
 ## Related
 - `strategy-io-uring.md` Section 3 (kernel features)
-- `harrow-server` (HTTP/2 via hyper)
+- `harrow-server-tokio` (HTTP/2 via hyper)

@@ -3,7 +3,7 @@
 !.dockerignore
 !Cargo.toml
 !Cargo.lock
-!Dockerfile
+!*.Dockerfile
 
 !harrow/
 !harrow/Cargo.toml
@@ -32,10 +32,10 @@
 !harrow-serde/src/
 !harrow-serde/src/**
 
-!harrow-server/
-!harrow-server/Cargo.toml
-!harrow-server/src/
-!harrow-server/src/**
+!harrow-server-tokio/
+!harrow-server-tokio/Cargo.toml
+!harrow-server-tokio/src/
+!harrow-server-tokio/src/**
 
 !harrow-server-monoio/
 !harrow-server-monoio/Cargo.toml

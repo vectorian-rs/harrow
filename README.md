@@ -137,7 +137,7 @@ let app = App::new()
 | `harrow-core` | Request, Response, routing, middleware trait, app builder |
 | `harrow-middleware` | Timeout, request-id, CORS, compression, o11y middleware |
 | `harrow-o11y` | O11yConfig and rolly integration types |
-| `harrow-server` | Tokio/Hyper server binding, TLS, graceful shutdown |
+| `harrow-server-tokio` | Tokio/Hyper server binding, TLS, graceful shutdown |
 | `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux |
 | `harrow-bench` | Criterion benchmarks and load testing tools |
 

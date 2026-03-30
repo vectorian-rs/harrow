@@ -4,7 +4,7 @@
 `ServerConfig` provides good defaults but could expose more Hyper/Tokio-level tuning options. Consider advanced configurations for HTTP/2, keep-alive, etc.
 
 ## Current State
-From `harrow-server/src/lib.rs`:
+From `harrow-server-tokio/src/lib.rs`:
 ```rust
 pub struct ServerConfig {
     /// Maximum number of concurrent connections. Default: 8192.
@@ -95,7 +95,7 @@ We should expose more of this builder's configuration options.
 Low-Medium - useful for production tuning, but defaults work for most cases
 
 ## Related Files
-- `harrow-server/src/lib.rs`
+- `harrow-server-tokio/src/lib.rs`
 - `docs/connection-safety.md`
 - `docs/performance.md`
 

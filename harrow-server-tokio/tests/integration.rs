@@ -71,7 +71,7 @@ async fn start_server(app: App) -> SocketAddr {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
-        harrow_server::serve_with_shutdown(app, addr, async {
+        harrow_server_tokio::serve_with_shutdown(app, addr, async {
             let _ = rx.await;
         })
         .await
@@ -801,13 +801,13 @@ async fn tcp_graceful_drain_completes_inflight_request() {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
-        harrow_server::serve_with_config(
+        harrow_server_tokio::serve_with_config(
             app,
             addr,
             async {
                 let _ = rx.await;
             },
-            harrow_server::ServerConfig {
+            harrow_server_tokio::ServerConfig {
                 drain_timeout: Duration::from_secs(5),
                 ..Default::default()
             },

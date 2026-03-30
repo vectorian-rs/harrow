@@ -38,7 +38,7 @@
 
 **What's wrong:**
 
-1. **`accept()` error kills the server** (`harrow-server/src/lib.rs:34`, `lib.rs:78`). A transient `EMFILE` (too many open FDs) propagates via `?` and terminates the entire listener loop. This is a **correctness bug**, not a feature gap — the server should not die from a transient OS error. Fix: log and `continue`.
+1. **`accept()` error kills the server** (`harrow-server-tokio/src/lib.rs:34`, `lib.rs:78`). A transient `EMFILE` (too many open FDs) propagates via `?` and terminates the entire listener loop. This is a **correctness bug**, not a feature gap — the server should not die from a transient OS error. Fix: log and `continue`.
 
 2. **No `Allow` header on 405** — RFC 9110 §15.5.6 requires it. The information exists in the `MethodMap` but isn't surfaced. This is a spec violation.
 

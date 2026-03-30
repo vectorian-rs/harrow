@@ -34,7 +34,7 @@ services:
       dockerfile: infra/vegeta/server-monoio.Dockerfile
       args:
         - BUILDKIT_SBOM_SCAN_STAGE=false
-    image: harrow-monoio-server:latest
+    image: harrow-server-monoio:latest
     ports:
       - "3001:3000"
     environment:

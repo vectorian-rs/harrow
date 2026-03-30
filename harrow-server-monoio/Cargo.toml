@@ -2,21 +2,21 @@
 name = "harrow-server-monoio"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 description = "Experimental monoio-based HTTP/1.1 server for Harrow"
+license.workspace = true
 
 [dependencies]
-harrow-core = { workspace = true }
-monoio = { workspace = true }
-httparse = { workspace = true }
 bytes = { workspace = true }
+futures-util = { workspace = true }
+harrow-core = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
-tracing = { workspace = true }
-futures-util = { workspace = true }
+httparse = { workspace = true }
 libc = "0.2"
-thiserror = "1"
+monoio = { workspace = true }
 monoio-http = "0.3.12"
+thiserror = "1"
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

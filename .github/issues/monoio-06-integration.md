@@ -23,7 +23,7 @@ Make monoio a first-class backend option alongside tokio.
 # harrow/Cargo.toml
 [features]
 default = ["tokio"]
-tokio = ["dep:harrow-server"]
+tokio = ["dep:harrow-server-tokio"]
 monoio = ["dep:harrow-server-monoio"]
 ```
 

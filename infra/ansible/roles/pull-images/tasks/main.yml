@@ -49,15 +49,15 @@
   when: inventory_hostname in groups['server']
 
 # Server: pull monoio server image
-- name: Pull harrow-monoio-server from ECR
+- name: Pull harrow-server-monoio from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-monoio-server:{{ harrow_version }}"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-server-monoio:{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
-- name: Tag harrow-monoio-server for local use
+- name: Tag harrow-server-monoio for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-monoio-server:{{ harrow_version }} harrow-monoio-server"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-server-monoio:{{ harrow_version }} harrow-server-monoio"
   changed_when: true
   when: inventory_hostname in groups['server']
 

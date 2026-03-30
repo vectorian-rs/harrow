@@ -90,9 +90,9 @@ module "ecr_spinr" {
   force-delete    = true
 }
 
-module "ecr_harrow_monoio_server" {
+module "ecr_harrow_server_monoio" {
   source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
-  repository-name = "harrow/harrow-monoio-server"
+  repository-name = "harrow/harrow-server-monoio"
   stage           = "bench"
   force-delete    = true
 }
@@ -157,7 +157,7 @@ resource "aws_iam_role_policy" "bench_ecr_pull" {
           module.ecr_harrow_perf_server_sysalloc.ecr-repository-arn,
           module.ecr_axum_perf_server_sysalloc.ecr-repository-arn,
           module.ecr_spinr.ecr-repository-arn,
-          module.ecr_harrow_monoio_server.ecr-repository-arn,
+          module.ecr_harrow_server_monoio.ecr-repository-arn,
           module.ecr_vegeta.ecr-repository-arn,
           module.ecr_load_generators.ecr-repository-arn,
         ]

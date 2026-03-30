@@ -13,7 +13,7 @@ cargo test
 ```bash
 cargo test -p harrow-core
 cargo test -p harrow-middleware
-cargo test -p harrow-server
+cargo test -p harrow-server-tokio
 ```
 
 ### Examples
@@ -64,10 +64,10 @@ cargo bench
 ### Build and Run
 ```bash
 # Build image
-docker build -t harrow-server .
+docker build -t harrow-server-tokio .
 
 # Run container
-docker run -p 3000:3000 harrow-server
+docker run -p 3000:3000 harrow-server-tokio
 
 # Test endpoint
 curl http://localhost:3000/
@@ -76,7 +76,7 @@ curl http://localhost:3000/
 ### Multi-platform Build
 ```bash
 # Build for multiple platforms
-docker buildx build --platform linux/amd64,linux/arm64 -t harrow-server:latest --load .
+docker buildx build --platform linux/amd64,linux/arm64 -t harrow-server-tokio:latest --load .
 ```
 
 ## Full Benchmark Suite (Advanced)

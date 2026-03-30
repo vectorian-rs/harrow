@@ -42,9 +42,9 @@ RUN cargo build --locked --${PROFILE}
 
 # Runtime stage - use distroless for security
 FROM gcr.io/distroless/cc-debian12
-COPY --from=build /app/target/${PROFILE}/harrow-server /harrow-server
+COPY --from=build /app/target/${PROFILE}/harrow-server-tokio /harrow-server-tokio
 EXPOSE 3000
-ENTRYPOINT ["/harrow-server"]
+ENTRYPOINT ["/harrow-server-tokio"]
 CMD ["--bind", "0.0.0.0:3000"]
 ```
 
@@ -131,13 +131,13 @@ Add to Makefile or CI:
 docker-build-all:
 	docker buildx build \
 	  --platform linux/amd64,linux/arm64 \
-	  -t harrow-server:latest \
+	  -t harrow-server-tokio:latest \
 	  --load .
-	
+
 docker-push-all:
 	docker buildx build \
 	  --platform linux/amd64,linux/arm64 \
-	  -t harrow-server:latest \
+	  -t harrow-server-tokio:latest \
 	  --push .
 ```
 

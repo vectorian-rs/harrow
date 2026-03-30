@@ -20,7 +20,7 @@ Use it to narrow the search space before opening files.
   - Most correctness-sensitive changes land here.
 - `harrow-middleware/`
   - Feature-gated middleware implementations: timeout, request-id, cors, o11y, catch-panic, body-limit, compression, rate-limit, session.
-- `harrow-server/`
+- `harrow-server-tokio/`
   - Hyper server binding, connection lifecycle, graceful shutdown, concurrency limits.
 - `harrow-server-monoio/`
   - Monoio/io_uring server for high-performance Linux deployments.
@@ -45,7 +45,7 @@ Use it to narrow the search space before opening files.
   - Read: `harrow-core/src/route.rs`
   - Also check: `harrow-core/src/path.rs`
   - Also check: `harrow-core/src/dispatch.rs`
-  - Validate with: `harrow-server/tests/integration.rs`
+  - Validate with: `harrow-server-tokio/tests/integration.rs`
 
 - Request parsing, query/body handling, state access
   - Read: `harrow-core/src/request.rs`
@@ -55,7 +55,7 @@ Use it to narrow the search space before opening files.
 - Middleware plumbing or execution order
   - Read: `harrow-core/src/middleware.rs`
   - Also check: `harrow-core/src/dispatch.rs`
-  - Validate with: `harrow-server/tests/integration.rs`
+  - Validate with: `harrow-server-tokio/tests/integration.rs`
 
 - Specific middleware behavior
   - Read the target file in `harrow-middleware/src/`
@@ -69,8 +69,8 @@ Use it to narrow the search space before opening files.
     - `docs/rate-limiting-middleware.md`
 
 - Server lifecycle, connection handling, shutdown, timeouts
-  - Read: `harrow-server/src/lib.rs`
-  - Validate with: `harrow-server/tests/integration.rs`
+  - Read: `harrow-server-tokio/src/lib.rs`
+  - Validate with: `harrow-server-tokio/tests/integration.rs`
 
 - Observability
   - Read: `harrow-o11y/src/lib.rs`
@@ -117,8 +117,8 @@ Use it to narrow the search space before opening files.
 - `mise.toml`
 - `harrow/src/lib.rs`
 - `harrow-core/src/lib.rs`
-- `harrow-server/src/lib.rs`
-- `harrow-server/tests/integration.rs`
+- `harrow-server-tokio/src/lib.rs`
+- `harrow-server-tokio/tests/integration.rs`
 - `docs/prds/harrow-http-framework.md`
 - `docs/verification.md`
 - `docs/middleware.md`
@@ -137,7 +137,7 @@ Use it to narrow the search space before opening files.
   - public re-exports in `harrow/src/lib.rs`
 - For behavioral changes, check at least one test surface:
   - inline unit tests in the touched module
-  - `harrow-server/tests/integration.rs` for end-to-end behavior
+  - `harrow-server-tokio/tests/integration.rs` for end-to-end behavior
 
 ## Commands
 
@@ -148,7 +148,7 @@ Use it to narrow the search space before opening files.
 - Targeted crate tests:
   - `cargo test -p harrow-core`
   - `cargo test -p harrow-middleware`
-  - `cargo test -p harrow-server`
+  - `cargo test -p harrow-server-tokio`
   - `cargo test -p harrow-server-monoio`
   - `cargo test -p harrow --features tokio` (harrow requires explicit server backend)
   - `cargo test -p harrow --features monoio` (for io_uring tests)

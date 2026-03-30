@@ -403,10 +403,10 @@ The comparison uses two minimal server binaries in `harrow-bench`:
 
 ```bash
 # Build both
-cargo build --release --bin harrow-server --bin axum-server
+cargo build --release --bin harrow-server-tokio --bin axum-server
 
 # Run individually (default port 3000)
-target/release/harrow-server --port 3001
+target/release/harrow-server-tokio --port 3001
 target/release/axum-server --port 3002
 ```
 

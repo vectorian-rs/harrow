@@ -31,5 +31,5 @@ async fn main() {
         .group("/api", |g| g.get("/health", health));
 
     tracing::info!("starting on {addr}");
-    harrow::serve(app, addr).await.unwrap();
+    harrow::runtime::tokio::serve(app, addr).await.unwrap();
 }

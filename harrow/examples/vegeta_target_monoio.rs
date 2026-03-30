@@ -20,38 +20,23 @@ async fn root(_req: Request) -> Response {
     Response::text("hello from io_uring!")
 }
 
-async fn health(_req: Request) -> Response {
-    Response::json(&serde_json::json!({
-        "status": "ok",
-        "backend": "monoio/io_uring",
-    }))
-}
-
-async fn echo(req: Request) -> Response {
-    match req.body_json::<serde_json::Value>().await {
-        Ok(body) => Response::json(&body),
-        Err(_) => Response::text("invalid json").status(400),
-    }
-}
-
 fn main() {
     tracing_subscriber::fmt::init();
 
-    let (bind, port) = common::parse_args("vegeta_target_monoio");
-    let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
+    let addr = common::parse_args("vegeta_target_monoio");
 
     let app = App::new()
-        .not_found_handler(common::not_found_handler)
-        .health_handler("/health", health)
-        .liveness_handler("/live", common::liveness)
+        .default_problem_details()
+        .health("/health")
+        .liveness("/live")
         .readiness_handler("/ready", common::readiness)
         .get("/", root)
         .get("/users/:id", common::get_user)
         .post("/users", common::create_user)
         .get("/users/:user_id/posts/:post_id", common::get_user_posts)
-        .post("/echo", echo)
-        .put("/echo", echo)
-        .delete("/echo", |_req| async move { Response::text("deleted") })
+        .post("/echo", common::echo)
+        .put("/echo", common::echo)
+        .delete("/echo", common::echo)
         .get("/cpu", common::cpu_intensive);
 
     tracing::info!("Monoio/io_uring server starting on http://{}", addr);

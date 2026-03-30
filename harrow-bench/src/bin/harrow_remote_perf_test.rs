@@ -333,7 +333,7 @@ impl Framework {
 
     fn image(self, backend: Backend, alloc: Allocator) -> String {
         match (self, backend) {
-            (Self::Harrow, Backend::Monoio) => "harrow-monoio-server".to_string(),
+            (Self::Harrow, Backend::Monoio) => "harrow-server-monoio".to_string(),
             (Self::Harrow, Backend::Tokio) => {
                 let suffix = alloc.suffix();
                 format!("harrow-perf-server{suffix}")
@@ -347,7 +347,7 @@ impl Framework {
 
     fn container_name(self, backend: Backend, alloc: Allocator) -> String {
         match (self, backend) {
-            (Self::Harrow, Backend::Monoio) => "harrow-monoio-server".to_string(),
+            (Self::Harrow, Backend::Monoio) => "harrow-server-monoio".to_string(),
             (Self::Harrow, Backend::Tokio) => {
                 let suffix = alloc.suffix();
                 format!("harrow-perf-server{suffix}")
@@ -362,7 +362,7 @@ impl Framework {
     fn launch_cmd(self, backend: Backend, port: u16, extra_flags: &str) -> String {
         let base = match (self, backend) {
             (Self::Harrow, Backend::Monoio) => {
-                format!("/harrow-monoio-server --bind 0.0.0.0 --port {port}")
+                format!("/harrow-server-monoio --bind 0.0.0.0 --port {port}")
             }
             (Self::Harrow, Backend::Tokio) => {
                 format!("/harrow-perf-server --bind 0.0.0.0 --port {port}")

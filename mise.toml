@@ -35,51 +35,51 @@ depends = ["fmt", "clippy", "test"]
 description = "Run full CI pipeline (fmt, clippy, test)"
 depends = ["verify"]
 
-[tasks."docker:prod-arm64:harrow-server"]
-description = "Build prod ARM64 harrow-server image"
-run = "docker build --provenance=false -t harrow-server:prod-arm64 -f prod.arm64.Dockerfile --target harrow-server ."
+[tasks."docker:prod-arm64:harrow-server-tokio"]
+description = "Build prod ARM64 harrow-server-tokio image"
+run = "docker build --provenance=false -t harrow-server-tokio:prod-arm64 -f tokio.prod.arm64.Dockerfile --target harrow-server-tokio ."
 
 [tasks."docker:prod-arm64:axum-server"]
 description = "Build prod ARM64 axum-server image"
-run = "docker build --provenance=false -t axum-server:prod-arm64 -f prod.arm64.Dockerfile --target axum-server ."
+run = "docker build --provenance=false -t axum-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target axum-server ."
 
 [tasks."docker:prod-arm64:harrow-perf-server"]
 description = "Build prod ARM64 harrow-perf-server image"
-run = "docker build --provenance=false -t harrow-perf-server:prod-arm64 -f prod.arm64.Dockerfile --target harrow-perf-server ."
+run = "docker build --provenance=false -t harrow-perf-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target harrow-perf-server ."
 
 [tasks."docker:prod-arm64:axum-perf-server"]
 description = "Build prod ARM64 axum-perf-server image"
-run = "docker build --provenance=false -t axum-perf-server:prod-arm64 -f prod.arm64.Dockerfile --target axum-perf-server ."
+run = "docker build --provenance=false -t axum-perf-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target axum-perf-server ."
 
 [tasks."docker:prod-arm64"]
 description = "Build all prod ARM64 Docker images"
 depends = [
-  "docker:prod-arm64:harrow-server",
+  "docker:prod-arm64:harrow-server-tokio",
   "docker:prod-arm64:axum-server",
   "docker:prod-arm64:harrow-perf-server",
   "docker:prod-arm64:axum-perf-server",
 ]
 
-[tasks."docker:dev-arm64:harrow-server"]
-description = "Build dev ARM64 harrow-server image"
-run = "docker build --provenance=false -t harrow-server:dev-arm64 -f dev.arm64.Dockerfile --target harrow-server ."
+[tasks."docker:dev-arm64:harrow-server-tokio"]
+description = "Build dev ARM64 harrow-server-tokio image"
+run = "docker build --provenance=false -t harrow-server-tokio:dev-arm64 -f tokio.dev.arm64.Dockerfile --target harrow-server-tokio ."
 
 [tasks."docker:dev-arm64:axum-server"]
 description = "Build dev ARM64 axum-server image"
-run = "docker build --provenance=false -t axum-server:dev-arm64 -f dev.arm64.Dockerfile --target axum-server ."
+run = "docker build --provenance=false -t axum-server:dev-arm64 -f tokio.dev.arm64.Dockerfile --target axum-server ."
 
 [tasks."docker:dev-arm64:harrow-perf-server"]
 description = "Build dev ARM64 harrow-perf-server image"
-run = "docker build --provenance=false -t harrow-perf-server:dev-arm64 -f dev.arm64.Dockerfile --target harrow-perf-server ."
+run = "docker build --provenance=false -t harrow-perf-server:dev-arm64 -f tokio.dev.arm64.Dockerfile --target harrow-perf-server ."
 
 [tasks."docker:dev-arm64:axum-perf-server"]
 description = "Build dev ARM64 axum-perf-server image"
-run = "docker build --provenance=false -t axum-perf-server:dev-arm64 -f dev.arm64.Dockerfile --target axum-perf-server ."
+run = "docker build --provenance=false -t axum-perf-server:dev-arm64 -f tokio.dev.arm64.Dockerfile --target axum-perf-server ."
 
 [tasks."docker:dev-arm64"]
 description = "Build all dev ARM64 Docker images"
 depends = [
-  "docker:dev-arm64:harrow-server",
+  "docker:dev-arm64:harrow-server-tokio",
   "docker:dev-arm64:axum-server",
   "docker:dev-arm64:harrow-perf-server",
   "docker:dev-arm64:axum-perf-server",
@@ -87,11 +87,11 @@ depends = [
 
 [tasks."docker:perf-arm64:harrow-perf-server"]
 description = "Build perf ARM64 harrow-perf-server image"
-run = "docker build --provenance=false -t harrow-perf-server:perf-arm64 -f perf.arm64.Dockerfile --target harrow-perf-server ."
+run = "docker build --provenance=false -t harrow-perf-server:perf-arm64 -f tokio.perf.arm64.Dockerfile --target harrow-perf-server ."
 
 [tasks."docker:perf-arm64:axum-perf-server"]
 description = "Build perf ARM64 axum-perf-server image"
-run = "docker build --provenance=false -t axum-perf-server:perf-arm64 -f perf.arm64.Dockerfile --target axum-perf-server ."
+run = "docker build --provenance=false -t axum-perf-server:perf-arm64 -f tokio.perf.arm64.Dockerfile --target axum-perf-server ."
 
 [tasks."docker:perf-arm64"]
 description = "Build perf ARM64 Docker images"
@@ -100,25 +100,25 @@ depends = [
   "docker:perf-arm64:axum-perf-server",
 ]
 
-[tasks."docker:prod-arm64:harrow-monoio-server"]
+[tasks."docker:prod-arm64:harrow-server-monoio"]
 description = "Build prod ARM64 monoio server image (io_uring)"
-run = "docker build --provenance=false -t harrow-monoio-server:prod-arm64 -f monoio.arm64.Dockerfile ."
+run = "docker build --provenance=false -t harrow-server-monoio:prod-arm64 -f monoio.arm64.Dockerfile ."
 
-[tasks."docker:dev-arm64:harrow-monoio-server"]
+[tasks."docker:dev-arm64:harrow-server-monoio"]
 description = "Build dev ARM64 monoio server image (io_uring)"
-run = "docker build --provenance=false -t harrow-monoio-server:dev-arm64 -f monoio.arm64.Dockerfile --build-arg BUILD_PROFILE=dev --build-arg BINARY_DIR=debug ."
+run = "docker build --provenance=false -t harrow-server-monoio:dev-arm64 -f monoio.arm64.Dockerfile --build-arg BUILD_PROFILE=dev --build-arg BINARY_DIR=debug ."
 
-[tasks."docker:perf-arm64:harrow-monoio-server"]
+[tasks."docker:perf-arm64:harrow-server-monoio"]
 description = "Build perf ARM64 monoio server image (io_uring with debug symbols)"
-run = "docker build --provenance=false -t harrow-monoio-server:perf-arm64 -f monoio.arm64.Dockerfile --build-arg BUILD_PROFILE=perf --build-arg BINARY_DIR=perf ."
+run = "docker build --provenance=false -t harrow-server-monoio:perf-arm64 -f monoio.arm64.Dockerfile --build-arg BUILD_PROFILE=perf --build-arg BINARY_DIR=perf ."
 
 [tasks."docker:prod-arm64:harrow-perf-server-sysalloc"]
 description = "Build prod ARM64 harrow-perf-server with system allocator"
-run = "docker build --provenance=false -t harrow-perf-server-sysalloc:prod-arm64 -f perf.arm64.Dockerfile --target harrow-perf-server-sysalloc ."
+run = "docker build --provenance=false -t harrow-perf-server-sysalloc:prod-arm64 -f tokio.perf.arm64.Dockerfile --target harrow-perf-server-sysalloc ."
 
 [tasks."docker:prod-arm64:axum-perf-server-sysalloc"]
 description = "Build prod ARM64 axum-perf-server with system allocator"
-run = "docker build --provenance=false -t axum-perf-server-sysalloc:prod-arm64 -f perf.arm64.Dockerfile --target axum-perf-server-sysalloc ."
+run = "docker build --provenance=false -t axum-perf-server-sysalloc:prod-arm64 -f tokio.perf.arm64.Dockerfile --target axum-perf-server-sysalloc ."
 
 [tasks."docker:loadgen:vegeta"]
 description = "Build ARM64 vegeta load generator image"
@@ -134,7 +134,7 @@ depends = ["docker:loadgen:vegeta", "docker:loadgen:spinr"]
 
 [tasks."docker:all"]
 description = "Build all ARM64 Docker images"
-depends = ["docker:prod-arm64", "docker:dev-arm64", "docker:prod-arm64:harrow-monoio-server"]
+depends = ["docker:prod-arm64", "docker:dev-arm64", "docker:prod-arm64:harrow-server-monoio"]
 
 [tasks."bench:infra-up"]
 description = "Create EC2 spot instances for benchmarking"
@@ -166,7 +166,7 @@ run = """
 HARROW_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
 ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
 aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin https://$ECR
-docker tag harrow-monoio-server:prod-arm64 $ECR/harrow/harrow-monoio-server:$HARROW_VERSION && docker push $ECR/harrow/harrow-monoio-server:$HARROW_VERSION
+docker tag harrow-server-monoio:prod-arm64 $ECR/harrow/harrow-server-monoio:$HARROW_VERSION && docker push $ECR/harrow/harrow-server-monoio:$HARROW_VERSION
 """
 
 [tasks."bench:ecr-push-sysalloc"]

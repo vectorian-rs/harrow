@@ -159,11 +159,11 @@ to verify beyond the existing round-trip tests.
 
 ---
 
-### harrow-server
+### harrow-server-tokio
 
 Connection handling and graceful shutdown are Tokio-level concerns. Property
 testing the shutdown protocol would require simulating Tokio's runtime, which
-is impractical. The integration tests in `harrow-server/tests/integration.rs`
+is impractical. The integration tests in `harrow-server-tokio/tests/integration.rs`
 cover the key paths. No additional formal verification.
 
 ---

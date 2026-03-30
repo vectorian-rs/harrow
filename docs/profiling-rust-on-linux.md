@@ -16,7 +16,7 @@ Today the repo builds release binaries with `debug = 1` in [Cargo.toml](/Users/l
 perf record -g -e cpu-clock -F 99
 ```
 
-in [harrow_remote_perf_test.rs](/Users/l1x/code/home/projectz/harrow/harrow-bench/src/bin/harrow_remote_perf_test.rs#L725). The production image is distroless and only copies the final binary in [prod.arm64.Dockerfile](/Users/l1x/code/home/projectz/harrow/prod.arm64.Dockerfile#L37).
+in [harrow_remote_perf_test.rs](/Users/l1x/code/home/projectz/harrow/harrow-bench/src/bin/harrow_remote_perf_test.rs#L725). The production image is distroless and only copies the final binary in [tokio.prod.arm64.Dockerfile](/Users/l1x/code/home/projectz/harrow/tokio.prod.arm64.Dockerfile#L37).
 
 That setup is enough for a rough flat profile, but not ideal for stack-heavy investigation:
 - `debug = 1` is limited debug info, but for Harrow profiling we need `debug = 2`
@@ -247,7 +247,7 @@ inferno-flamegraph < /tmp/harrow.folded > /tmp/harrow.svg
 
 ## Harrow-Specific Build Guidance
 
-Local macOS builds are not enough for the remote Docker benchmark. The profiled binary is the one built into the Linux ARM64 image in [prod.arm64.Dockerfile](/Users/l1x/code/home/projectz/harrow/prod.arm64.Dockerfile#L37).
+Local macOS builds are not enough for the remote Docker benchmark. The profiled binary is the one built into the Linux ARM64 image in [tokio.prod.arm64.Dockerfile](/Users/l1x/code/home/projectz/harrow/tokio.prod.arm64.Dockerfile#L37).
 
 So for remote profiling, the important change is in the Docker build, not just on the laptop:
 
@@ -259,7 +259,7 @@ ENV CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off
 
 RUN cargo build --locked --release --target=aarch64-unknown-linux-gnu \
     -p harrow-bench \
-    --bin harrow-server --bin axum-server \
+    --bin harrow-server-tokio --bin axum-server \
     --bin harrow-perf-server --bin axum-perf-server
 ```
 

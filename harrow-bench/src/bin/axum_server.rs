@@ -1,6 +1,6 @@
 //! Minimal Axum server for framework comparison benchmarks.
 //!
-//! Identical endpoints to harrow_server — raw framework overhead only.
+//! Identical endpoints to harrow_server_tokio — raw framework overhead only.
 //! Usage: axum-server [--bind ADDR] [--port PORT]
 
 #[cfg(feature = "mimalloc")]

@@ -360,7 +360,7 @@ Examples:
 
 These belong in:
 
-- `harrow-server`
+- `harrow-server-tokio`
 - `harrow-server-monoio`
 
 and they already mostly do.

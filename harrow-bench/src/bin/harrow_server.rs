@@ -1,7 +1,7 @@
 //! Minimal Harrow server for framework comparison benchmarks.
 //!
 //! No o11y, no timeout middleware — raw framework overhead only.
-//! Usage: harrow-server [--bind ADDR] [--port PORT]
+//! Usage: harrow-server-tokio [--bind ADDR] [--port PORT]
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -43,7 +43,7 @@ fn parse_args() -> (String, u16) {
             }
             other => {
                 eprintln!("unknown option: {other}");
-                eprintln!("usage: harrow-server [--bind ADDR] [--port PORT]");
+                eprintln!("usage: harrow-server-tokio [--bind ADDR] [--port PORT]");
                 std::process::exit(1);
             }
         }

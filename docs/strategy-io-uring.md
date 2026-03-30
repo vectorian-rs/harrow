@@ -46,7 +46,7 @@ An [Alibaba OpenAnolis analysis](https://www.alibabacloud.com/blog/io-uring-vs--
 
 ### Phase 1: Driver Abstraction
 
-Refactor `harrow-server` to be generic over an `IoDriver` trait. Rust monomorphization ensures zero runtime cost.
+Refactor `harrow-server-tokio` to be generic over an `IoDriver` trait. Rust monomorphization ensures zero runtime cost.
 
 ```rust
 // harrow-core/src/driver.rs
