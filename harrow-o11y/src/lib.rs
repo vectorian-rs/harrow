@@ -5,6 +5,7 @@
 /// (local dev mode).
 ///
 /// Allocated once at startup and stored in `Arc<TypeMap>` — zero per-request cost.
+#[derive(Clone)]
 pub struct O11yConfig {
     pub service_name: String,
     pub service_version: String,
@@ -25,6 +26,25 @@ impl Default for O11yConfig {
             otlp_logs_endpoint: None,
             otlp_metrics_endpoint: None,
             request_id_header: "x-request-id".to_string(),
+        }
+    }
+}
+
+impl From<O11yConfig> for rolly::TelemetryConfig {
+    fn from(config: O11yConfig) -> Self {
+        Self {
+            service_name: config.service_name,
+            service_version: config.service_version,
+            environment: config.environment,
+            otlp_traces_endpoint: config.otlp_traces_endpoint,
+            otlp_logs_endpoint: config.otlp_logs_endpoint,
+            otlp_metrics_endpoint: config.otlp_metrics_endpoint,
+            log_to_stderr: true,
+            use_metrics_interval: None,
+            metrics_flush_interval: None,
+            sampling_rate: None,
+            backpressure_strategy: rolly::BackpressureStrategy::Drop,
+            resource_attributes: Vec::new(),
         }
     }
 }

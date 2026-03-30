@@ -776,6 +776,7 @@ dependencies = [
 name = "harrow"
 version = "0.7.0"
 dependencies = [
+ "bytes",
  "chrono",
  "harrow-core",
  "harrow-middleware",

@@ -129,7 +129,7 @@ pub use harrow_core::openapi::OpenApiInfo;
 
 #[cfg(feature = "openapi")]
 mod openapi_ext {
-    use std::sync::Arc;
+    use bytes::Bytes;
 
     use harrow_core::openapi::OpenApiInfo;
 
@@ -143,14 +143,13 @@ mod openapi_ext {
 
     impl AppOpenApiExt for App {
         fn openapi(self, path: &str, info: OpenApiInfo) -> Self {
-            let json = self.route_table().to_openapi_json(&info);
-            let json = Arc::new(json);
+            let json: Bytes = self.route_table().to_openapi_json(&info).into();
             let endpoint = format!("{}/openapi.json", path.trim_end_matches('/'));
 
             self.get(&endpoint, move |_req| {
-                let json = Arc::clone(&json);
+                let json = json.clone();
                 async move {
-                    crate::Response::text((*json).clone())
+                    crate::Response::text(json)
                         .header("content-type", "application/json")
                 }
             })
@@ -189,20 +188,7 @@ mod o11y_ext {
 
     impl AppO11yExt for App {
         fn o11y(self, config: O11yConfig) -> Self {
-            let guard = rolly::init(rolly::TelemetryConfig {
-                service_name: config.service_name.clone(),
-                service_version: config.service_version.clone(),
-                environment: config.environment.clone(),
-                otlp_traces_endpoint: config.otlp_traces_endpoint.clone(),
-                otlp_logs_endpoint: config.otlp_logs_endpoint.clone(),
-                otlp_metrics_endpoint: config.otlp_metrics_endpoint.clone(),
-                log_to_stderr: true,
-                use_metrics_interval: None,
-                metrics_flush_interval: None,
-                sampling_rate: None,
-                backpressure_strategy: rolly::BackpressureStrategy::Drop,
-                resource_attributes: Vec::new(),
-            });
+            let guard = rolly::init(config.clone().into());
 
             self.state(Arc::new(TelemetryGuardHolder(guard)))
                 .state(Arc::new(config))

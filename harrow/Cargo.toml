@@ -15,7 +15,7 @@ monoio = ["dep:harrow-server-monoio"]
 # Content formats
 json = ["harrow-core/json"]
 msgpack = ["harrow-core/msgpack"]
-openapi = ["harrow-core/openapi"]
+openapi = ["harrow-core/openapi", "dep:bytes"]
 
 # Server features (only apply when tokio is selected)
 tls = ["harrow-server/tls"]
@@ -40,6 +40,7 @@ harrow-o11y = { workspace = true, optional = true }
 harrow-server = { workspace = true, optional = true }
 harrow-server-monoio = { workspace = true, optional = true }
 rolly = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
