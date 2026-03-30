@@ -9,6 +9,7 @@ rust = "1.91.1"
 python = "3.13.7"
 terraform = "latest"
 uv = "0.8.19"
+"github:can1357/oh-my-pi" = "latest"
 
 [tasks.fmt]
 description = "Check formatting"
@@ -103,6 +104,34 @@ depends = [
 description = "Build prod ARM64 monoio server image (io_uring)"
 run = "docker build --provenance=false -t harrow-monoio-server:prod-arm64 -f monoio.arm64.Dockerfile ."
 
+[tasks."docker:dev-arm64:harrow-monoio-server"]
+description = "Build dev ARM64 monoio server image (io_uring)"
+run = "docker build --provenance=false -t harrow-monoio-server:dev-arm64 -f monoio.arm64.Dockerfile --build-arg BUILD_PROFILE=dev --build-arg BINARY_DIR=debug ."
+
+[tasks."docker:perf-arm64:harrow-monoio-server"]
+description = "Build perf ARM64 monoio server image (io_uring with debug symbols)"
+run = "docker build --provenance=false -t harrow-monoio-server:perf-arm64 -f monoio.arm64.Dockerfile --build-arg BUILD_PROFILE=perf --build-arg BINARY_DIR=perf ."
+
+[tasks."docker:prod-arm64:harrow-perf-server-sysalloc"]
+description = "Build prod ARM64 harrow-perf-server with system allocator"
+run = "docker build --provenance=false -t harrow-perf-server-sysalloc:prod-arm64 -f perf.arm64.Dockerfile --target harrow-perf-server-sysalloc ."
+
+[tasks."docker:prod-arm64:axum-perf-server-sysalloc"]
+description = "Build prod ARM64 axum-perf-server with system allocator"
+run = "docker build --provenance=false -t axum-perf-server-sysalloc:prod-arm64 -f perf.arm64.Dockerfile --target axum-perf-server-sysalloc ."
+
+[tasks."docker:loadgen:vegeta"]
+description = "Build ARM64 vegeta load generator image"
+run = "docker build --provenance=false --platform linux/arm64 -t vegeta:arm64 -f infra/load-generators/vegeta.Dockerfile infra/load-generators"
+
+[tasks."docker:loadgen:spinr"]
+description = "Build ARM64 spinr load generator image"
+run = "docker build --provenance=false --platform linux/arm64 -t spinr:arm64 -f infra/load-generators/spinr.Dockerfile infra/load-generators"
+
+[tasks."docker:loadgen:all"]
+description = "Build all load generator images (spinr, vegeta)"
+depends = ["docker:loadgen:vegeta", "docker:loadgen:spinr"]
+
 [tasks."docker:all"]
 description = "Build all ARM64 Docker images"
 depends = ["docker:prod-arm64", "docker:dev-arm64", "docker:prod-arm64:harrow-monoio-server"]
@@ -140,9 +169,36 @@ aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker lo
 docker tag harrow-monoio-server:prod-arm64 $ECR/harrow/harrow-monoio-server:$HARROW_VERSION && docker push $ECR/harrow/harrow-monoio-server:$HARROW_VERSION
 """
 
+[tasks."bench:ecr-push-sysalloc"]
+description = "Push sysalloc bench images to ECR"
+run = """
+HARROW_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
+ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
+aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin https://$ECR
+docker tag harrow-perf-server-sysalloc:prod-arm64 $ECR/harrow/harrow-perf-server-sysalloc:$HARROW_VERSION && docker push $ECR/harrow/harrow-perf-server-sysalloc:$HARROW_VERSION
+docker tag axum-perf-server-sysalloc:prod-arm64 $ECR/harrow/axum-perf-server-sysalloc:$HARROW_VERSION && docker push $ECR/harrow/axum-perf-server-sysalloc:$HARROW_VERSION
+"""
+
 [tasks."bench:ecr-push-all"]
-description = "Push all bench images to ECR (including monoio)"
-depends = ["bench:ecr-push", "bench:ecr-push-monoio"]
+description = "Push all bench images to ECR (including monoio and sysalloc)"
+depends = ["bench:ecr-push", "bench:ecr-push-monoio", "bench:ecr-push-sysalloc", "bench:ecr-push-loadgen"]
+
+[tasks."bench:ecr-push-loadgen"]
+description = "Push load generator images (spinr, vegeta) to ECR"
+run = """
+SPINR_VERSION=0.5.1
+VEGETA_VERSION=12.12.0
+ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
+aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin https://$ECR
+# Spinr
+docker tag spinr:arm64 $ECR/harrow/load-generators:spinr-v${SPINR_VERSION} && docker push $ECR/harrow/load-generators:spinr-v${SPINR_VERSION}
+# Vegeta
+docker tag vegeta:arm64 $ECR/harrow/load-generators:vegeta-v${VEGETA_VERSION} && docker push $ECR/harrow/load-generators:vegeta-v${VEGETA_VERSION}
+"""
+
+[tasks."bench:build-push-loadgen"]
+description = "Build and push load generator images to ECR"
+depends = ["docker:loadgen:all", "bench:ecr-push-loadgen"]
 
 [tasks."bench:ecr-push-perf"]
 description = "Push perf-profiling bench images to ECR"
@@ -194,6 +250,6 @@ cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
 """
 
 [tasks."bench:run".env]
-BENCH_SERVER_IP = "3.255.207.229"
-BENCH_CLIENT_IP = "3.254.145.99"
-BENCH_SERVER_PRIVATE_IP = "172.31.0.170"
+BENCH_SERVER_IP = "54.194.7.217"
+BENCH_CLIENT_IP = "54.194.212.41"
+BENCH_SERVER_PRIVATE_IP = "172.31.3.122"

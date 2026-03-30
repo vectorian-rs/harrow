@@ -90,6 +90,27 @@ module "ecr_spinr" {
   force-delete    = true
 }
 
+module "ecr_harrow_monoio_server" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/harrow-monoio-server"
+  stage           = "bench"
+  force-delete    = true
+}
+
+module "ecr_vegeta" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/vegeta"
+  stage           = "bench"
+  force-delete    = true
+}
+
+module "ecr_load_generators" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/load-generators"
+  stage           = "bench"
+  force-delete    = true
+}
+
 # ---------------------------------------------------------------------------
 # IAM — ECR pull for bench instances
 # ---------------------------------------------------------------------------
@@ -136,6 +157,9 @@ resource "aws_iam_role_policy" "bench_ecr_pull" {
           module.ecr_harrow_perf_server_sysalloc.ecr-repository-arn,
           module.ecr_axum_perf_server_sysalloc.ecr-repository-arn,
           module.ecr_spinr.ecr-repository-arn,
+          module.ecr_harrow_monoio_server.ecr-repository-arn,
+          module.ecr_vegeta.ecr-repository-arn,
+          module.ecr_load_generators.ecr-repository-arn,
         ]
       }
     ]

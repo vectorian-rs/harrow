@@ -1,8 +1,10 @@
-# Monoio/io_uring server for ARM64 production deployments
-# This builds the vegeta_target_monoio example for load testing
+# Monoio/io_uring perf server for ARM64 production deployments
 
-FROM --platform=linux/arm64 rust:1.86-slim-bookworm AS builder
+FROM --platform=linux/arm64 rust:1 AS builder
 WORKDIR /app
+
+ARG BUILD_PROFILE=release
+ARG BINARY_DIR=release
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -30,6 +32,8 @@ COPY harrow-o11y/src/lib.rs harrow-o11y/src/lib.rs
 COPY harrow-serde/src/lib.rs harrow-serde/src/lib.rs
 COPY harrow-server/src/lib.rs harrow-server/src/lib.rs
 COPY harrow-server-monoio/src/lib.rs harrow-server-monoio/src/lib.rs
+COPY harrow-bench/benches harrow-bench/benches
+COPY harrow-bench/src/lib.rs harrow-bench/src/lib.rs
 
 # Fetch dependencies
 RUN rustup target add aarch64-unknown-linux-gnu && \
@@ -43,16 +47,24 @@ COPY harrow-o11y/src harrow-o11y/src
 COPY harrow-serde/src harrow-serde/src
 COPY harrow-server/src harrow-server/src
 COPY harrow-server-monoio/src harrow-server-monoio/src
+COPY harrow-bench/src harrow-bench/src
 
-# Build monoio example
-RUN cargo build --locked --release --target=aarch64-unknown-linux-gnu \
-        --example vegeta_target_monoio \
-        --features monoio,json --no-default-features \
-        -p harrow
+# Build the monoio perf server
+RUN bash -lc 'set -euo pipefail; \
+    if [ "${BUILD_PROFILE}" = "dev" ]; then \
+        cargo build --locked --target=aarch64-unknown-linux-gnu -p harrow-bench --bin harrow-monoio-server; \
+    elif [ "${BUILD_PROFILE}" = "perf" ]; then \
+        export RUSTFLAGS="-g -Cforce-frame-pointers=on"; \
+        cargo build --locked --profile perf --target=aarch64-unknown-linux-gnu -p harrow-bench --bin harrow-monoio-server; \
+    else \
+        cargo build --locked --release --target=aarch64-unknown-linux-gnu -p harrow-bench --bin harrow-monoio-server; \
+    fi'
 
 FROM gcr.io/distroless/cc-debian13:latest-arm64
 
+ARG BINARY_DIR=release
+
 # Note: For io_uring support, run container with --privileged
-COPY --from=builder /app/target/aarch64-unknown-linux-gnu/release/examples/vegeta_target_monoio /harrow-monoio-server
+COPY --from=builder /app/target/aarch64-unknown-linux-gnu/${BINARY_DIR}/harrow-monoio-server /harrow-monoio-server
 
 CMD ["/harrow-monoio-server"]

@@ -51,3 +51,20 @@
     name: dool
     state: present
   when: dool_search.rc == 0 and (dool_search.stdout | trim) != ""
+
+- name: Check if vegeta is installed
+  ansible.builtin.command: which vegeta
+  register: vegeta_check
+  changed_when: false
+  failed_when: false
+
+- name: Install vegeta (arm64 binary)
+  become: true
+  ansible.builtin.shell: |
+    curl -L -o /tmp/vegeta.tar.gz https://github.com/tsenart/vegeta/releases/download/v12.12.0/vegeta_12.12.0_linux_arm64.tar.gz
+    cd /tmp && tar -xzf vegeta.tar.gz vegeta
+    mv /tmp/vegeta /usr/local/bin/vegeta
+    chmod +x /usr/local/bin/vegeta
+    rm -f /tmp/vegeta.tar.gz
+  when: vegeta_check.rc != 0
+  changed_when: true

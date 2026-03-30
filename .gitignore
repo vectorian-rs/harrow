@@ -18,3 +18,4 @@ infra/**/terraform.tfstate.*.backup
 **/proptest-regressions/
 results/
 .grakno/
+.chizu/

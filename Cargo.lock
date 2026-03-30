@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "harrow"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "harrow-core",
@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-bench"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "axum",
  "blake3",
@@ -809,6 +809,8 @@ dependencies = [
  "hyper-util",
  "matchit",
  "mimalloc",
+ "minijinja",
+ "monoio",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -821,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -842,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-middleware"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "brotli 7.0.0",
@@ -864,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-o11y"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "harrow-core",
  "rolly",
@@ -873,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-serde"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "rmp-serde",
@@ -883,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -903,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-monoio"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1388,6 +1390,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memo-map"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b"
+
+[[package]]
 name = "memoffset"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1410,6 +1418,16 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "minijinja"
+version = "2.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "328251e58ad8e415be6198888fc207502727dc77945806421ab34f35bf012e7d"
+dependencies = [
+ "memo-map",
+ "serde",
+]
 
 [[package]]
 name = "miniz_oxide"

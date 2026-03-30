@@ -26,25 +26,25 @@
 # Server: pull sysalloc perf server images
 - name: Pull harrow-perf-server-sysalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ harrow_version }}"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ sysalloc_tag }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-perf-server-sysalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ harrow_version }} harrow-perf-server-sysalloc"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ sysalloc_tag }} harrow-perf-server-sysalloc"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Pull axum-perf-server-sysalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ harrow_version }}"
+    cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ sysalloc_tag }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag axum-perf-server-sysalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ harrow_version }} axum-perf-server-sysalloc"
+    cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ sysalloc_tag }} axum-perf-server-sysalloc"
   changed_when: true
   when: inventory_hostname in groups['server']
 
@@ -71,5 +71,22 @@
 - name: Tag spinr for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/spinr:{{ spinr_version }} spinr"
+  changed_when: true
+  when: inventory_hostname in groups['client']
+
+# Client: build vegeta ARM64 image locally
+- name: Build vegeta ARM64 image
+  ansible.builtin.shell: |
+    cat > /tmp/Dockerfile.vegeta << 'EOF'
+    FROM alpine:3.19
+    RUN apk add --no-cache ca-certificates jq bash && \
+        wget -q "https://github.com/tsenart/vegeta/releases/download/v12.12.0/vegeta_12.12.0_linux_arm64.tar.gz" -O /tmp/vegeta.tar.gz && \
+        tar xzf /tmp/vegeta.tar.gz -C /usr/local/bin vegeta && \
+        rm /tmp/vegeta.tar.gz
+    ENTRYPOINT ["vegeta"]
+    CMD ["-help"]
+    EOF
+    docker build -t vegeta:arm64 -f /tmp/Dockerfile.vegeta /tmp
+    rm -f /tmp/Dockerfile.vegeta
   changed_when: true
   when: inventory_hostname in groups['client']
