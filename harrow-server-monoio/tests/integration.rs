@@ -35,55 +35,26 @@ async fn state_handler(req: Request) -> Response {
 
 // -- Helpers -----------------------------------------------------------------
 
-/// Start a monoio server on a separate OS thread, return the bound address.
-/// The server runs until `shutdown_tx` is dropped.
-fn start_monoio_server(app: App) -> (SocketAddr, std::sync::mpsc::Sender<()>) {
-    let (addr_tx, addr_rx) = std::sync::mpsc::channel::<SocketAddr>();
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
+/// Start a monoio server with Harrow's public thread-per-core bootstrap.
+fn start_monoio_server(app: App) -> (SocketAddr, harrow_server_monoio::ServerHandle) {
+    let server = harrow_server_monoio::start_with_config(
+        app,
+        "127.0.0.1:0".parse().unwrap(),
+        harrow_server_monoio::ServerConfig {
+            workers: Some(2),
+            header_read_timeout: Some(Duration::from_secs(2)),
+            body_read_timeout: Some(Duration::from_secs(2)),
+            connection_timeout: Some(Duration::from_secs(30)),
+            drain_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
-    std::thread::spawn(move || {
-        let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-            .enable_timer()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            // Bind to a random port.
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = listener.local_addr().unwrap();
-            drop(listener);
-
-            addr_tx.send(addr).unwrap();
-
-            let config = harrow_server_monoio::ServerConfig {
-                header_read_timeout: Some(Duration::from_secs(2)),
-                connection_timeout: Some(Duration::from_secs(30)),
-                drain_timeout: Duration::from_secs(5),
-                ..Default::default()
-            };
-
-            harrow_server_monoio::serve_with_config(
-                app,
-                addr,
-                async move {
-                    // Block until shutdown signal.
-                    loop {
-                        monoio::time::sleep(Duration::from_millis(50)).await;
-                        if shutdown_rx.try_recv().is_ok() {
-                            break;
-                        }
-                    }
-                },
-                config,
-            )
-            .await
-            .unwrap();
-        });
-    });
-
-    let addr = addr_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let addr = server.local_addr();
     // Give the server a moment to start accepting.
     std::thread::sleep(Duration::from_millis(100));
-    (addr, shutdown_tx)
+    (addr, server)
 }
 
 /// Simple HTTP/1.1 request via raw TCP using tokio, returns (status, headers, body).
@@ -177,7 +148,7 @@ fn get_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str
 #[tokio::test]
 async fn basic_get() {
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let req = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = http_request(addr, req).await;
@@ -189,7 +160,7 @@ async fn basic_get() {
 #[tokio::test]
 async fn post_with_body() {
     let app = App::new().post("/echo", echo_body);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let body_data = "test body data";
     let req = format!(
@@ -206,7 +177,7 @@ async fn post_with_body() {
 #[tokio::test]
 async fn path_params() {
     let app = App::new().get("/greet/:name", greet);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let req = "GET /greet/world HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = http_request(addr, req).await;
@@ -218,7 +189,7 @@ async fn path_params() {
 #[tokio::test]
 async fn not_found_404() {
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let req = "GET /nonexistent HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = http_request(addr, req).await;
@@ -230,7 +201,7 @@ async fn not_found_404() {
 #[tokio::test]
 async fn method_not_allowed_405() {
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let req =
         "POST /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
@@ -246,7 +217,7 @@ async fn keep_alive_multiple_requests() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
 
@@ -273,7 +244,7 @@ async fn connection_close_header() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
 
@@ -292,7 +263,7 @@ async fn connection_close_header() {
 async fn application_state() {
     let counter = Arc::new(HitCounter(AtomicUsize::new(0)));
     let app = App::new().state(counter).get("/count", state_handler);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let req = "GET /count HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = http_request(addr, req).await;
@@ -309,7 +280,7 @@ async fn application_state() {
 #[tokio::test]
 async fn body_limit_content_length_rejection() {
     let app = App::new().max_body_size(10).post("/echo", echo_body);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     // Content-Length exceeds limit — dispatch rejects before handler reads body.
     let payload = "x".repeat(100);
@@ -324,11 +295,35 @@ async fn body_limit_content_length_rejection() {
 }
 
 #[tokio::test]
+async fn body_limit_chunked_rejection() {
+    let app = App::new().max_body_size(5).post("/echo", echo_body);
+    let (addr, _server) = start_monoio_server(app);
+
+    let req = "POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n";
+    let (status, _headers, body) = http_request(addr, req).await;
+
+    assert_eq!(status, 413);
+    assert_eq!(body, "payload too large");
+}
+
+#[tokio::test]
+async fn rejects_content_length_and_chunked_together() {
+    let app = App::new().post("/echo", echo_body);
+    let (addr, _server) = start_monoio_server(app);
+
+    let req = "POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+    let (status, _headers, body) = http_request(addr, req).await;
+
+    assert_eq!(status, 400);
+    assert_eq!(body, "bad request");
+}
+
+#[tokio::test]
 async fn malformed_request() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     stream
@@ -352,7 +347,7 @@ async fn large_response_chunked() {
     }
 
     let app = App::new().get("/large", large_body);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     let req = "GET /large HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = http_request(addr, req).await;
@@ -367,7 +362,7 @@ async fn header_read_timeout() {
     use tokio::io::AsyncReadExt;
 
     let app = App::new().get("/hello", hello);
-    let (addr, _shutdown) = start_monoio_server(app);
+    let (addr, _server) = start_monoio_server(app);
 
     // Connect but send nothing — should timeout and close.
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -376,6 +371,29 @@ async fn header_read_timeout() {
     let mut buf = Vec::new();
     let result = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut buf)).await;
     assert!(result.is_ok(), "connection should close within timeout");
+}
+
+#[tokio::test]
+async fn body_read_timeout() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let app = App::new().post("/echo", echo_body);
+    let (addr, _server) = start_monoio_server(app);
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = "POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 10\r\n\r\nhello";
+    stream.write_all(req.as_bytes()).await.unwrap();
+
+    let mut buf = Vec::new();
+    let result = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut buf)).await;
+    assert!(
+        result.is_ok(),
+        "body read timeout should close the connection"
+    );
+
+    let (status, _headers, body) = parse_http_response(&buf);
+    assert_eq!(status, 408);
+    assert_eq!(body, "request timeout");
 }
 
 #[tokio::test]
@@ -392,7 +410,7 @@ async fn graceful_shutdown_drains_connections() {
     }
 
     let app = App::new().get("/slow", slow_handler);
-    let (addr, shutdown) = start_monoio_server(app);
+    let (addr, server) = start_monoio_server(app);
 
     // Start a request
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -401,7 +419,7 @@ async fn graceful_shutdown_drains_connections() {
 
     // Immediately signal shutdown
     tokio::time::sleep(Duration::from_millis(50)).await;
-    drop(shutdown);
+    drop(server);
 
     // The in-flight request should still complete.
     let mut buf = Vec::new();

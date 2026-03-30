@@ -20,7 +20,6 @@ pub(crate) fn body_from_bytes(bytes: Bytes) -> Body {
 
 /// Error types that can occur at the protocol layer.
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)]
 pub(crate) enum ProtocolError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

@@ -51,7 +51,10 @@ pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 pub use harrow_server::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
 
 #[cfg(all(feature = "monoio", not(feature = "tokio")))]
-pub use harrow_server_monoio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+pub use harrow_server_monoio::{
+    ServerConfig, ServerHandle, run, run_with_config, serve, serve_with_config,
+    serve_with_shutdown, start, start_with_config,
+};
 
 // Compile-time checks for feature selection
 #[cfg(not(any(feature = "tokio", feature = "monoio")))]
@@ -85,7 +88,8 @@ pub mod runtime {
     #[cfg(feature = "monoio")]
     pub mod monoio {
         pub use harrow_server_monoio::{
-            ServerConfig, serve, serve_with_config, serve_with_shutdown,
+            ServerConfig, ServerHandle, run, run_with_config, serve, serve_with_config,
+            serve_with_shutdown, start, start_with_config,
         };
     }
 }

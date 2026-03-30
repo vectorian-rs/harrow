@@ -28,6 +28,8 @@ pub(crate) struct ParsedRequest {
 pub(crate) enum CodecError {
     /// Need more data to parse headers.
     Incomplete,
+    /// Decoded chunked body exceeds the configured limit.
+    BodyTooLarge,
     /// Invalid HTTP request.
     Invalid(String),
 }
@@ -36,6 +38,7 @@ impl std::fmt::Display for CodecError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CodecError::Incomplete => write!(f, "incomplete HTTP request"),
+            CodecError::BodyTooLarge => write!(f, "body too large"),
             CodecError::Invalid(msg) => write!(f, "invalid HTTP request: {msg}"),
         }
     }
@@ -123,6 +126,12 @@ pub(crate) fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError>
 
     let keep_alive = should_keep_alive(version, conn_close, conn_keep_alive);
 
+    if content_length.is_some() && chunked {
+        return Err(CodecError::Invalid(
+            "content-length and transfer-encoding: chunked cannot be combined".into(),
+        ));
+    }
+
     Ok(ParsedRequest {
         method,
         uri,
@@ -201,11 +210,12 @@ pub(crate) const CHUNK_TERMINATOR: &[u8] = b"0\r\n\r\n";
 /// HTTP/1.1 100 Continue interim response.
 pub(crate) const CONTINUE_100: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
-/// Decode chunked transfer-encoding body from a buffer.
-///
-/// Returns `Ok(Some((decoded_body, consumed)))` if a complete chunked body was decoded,
-/// `Ok(None)` if more data is needed, or `Err` on malformed input.
-pub(crate) fn decode_chunked(buf: &[u8]) -> Result<Option<(Bytes, usize)>, CodecError> {
+/// Decode chunked transfer-encoding and optionally fail once the decoded body
+/// would exceed `max_body`.
+pub(crate) fn decode_chunked_with_limit(
+    buf: &[u8],
+    max_body: Option<usize>,
+) -> Result<Option<(Bytes, usize)>, CodecError> {
     let mut decoded = BytesMut::new();
     let mut pos = 0;
 
@@ -238,6 +248,10 @@ pub(crate) fn decode_chunked(buf: &[u8]) -> Result<Option<(Bytes, usize)>, Codec
         // Need chunk_size bytes + CRLF
         if buf.len() < pos + chunk_size + 2 {
             return Ok(None);
+        }
+
+        if max_body.is_some_and(|limit| decoded.len() + chunk_size > limit) {
+            return Err(CodecError::BodyTooLarge);
         }
 
         decoded.extend_from_slice(&buf[pos..pos + chunk_size]);
@@ -282,6 +296,15 @@ mod tests {
         let parsed = try_parse_request(req).unwrap();
         assert!(parsed.chunked);
         assert_eq!(parsed.content_length, None);
+    }
+
+    #[test]
+    fn parse_rejects_content_length_and_chunked() {
+        let req = b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n";
+        assert!(matches!(
+            try_parse_request(req),
+            Err(CodecError::Invalid(msg)) if msg.contains("content-length")
+        ));
     }
 
     #[test]
@@ -358,7 +381,7 @@ mod tests {
     #[test]
     fn decode_chunked_simple() {
         let data = b"5\r\nhello\r\n0\r\n\r\n";
-        let (body, consumed) = decode_chunked(data).unwrap().unwrap();
+        let (body, consumed) = decode_chunked_with_limit(data, None).unwrap().unwrap();
         assert_eq!(body, Bytes::from("hello"));
         assert_eq!(consumed, data.len());
     }
@@ -366,7 +389,7 @@ mod tests {
     #[test]
     fn decode_chunked_multi() {
         let data = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
-        let (body, consumed) = decode_chunked(data).unwrap().unwrap();
+        let (body, consumed) = decode_chunked_with_limit(data, None).unwrap().unwrap();
         assert_eq!(body, Bytes::from("hello world"));
         assert_eq!(consumed, data.len());
     }
@@ -374,6 +397,15 @@ mod tests {
     #[test]
     fn decode_chunked_incomplete() {
         let data = b"5\r\nhel";
-        assert!(decode_chunked(data).unwrap().is_none());
+        assert!(decode_chunked_with_limit(data, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_chunked_respects_max_body() {
+        let data = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        assert!(matches!(
+            decode_chunked_with_limit(data, Some(8)),
+            Err(CodecError::BodyTooLarge)
+        ));
     }
 }

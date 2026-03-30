@@ -36,27 +36,31 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use monoio::net::TcpStream;
 
 use harrow_core::dispatch::{SharedState, dispatch};
 use harrow_core::request::Body;
+use harrow_core::response::Response;
 
 use crate::o11y::ConnectionMetrics;
+use crate::protocol::ProtocolError;
 
 /// Configuration for H2 connections.
-#[allow(dead_code)]
 pub(crate) struct H2Config {
     /// Shared application state.
     pub shared: Arc<SharedState>,
     /// Timeout for reading request headers.
     pub header_read_timeout: Option<Duration>,
+    /// Timeout for reading request bodies.
+    pub body_read_timeout: Option<Duration>,
     /// Maximum lifetime of a single connection.
     pub connection_timeout: Option<Duration>,
-    /// Remote address (for logging).
-    pub remote_addr: Option<SocketAddr>,
+    /// Maximum concurrent streams allowed on this H2 connection.
+    pub max_concurrent_streams: u32,
     /// Connection metrics tracker.
     pub metrics: ConnectionMetrics,
 }
@@ -70,6 +74,23 @@ pub(crate) struct H2Connection {
     config: H2Config,
 }
 
+struct ActiveStreamGuard {
+    active_streams: Arc<AtomicUsize>,
+}
+
+impl ActiveStreamGuard {
+    fn new(active_streams: Arc<AtomicUsize>) -> Self {
+        active_streams.fetch_add(1, Ordering::AcqRel);
+        Self { active_streams }
+    }
+}
+
+impl Drop for ActiveStreamGuard {
+    fn drop(&mut self) {
+        self.active_streams.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 impl H2Connection {
     /// Create a new H2 connection handler.
     pub(crate) fn new(stream: TcpStream, config: H2Config) -> Self {
@@ -81,33 +102,97 @@ impl H2Connection {
     /// This drives the HTTP/2 connection state machine, accepting streams
     /// and spawning tasks to handle each request concurrently.
     pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let H2Connection { stream, config } = self;
+        let H2Config {
+            shared,
+            header_read_timeout,
+            body_read_timeout,
+            connection_timeout,
+            max_concurrent_streams,
+            metrics,
+        } = config;
+        let metrics_id = metrics.id;
+        let connection_deadline =
+            connection_timeout.and_then(|timeout| Instant::now().checked_add(timeout));
+
         // Build H2 server with default configuration
-        // TODO: Expose configuration options (max_concurrent_streams, window sizes, etc.)
-        let builder = monoio_http::h2::server::Builder::new();
+        let mut builder = monoio_http::h2::server::Builder::new();
+        builder.max_concurrent_streams(max_concurrent_streams);
 
         // Perform HTTP/2 handshake
-        let mut connection = builder
-            .handshake(self.stream)
-            .await
-            .map_err(|e| format!("h2 handshake failed: {}", e))?;
+        let handshake_timeout = effective_timeout(header_read_timeout, connection_deadline);
+        let mut connection = if let Some(timeout) = handshake_timeout {
+            match monoio::select! {
+                result = builder.handshake(stream) => Ok(result),
+                _ = monoio::time::sleep(timeout) => Err(()),
+            } {
+                Ok(result) => result.map_err(|e| format!("h2 handshake failed: {}", e))?,
+                Err(()) => {
+                    if deadline_expired(connection_deadline) {
+                        tracing::debug!(
+                            connection.id = metrics_id,
+                            "h2 connection timeout during handshake"
+                        );
+                    } else {
+                        tracing::debug!(
+                            connection.id = metrics_id,
+                            "h2 header read timeout during handshake"
+                        );
+                    }
+                    let _duration = metrics.close();
+                    return Ok(());
+                }
+            }
+        } else {
+            builder
+                .handshake(stream)
+                .await
+                .map_err(|e| format!("h2 handshake failed: {}", e))?
+        };
 
-        tracing::debug!(
-            connection.id = self.config.metrics.id,
-            "h2 connection established"
-        );
+        tracing::debug!(connection.id = metrics_id, "h2 connection established");
 
-        let metrics_id = self.config.metrics.id;
+        let active_streams = Arc::new(AtomicUsize::new(0));
 
         // Accept incoming streams
         loop {
-            match connection.accept().await {
+            let accept_timeout = effective_timeout(header_read_timeout, connection_deadline);
+
+            let accept_result = if let Some(timeout) = accept_timeout {
+                match monoio::select! {
+                    result = connection.accept() => Ok(result),
+                    _ = monoio::time::sleep(timeout) => Err(()),
+                } {
+                    Ok(result) => result,
+                    Err(()) => {
+                        if deadline_expired(connection_deadline) {
+                            tracing::debug!(connection.id = metrics_id, "h2 connection timeout");
+                            break;
+                        } else if active_streams.load(Ordering::Acquire) == 0 {
+                            tracing::debug!(connection.id = metrics_id, "h2 header read timeout");
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                connection.accept().await
+            };
+
+            match accept_result {
                 Some(Ok((request, respond))) => {
                     // Spawn a task to handle this stream
-                    let shared = Arc::clone(&self.config.shared);
+                    let shared = Arc::clone(&shared);
                     let max_body = shared.max_body_size;
+                    let active_streams = Arc::clone(&active_streams);
+                    let active_stream = ActiveStreamGuard::new(active_streams);
 
                     monoio::spawn(async move {
-                        if let Err(e) = handle_stream(request, respond, shared, max_body).await {
+                        let _active_stream = active_stream;
+                        if let Err(e) =
+                            handle_stream(request, respond, shared, max_body, body_read_timeout)
+                                .await
+                        {
                             tracing::debug!(
                                 connection.id = metrics_id,
                                 error = %e,
@@ -118,27 +203,44 @@ impl H2Connection {
                 }
                 Some(Err(e)) => {
                     tracing::debug!(
-                        connection.id = self.config.metrics.id,
+                        connection.id = metrics_id,
                         error = %e,
                         "h2 accept error"
                     );
                     // Continue accepting other streams - one bad stream doesn't kill the connection
                 }
                 None => {
-                    tracing::debug!(
-                        connection.id = self.config.metrics.id,
-                        "h2 connection closed by peer"
-                    );
+                    tracing::debug!(connection.id = metrics_id, "h2 connection closed by peer");
                     break;
                 }
             }
         }
 
         // Record connection close
-        let _duration = self.config.metrics.close();
+        let _duration = metrics.close();
 
         Ok(())
     }
+}
+
+fn effective_timeout(
+    timeout: Option<Duration>,
+    connection_deadline: Option<Instant>,
+) -> Option<Duration> {
+    match (timeout, remaining_until(connection_deadline)) {
+        (Some(timeout), Some(remaining)) => Some(timeout.min(remaining)),
+        (Some(timeout), None) => Some(timeout),
+        (None, Some(remaining)) => Some(remaining),
+        (None, None) => None,
+    }
+}
+
+fn remaining_until(deadline: Option<Instant>) -> Option<Duration> {
+    deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()))
+}
+
+fn deadline_expired(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
 /// Handle a single HTTP/2 stream.
@@ -150,9 +252,30 @@ async fn handle_stream(
     mut respond: monoio_http::h2::server::SendResponse<bytes::Bytes>,
     shared: Arc<SharedState>,
     max_body: usize,
+    body_read_timeout: Option<Duration>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Read request body from H2 stream
-    let body_bytes = read_h2_body(&mut request, max_body).await?;
+    let body_bytes = match read_h2_body(&mut request, max_body, body_read_timeout).await {
+        Ok(body) => body,
+        Err(ProtocolError::BodyTooLarge) => {
+            send_h2_response(
+                &mut respond,
+                Response::new(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
+                    .into_inner(),
+            )
+            .await?;
+            return Ok(());
+        }
+        Err(ProtocolError::Timeout) => {
+            send_h2_response(
+                &mut respond,
+                Response::new(http::StatusCode::REQUEST_TIMEOUT, "request timeout").into_inner(),
+            )
+            .await?;
+            return Ok(());
+        }
+        Err(err) => return Err(Box::new(err)),
+    };
 
     // Convert to Harrow request
     let harrow_request = convert_to_harrow_request(request, body_bytes)?;
@@ -173,25 +296,41 @@ async fn handle_stream(
 async fn read_h2_body(
     request: &mut http::Request<monoio_http::h2::RecvStream>,
     max_body: usize,
-) -> Result<Bytes, Box<dyn std::error::Error>> {
+    body_read_timeout: Option<Duration>,
+) -> Result<Bytes, ProtocolError> {
     let body = request.body_mut();
     let mut chunks = Vec::new();
     let mut total_len: usize = 0;
 
-    while let Some(data) = body.data().await {
-        let data = data.map_err(|e| format!("h2 body error: {}", e))?;
+    loop {
+        let data = if let Some(timeout) = body_read_timeout {
+            monoio::select! {
+                data = body.data() => data,
+                _ = monoio::time::sleep(timeout) => return Err(ProtocolError::Timeout),
+            }
+        } else {
+            body.data().await
+        };
+
+        let Some(data) = data else {
+            break;
+        };
+
+        let data = data.map_err(|e| ProtocolError::Parse(format!("h2 body error: {e}")))?;
         let len = data.len();
 
         // Check body size limit
         if max_body > 0 && total_len + len > max_body {
-            return Err("body too large".into());
+            return Err(ProtocolError::BodyTooLarge);
         }
 
         total_len += len;
         chunks.push(data);
 
         // Release flow control capacity
-        body.flow_control().release_capacity(len)?;
+        body.flow_control()
+            .release_capacity(len)
+            .map_err(|e| ProtocolError::ProtocolViolation(e.to_string()))?;
     }
 
     // Combine chunks
@@ -224,11 +363,13 @@ async fn send_h2_response(
     let (parts, mut body) = response.into_parts();
 
     // Build H2 response (H2 always uses HTTP/2 version)
-    let response = http::Response::builder()
+    let mut builder = http::Response::builder()
         .status(parts.status)
-        .version(http::Version::HTTP_2)
-        .body(())
-        .expect("valid response");
+        .version(http::Version::HTTP_2);
+    for (name, value) in &parts.headers {
+        builder = builder.header(name, value);
+    }
+    let response = builder.body(()).expect("valid response");
 
     // Collect body to determine if we have trailers
     let mut body_data = Vec::new();
@@ -267,7 +408,9 @@ pub(crate) async fn handle_connection(
     remote_addr: Option<SocketAddr>,
     shared: Arc<SharedState>,
     header_read_timeout: Option<Duration>,
+    body_read_timeout: Option<Duration>,
     connection_timeout: Option<Duration>,
+    max_concurrent_streams: u32,
     active_count: std::rc::Rc<std::cell::Cell<usize>>,
 ) {
     use crate::o11y::connection_span;
@@ -280,8 +423,9 @@ pub(crate) async fn handle_connection(
     let config = H2Config {
         shared,
         header_read_timeout,
+        body_read_timeout,
         connection_timeout,
-        remote_addr,
+        max_concurrent_streams,
         metrics,
     };
 

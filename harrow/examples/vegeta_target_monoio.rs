@@ -90,18 +90,45 @@ async fn cpu_intensive(_req: Request) -> Response {
             _ => fib(n - 1) + fib(n - 2),
         }
     }
-    
+
     let result = fib(35);
     Response::json(&serde_json::json!({ "fib": result }))
+}
+
+fn parse_args() -> (String, u16) {
+    let args: Vec<String> = std::env::args().collect();
+    let mut bind = "0.0.0.0".to_string();
+    let mut port: u16 = 3000;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--bind" => {
+                bind = args.get(i + 1).expect("--bind requires an address").clone();
+                i += 2;
+            }
+            "--port" => {
+                port = args
+                    .get(i + 1)
+                    .expect("--port requires a number")
+                    .parse()
+                    .expect("invalid port number");
+                i += 2;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                eprintln!("usage: harrow-monoio-server [--bind ADDR] [--port PORT]");
+                std::process::exit(1);
+            }
+        }
+    }
+    (bind, port)
 }
 
 fn main() {
     tracing_subscriber::fmt::init();
 
-    let addr = std::env::var("BIND_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
-        .parse()
-        .unwrap();
+    let (bind, port) = parse_args();
+    let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
     // Monoio requires its own runtime
     let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()

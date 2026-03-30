@@ -46,7 +46,9 @@ pub(crate) async fn handle_connection(
     remote_addr: Option<SocketAddr>,
     shared: Arc<SharedState>,
     header_read_timeout: Option<Duration>,
+    body_read_timeout: Option<Duration>,
     connection_timeout: Option<Duration>,
+    max_h2_streams: u32,
     active_count: Rc<Cell<usize>>,
     protocol: ProtocolVersion,
 ) {
@@ -61,6 +63,7 @@ pub(crate) async fn handle_connection(
                 remote_addr,
                 shared,
                 header_read_timeout,
+                body_read_timeout,
                 connection_timeout,
                 active_count,
             )
@@ -76,7 +79,9 @@ pub(crate) async fn handle_connection(
                 remote_addr,
                 shared,
                 header_read_timeout,
+                body_read_timeout,
                 connection_timeout,
+                max_h2_streams,
                 active_count,
             )
             .await;

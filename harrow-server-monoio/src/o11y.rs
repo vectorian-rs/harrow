@@ -93,7 +93,10 @@ pub fn record_server_start(addr: std::net::SocketAddr, config: &super::ServerCon
     tracing::info!(
         server.addr = %addr,
         server.max_connections = config.max_connections,
+        server.max_h2_streams = config.max_h2_streams,
+        server.workers = config.workers,
         server.header_read_timeout_ms = config.header_read_timeout.map(|d| d.as_millis() as u64),
+        server.body_read_timeout_ms = config.body_read_timeout.map(|d| d.as_millis() as u64),
         server.connection_timeout_ms = config.connection_timeout.map(|d| d.as_millis() as u64),
         server.drain_timeout_ms = config.drain_timeout.as_millis() as u64,
         "harrow-monoio server starting"

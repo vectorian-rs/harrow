@@ -13,8 +13,8 @@
 use std::time::Duration;
 
 use harrow::{
+    App, InMemorySessionStore, ProblemDetail, Request, Response, SameSite, Session, SessionConfig,
     cors_middleware, request_id_middleware, session_middleware, timeout_middleware,
-    InMemorySessionStore, SameSite, Session, SessionConfig, App, ProblemDetail, Request, Response,
 };
 
 // Basic handlers
@@ -110,7 +110,7 @@ async fn echo(req: Request) -> Response {
         Ok(json) => json,
         Err(_) => serde_json::json!(null),
     };
-    
+
     Response::json(&serde_json::json!({
         "method": method,
         "path": path,
@@ -126,22 +126,27 @@ async fn compression_test(_req: Request) -> Response {
 
 // Compression test - JSON
 async fn compression_json(_req: Request) -> Response {
-    let data: Vec<_> = (0..100).map(|i| {
-        serde_json::json!({
-            "id": i,
-            "name": format!("Item {}", i),
-            "description": "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
-            "active": i % 2 == 0,
+    let data: Vec<_> = (0..100)
+        .map(|i| {
+            serde_json::json!({
+                "id": i,
+                "name": format!("Item {}", i),
+                "description": "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+                "active": i % 2 == 0,
+            })
         })
-    }).collect();
-    
+        .collect();
+
     Response::json(&serde_json::json!({ "items": data }))
 }
 
 // Error handlers
 async fn not_found_handler(req: Request) -> ProblemDetail {
-    ProblemDetail::new(http::StatusCode::NOT_FOUND)
-        .detail(format!("no route for {} {}", req.method(), req.path()))
+    ProblemDetail::new(http::StatusCode::NOT_FOUND).detail(format!(
+        "no route for {} {}",
+        req.method(),
+        req.path()
+    ))
 }
 
 // Slow handler for timeout testing
@@ -161,7 +166,7 @@ async fn cpu_intensive(_req: Request) -> Response {
             _ => fib(n - 1) + fib(n - 2),
         }
     }
-    
+
     let result = fib(35);
     Response::json(&serde_json::json!({ "fib": result }))
 }
@@ -190,9 +195,11 @@ async fn session_get(req: Request) -> Response {
 
 async fn session_increment(req: Request) -> Response {
     if let Ok(session) = req.require_ext::<Session>() {
-        let counter: i32 = session.get("counter")
+        let counter: i32 = session
+            .get("counter")
             .unwrap_or_else(|| "0".to_string())
-            .parse().unwrap_or(0);
+            .parse()
+            .unwrap_or(0);
         session.set("counter", &(counter + 1).to_string());
         Response::json(&serde_json::json!({
             "counter": counter + 1,
