@@ -1,18 +1,95 @@
 use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
+use bytes::Bytes;
+use http_body::{Body as HttpBody, Frame};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use tokio::time::{Sleep, sleep};
 
 use harrow_core::dispatch::{SharedState, dispatch};
-use harrow_core::request::box_incoming;
+use harrow_core::request::{Body, box_incoming};
 use harrow_core::route::{App, RouteTable};
+
+// Wraps a hyper `Incoming` body with a per-frame read timeout.
+// Each call to `poll_frame` resets a deadline. If no frame arrives
+// within the timeout, the body returns an error.
+pin_project_lite::pin_project! {
+    struct TimeoutBody {
+        #[pin]
+        inner: Incoming,
+        timeout: Duration,
+        #[pin]
+        deadline: Sleep,
+    }
+}
+
+impl TimeoutBody {
+    fn new(inner: Incoming, timeout: Duration) -> Self {
+        Self {
+            inner,
+            deadline: sleep(timeout),
+            timeout,
+        }
+    }
+}
+
+impl HttpBody for TimeoutBody {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.project();
+
+        // Check if the body has a frame ready.
+        match this.inner.poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                // Got a frame — reset deadline for the next one.
+                this.deadline.reset(tokio::time::Instant::now() + *this.timeout);
+                Poll::Ready(Some(Ok(frame.map_data(|d| Bytes::from(d)))))
+            }
+            Poll::Ready(Some(Err(e))) => {
+                Poll::Ready(Some(Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => {
+                // Body not ready — check if deadline expired.
+                match this.deadline.poll(cx) {
+                    Poll::Ready(()) => Poll::Ready(Some(Err(
+                        "body read timeout".into(),
+                    ))),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+/// Convert a `hyper::body::Incoming` into a harrow `Body` with a read timeout.
+fn box_incoming_with_timeout(incoming: Incoming, timeout: Duration) -> Body {
+    use http_body_util::BodyExt;
+    TimeoutBody::new(incoming, timeout)
+        .boxed()
+}
 
 /// Configuration for server connection handling.
 pub struct ServerConfig {
@@ -24,6 +101,10 @@ pub struct ServerConfig {
     /// Maximum lifetime of a single connection. Default: Some(5 min).
     /// Set to `None` to disable (eliminates per-connection timer overhead).
     pub connection_timeout: Option<Duration>,
+    /// Timeout for reading each body frame from the client. Default: None (disabled).
+    /// Set to `Some(duration)` to protect against slow body senders.
+    /// When disabled, the raw non-timeout body path is used with zero overhead.
+    pub body_read_timeout: Option<Duration>,
     /// Time to wait for in-flight requests to complete during shutdown. Default: 30s.
     pub drain_timeout: Duration,
 }
@@ -34,6 +115,7 @@ impl Default for ServerConfig {
             max_connections: 8192,
             header_read_timeout: Some(Duration::from_secs(5)),
             connection_timeout: Some(Duration::from_secs(300)),
+            body_read_timeout: None,
             drain_timeout: Duration::from_secs(30),
         }
     }
@@ -112,6 +194,7 @@ pub async fn serve_with_config(
                 let shared = Arc::clone(&shared);
                 let header_read_timeout = config.header_read_timeout;
                 let connection_timeout = config.connection_timeout;
+                let body_read_timeout = config.body_read_timeout;
 
                 connections.spawn(async move {
                     let _permit = permit; // held until task completes
@@ -119,7 +202,11 @@ pub async fn serve_with_config(
                     let service = service_fn(move |req: http::Request<Incoming>| {
                         let shared = Arc::clone(&shared);
                         async move {
-                            let boxed = req.map(box_incoming);
+                            let boxed = if let Some(brt) = body_read_timeout {
+                                req.map(|body| box_incoming_with_timeout(body, brt))
+                            } else {
+                                req.map(box_incoming)
+                            };
                             Ok::<_, std::convert::Infallible>(dispatch(shared, boxed).await)
                         }
                     });

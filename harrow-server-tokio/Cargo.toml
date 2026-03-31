@@ -14,10 +14,12 @@ profiling = []
 harrow-core = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
+http-body = "1"
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 futures-util = { workspace = true }
 hyper-util = { workspace = true }
+pin-project-lite = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

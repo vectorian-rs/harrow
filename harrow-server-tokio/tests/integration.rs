@@ -831,6 +831,59 @@ async fn tcp_graceful_drain_completes_inflight_request() {
     assert_eq!(body, "slow");
 }
 
+// -- Body Read Timeout Test -------------------------------------------------
+
+#[tokio::test]
+async fn tcp_body_read_timeout_returns_400() {
+    let app = App::new().post("/echo", |req: Request| async move {
+        match req.body_bytes().await {
+            Ok(bytes) => Response::text(format!("got {} bytes", bytes.len())),
+            Err(e) => Response::text(format!("error: {e}")).status(400),
+        }
+    });
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    tokio::spawn(async move {
+        harrow_server_tokio::serve_with_config(
+            app,
+            addr,
+            futures_util::future::pending(),
+            harrow_server_tokio::ServerConfig {
+                body_read_timeout: Some(Duration::from_millis(200)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Send headers promising a body, then stall — never send the body.
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\n")
+        .await
+        .unwrap();
+
+    // Don't send any body data. Wait for the server to respond with an error.
+    use tokio::io::AsyncReadExt;
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf))
+        .await
+        .expect("should get a response within 3s")
+        .expect("read should succeed");
+    let response = String::from_utf8_lossy(&buf[..n]);
+    assert!(
+        response.contains("400") || response.contains("body read timeout"),
+        "expected 400 or timeout error, got: {response}"
+    );
+}
+
 #[tokio::test]
 async fn tcp_head_returns_get_headers_without_body() {
     let app = App::new().get("/hello", hello);
