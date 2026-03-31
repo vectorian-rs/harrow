@@ -25,6 +25,18 @@ async fn text_handler() -> &'static str {
     "ok"
 }
 
+static TEXT_128KB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "A".repeat(128 * 1024));
+static TEXT_256KB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "B".repeat(256 * 1024));
+static TEXT_512KB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "C".repeat(512 * 1024));
+static TEXT_1MB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "D".repeat(1024 * 1024));
+
+async fn text_128kb_handler() -> String { TEXT_128KB.clone() }
+async fn text_256kb_handler() -> String { TEXT_256KB.clone() }
+async fn text_512kb_handler() -> String { TEXT_512KB.clone() }
+async fn text_1mb_handler() -> String { TEXT_1MB.clone() }
+
+async fn echo_body_handler(body: axum::body::Bytes) -> axum::body::Bytes { body }
+
 async fn json_small_handler() -> impl IntoResponse {
     Json(&*SMALL_PAYLOAD)
 }
@@ -97,6 +109,11 @@ async fn main() {
 
     let mut app = Router::new()
         .route("/text", get(text_handler))
+        .route("/text/128kb", get(text_128kb_handler))
+        .route("/text/256kb", get(text_256kb_handler))
+        .route("/text/512kb", get(text_512kb_handler))
+        .route("/text/1mb", get(text_1mb_handler))
+        .route("/echo", axum::routing::post(echo_body_handler))
         .route("/json/small", get(json_small_handler))
         .route("/json/1kb", get(json_1kb_handler))
         .route("/json/10kb", get(json_10kb_handler))

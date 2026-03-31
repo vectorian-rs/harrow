@@ -97,6 +97,51 @@ fn parse_version(version_str: &str) -> Result<KernelVersion, ()> {
     Err(())
 }
 
+/// Probe whether io_uring is actually usable in this environment.
+///
+/// Even on kernels >= 6.1, Docker's default seccomp profile blocks io_uring
+/// syscalls. This function attempts a minimal `io_uring_setup` syscall to
+/// detect whether io_uring is available or the runtime fell back to epoll.
+#[cfg(target_os = "linux")]
+pub fn detect_io_driver() -> IoDriver {
+    const SYS_IO_URING_SETUP: libc::c_long = 425;
+
+    // io_uring_params is 120 bytes on both aarch64 and x86_64
+    let mut params = [0u8; 120];
+    unsafe {
+        let fd = libc::syscall(SYS_IO_URING_SETUP, 1u32, params.as_mut_ptr());
+        if fd >= 0 {
+            libc::close(fd as i32);
+            IoDriver::IoUring
+        } else {
+            IoDriver::Epoll
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn detect_io_driver() -> IoDriver {
+    IoDriver::Epoll
+}
+
+/// The I/O driver in use by the monoio runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IoDriver {
+    /// io_uring is available and will be used.
+    IoUring,
+    /// io_uring is blocked (seccomp/kernel); monoio falls back to epoll.
+    Epoll,
+}
+
+impl std::fmt::Display for IoDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IoDriver::IoUring => write!(f, "io_uring"),
+            IoDriver::Epoll => write!(f, "epoll (io_uring unavailable)"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

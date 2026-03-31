@@ -88,10 +88,12 @@ impl Drop for ConnectionMetrics {
 
 // --- Server Lifecycle Tracing ------------------------------------------------
 
-/// Record server startup with configuration details.
+/// Record server startup with configuration details and I/O driver detection.
 pub fn record_server_start(addr: std::net::SocketAddr, config: &super::ServerConfig) {
+    let io_driver = super::kernel_check::detect_io_driver();
     tracing::info!(
         server.addr = %addr,
+        server.io_driver = %io_driver,
         server.max_connections = config.max_connections,
         server.max_h2_streams = config.max_h2_streams,
         server.workers = config.workers,
@@ -101,6 +103,9 @@ pub fn record_server_start(addr: std::net::SocketAddr, config: &super::ServerCon
         server.drain_timeout_ms = config.drain_timeout.as_millis() as u64,
         "harrow-monoio server starting"
     );
+    if io_driver == super::kernel_check::IoDriver::Epoll {
+        tracing::warn!("io_uring unavailable — falling back to epoll. For io_uring, run with --security-opt seccomp=unconfined or a custom seccomp profile.");
+    }
 }
 
 /// Record server shutdown initiation.

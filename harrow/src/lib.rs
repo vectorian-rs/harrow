@@ -91,6 +91,7 @@ pub mod runtime {
             ServerConfig, ServerHandle, run, run_with_config, serve, serve_with_config,
             serve_with_shutdown, start, start_with_config,
         };
+        pub use harrow_server_monoio::kernel_check::{IoDriver, detect_io_driver};
     }
 }
 

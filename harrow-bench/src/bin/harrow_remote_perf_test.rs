@@ -868,8 +868,16 @@ fn parse_args() -> Args {
 // ---------------------------------------------------------------------------
 
 fn render_template(raw: &str, server: &str, duration: u32, warmup: u32) -> String {
-    raw.replace("{{ server }}", server)
+    let base_url = if server.starts_with("http") {
+        server.to_string()
+    } else {
+        format!("http://{server}")
+    };
+    raw.replace("{{ base_url }}", &base_url)
+        .replace("{{ server }}", server)
+        .replace("{{ duration_secs }}", &duration.to_string())
         .replace("{{ duration }}", &duration.to_string())
+        .replace("{{ warmup_secs }}", &warmup.to_string())
         .replace("{{ warmup }}", &warmup.to_string())
 }
 
@@ -1020,12 +1028,19 @@ fn start_server_container(
         args.deployment_mode.as_str()
     );
 
+    // io_uring requires unconfined seccomp (Docker blocks io_uring syscalls by default)
+    let seccomp = if args.backend == Backend::Monoio {
+        " --security-opt seccomp=unconfined"
+    } else {
+        ""
+    };
+
     match args.deployment_mode {
         DeploymentMode::Local => {
             // Stop any existing container
             let _ = run_local(&format!("docker rm -f {name} 2>/dev/null || true"));
             let docker_cmd = format!(
-                "docker run -d --name {name} -p {0}:{0} --ulimit nofile=65535:65535 {image} {command}",
+                "docker run -d --name {name} -p {0}:{0} --ulimit nofile=65535:65535{seccomp} {image} {command}",
                 args.port
             );
             match run_local(&docker_cmd) {
@@ -1044,7 +1059,7 @@ fn start_server_container(
         DeploymentMode::Remote => {
             let _ = ssh_server(args, &format!("docker rm -f {name} 2>/dev/null || true"));
             let docker_cmd = format!(
-                "docker run -d --name {name} --network host --ulimit nofile=65535:65535 {image} {command}"
+                "docker run -d --name {name} --network host --ulimit nofile=65535:65535{seccomp} {image} {command}"
             );
             match ssh_server(args, &docker_cmd) {
                 Ok(o) if o.status.success() => {}
@@ -1391,7 +1406,7 @@ fn run_vegeta_bench(
     let result = match args.deployment_mode {
         DeploymentMode::Local => {
             let docker_cmd = format!(
-                "docker run --rm --network host -v {}:/targets.txt vegeta:arm64 attack -targets=/targets.txt -duration={} -rate={}/s | docker run --rm -i vegeta:arm64 report -type=json",
+                "docker run --rm --network host -v {}:/targets.txt vegeta:arm64 attack -targets=/targets.txt -duration={} -rate={}/s -max-workers=128 | docker run --rm -i vegeta:arm64 report -type=json",
                 temp_target.display(),
                 duration_str,
                 rate
@@ -1404,7 +1419,7 @@ fn run_vegeta_bench(
             scp_to_client(args, &temp_target, &remote_target);
 
             let remote_cmd = format!(
-                "docker run --rm --network host -v {remote_target}:/targets.txt vegeta:arm64 attack -targets=/targets.txt -duration={duration_str} -rate={rate}/s | docker run --rm -i vegeta:arm64 report -type=json"
+                "docker run --rm --network host -v {remote_target}:/targets.txt vegeta:arm64 attack -targets=/targets.txt -duration={duration_str} -rate={rate}/s -max-workers=128 | docker run --rm -i vegeta:arm64 report -type=json"
             );
             ssh_client(args, &remote_cmd)
         }
@@ -1658,10 +1673,20 @@ fn run_config(
                 duration_secs,
             },
         ) => {
-            let server_url = args
-                .server_url
-                .as_deref()
-                .unwrap_or("http://localhost:3000");
+            let server_url = match args.deployment_mode {
+                DeploymentMode::Remote => {
+                    format!(
+                        "http://{}:{}",
+                        args.server_private.as_deref().unwrap(),
+                        args.port
+                    )
+                }
+                DeploymentMode::Local => args
+                    .server_url
+                    .clone()
+                    .unwrap_or_else(|| format!("http://localhost:{}", args.port)),
+            };
+            let server_url = server_url.as_str();
             run_vegeta_bench(
                 args,
                 &key,
@@ -1742,9 +1767,15 @@ fn val_str(v: &Value, key: &str) -> String {
 }
 
 fn generate_report(args: &Args) {
-    harrow_bench::perf_summary::render_results_dir(&args.results_dir).unwrap();
-    let report_path = args.results_dir.join("summary.md");
-    println!("Summary written to {}", report_path.display());
+    match harrow_bench::perf_summary::render_results_dir(&args.results_dir) {
+        Ok(()) => {
+            let report_path = args.results_dir.join("summary.md");
+            println!("Summary written to {}", report_path.display());
+        }
+        Err(e) => {
+            eprintln!("warning: summary generation failed: {e}");
+        }
+    }
 }
 
 fn chrono_lite_utc() -> String {

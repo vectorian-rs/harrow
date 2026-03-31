@@ -50,15 +50,15 @@ COPY harrow-server-monoio/src harrow-server-monoio/src
 COPY harrow-bench/src harrow-bench/src
 
 # Build the monoio perf server
-RUN bash -lc 'set -euo pipefail; \
+RUN set -eu; \
     if [ "${BUILD_PROFILE}" = "dev" ]; then \
         cargo build --locked --target=aarch64-unknown-linux-gnu -p harrow-bench --bin harrow-server-monoio; \
     elif [ "${BUILD_PROFILE}" = "perf" ]; then \
-        export RUSTFLAGS="-g -Cforce-frame-pointers=on"; \
+        RUSTFLAGS="-g -Cforce-frame-pointers=on" \
         cargo build --locked --profile perf --target=aarch64-unknown-linux-gnu -p harrow-bench --bin harrow-server-monoio; \
     else \
         cargo build --locked --release --target=aarch64-unknown-linux-gnu -p harrow-bench --bin harrow-server-monoio; \
-    fi'
+    fi
 
 FROM gcr.io/distroless/cc-debian13:latest-arm64
 

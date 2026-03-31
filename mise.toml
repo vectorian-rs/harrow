@@ -139,12 +139,18 @@ depends = ["docker:prod-arm64", "docker:dev-arm64", "docker:prod-arm64:harrow-se
 [tasks."bench:infra-up"]
 description = "Create EC2 spot instances for benchmarking"
 dir = "infra/ec2-spot"
-run = "terraform apply -var key_name=harrow-bench"
+run = "terraform apply -auto-approve -var key_name=harrow-bench"
+
+[tasks."bench:infra-up".env]
+AWS_PROFILE = "datadeft-dev"
 
 [tasks."bench:infra-down"]
 description = "Destroy EC2 spot instances"
 dir = "infra/ec2-spot"
-run = "terraform destroy -var key_name=harrow-bench"
+run = "terraform destroy -auto-approve -var key_name=harrow-bench"
+
+[tasks."bench:infra-down".env]
+AWS_PROFILE = "datadeft-dev"
 
 [tasks."bench:ecr-push"]
 description = "Push prod bench images to ECR"
@@ -158,6 +164,7 @@ docker tag spinr:$SPINR_VERSION-prod-arm64 $ECR/harrow/spinr:$SPINR_VERSION && d
 """
 
 [tasks."bench:ecr-push".env]
+AWS_PROFILE = "datadeft-dev"
 SPINR_VERSION = "0.5.1"
 
 [tasks."bench:ecr-push-monoio"]
@@ -169,6 +176,9 @@ aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker lo
 docker tag harrow-server-monoio:prod-arm64 $ECR/harrow/harrow-server-monoio:$HARROW_VERSION && docker push $ECR/harrow/harrow-server-monoio:$HARROW_VERSION
 """
 
+[tasks."bench:ecr-push-monoio".env]
+AWS_PROFILE = "datadeft-dev"
+
 [tasks."bench:ecr-push-sysalloc"]
 description = "Push sysalloc bench images to ECR"
 run = """
@@ -178,6 +188,9 @@ aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker lo
 docker tag harrow-perf-server-sysalloc:prod-arm64 $ECR/harrow/harrow-perf-server-sysalloc:$HARROW_VERSION && docker push $ECR/harrow/harrow-perf-server-sysalloc:$HARROW_VERSION
 docker tag axum-perf-server-sysalloc:prod-arm64 $ECR/harrow/axum-perf-server-sysalloc:$HARROW_VERSION && docker push $ECR/harrow/axum-perf-server-sysalloc:$HARROW_VERSION
 """
+
+[tasks."bench:ecr-push-sysalloc".env]
+AWS_PROFILE = "datadeft-dev"
 
 [tasks."bench:ecr-push-all"]
 description = "Push all bench images to ECR (including monoio and sysalloc)"
@@ -212,7 +225,11 @@ docker tag spinr:$SPINR_VERSION-prod-arm64 $ECR/harrow/spinr:$SPINR_VERSION && d
 """
 
 [tasks."bench:ecr-push-perf".env]
+AWS_PROFILE = "datadeft-dev"
 SPINR_VERSION = "0.5.1"
+
+[tasks."bench:ecr-push-loadgen".env]
+AWS_PROFILE = "datadeft-dev"
 
 [tasks."bench:pull-images"]
 description = "Pull versioned bench images from ECR on all instances"
@@ -222,6 +239,7 @@ cd infra/ansible && ansible-playbook playbooks/pull-images.yml --extra-vars "har
 """
 
 [tasks."bench:pull-images".env]
+AWS_PROFILE = "datadeft-dev"
 SPINR_VERSION = "0.5.1"
 
 [tasks."bench:setup-linux"]
@@ -232,6 +250,7 @@ cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "harrow_ve
 """
 
 [tasks."bench:setup-linux".env]
+AWS_PROFILE = "datadeft-dev"
 SPINR_VERSION = "0.5.1"
 
 [tasks."bench:run"]
@@ -250,6 +269,6 @@ cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
 """
 
 [tasks."bench:run".env]
-BENCH_SERVER_IP = "54.194.7.217"
-BENCH_CLIENT_IP = "54.194.212.41"
-BENCH_SERVER_PRIVATE_IP = "172.31.3.122"
+BENCH_SERVER_IP = "52.213.16.92"
+BENCH_CLIENT_IP = "34.242.59.120"
+BENCH_SERVER_PRIVATE_IP = "172.31.8.146"

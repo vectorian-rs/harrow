@@ -86,7 +86,8 @@ mod codec;
 mod connection;
 mod h1;
 mod h2;
-mod kernel_check;
+/// Kernel version and io_uring availability checks.
+pub mod kernel_check;
 mod o11y;
 mod protocol;
 

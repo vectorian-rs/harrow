@@ -1,0 +1,7 @@
+[[scenario]]
+name = "text-256kb-c128"
+url = "{{ base_url }}/text/256kb"
+connections = 128
+max_throughput = true
+duration = {{ duration_secs }}
+warmup = {{ warmup_secs }}

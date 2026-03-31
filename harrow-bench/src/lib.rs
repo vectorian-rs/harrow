@@ -240,6 +240,35 @@ pub async fn large_text_handler(_req: Request) -> Response {
     Response::text(BODY_1KB_TEXT)
 }
 
+static TEXT_128KB: LazyLock<String> = LazyLock::new(|| "A".repeat(128 * 1024));
+static TEXT_256KB: LazyLock<String> = LazyLock::new(|| "B".repeat(256 * 1024));
+static TEXT_512KB: LazyLock<String> = LazyLock::new(|| "C".repeat(512 * 1024));
+static TEXT_1MB: LazyLock<String> = LazyLock::new(|| "D".repeat(1024 * 1024));
+
+pub async fn text_128kb_handler(_req: Request) -> Response {
+    Response::text(TEXT_128KB.as_str())
+}
+
+pub async fn text_256kb_handler(_req: Request) -> Response {
+    Response::text(TEXT_256KB.as_str())
+}
+
+pub async fn text_512kb_handler(_req: Request) -> Response {
+    Response::text(TEXT_512KB.as_str())
+}
+
+pub async fn text_1mb_handler(_req: Request) -> Response {
+    Response::text(TEXT_1MB.as_str())
+}
+
+/// Echo POST body — reads full body and returns it.
+pub async fn echo_body_handler(req: Request) -> Response {
+    match req.body_bytes().await {
+        Ok(bytes) => Response::new(http::StatusCode::OK, bytes),
+        Err(e) => Response::text(e.to_string()).status(400),
+    }
+}
+
 /// Handler that runs behind session middleware but does NOT access the session.
 /// Measures pure session middleware overhead (cookie parse + store lookup).
 pub async fn session_noop_handler(_req: Request) -> Response {

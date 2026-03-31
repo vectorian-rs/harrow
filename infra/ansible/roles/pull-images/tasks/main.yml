@@ -23,29 +23,33 @@
   changed_when: true
   when: inventory_hostname in groups['server']
 
-# Server: pull sysalloc perf server images
+# Server: pull sysalloc perf server images (optional — not always built)
 - name: Pull harrow-perf-server-sysalloc from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ sysalloc_tag }}"
   changed_when: true
+  ignore_errors: true
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-perf-server-sysalloc for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server-sysalloc:{{ sysalloc_tag }} harrow-perf-server-sysalloc"
   changed_when: true
+  ignore_errors: true
   when: inventory_hostname in groups['server']
 
 - name: Pull axum-perf-server-sysalloc from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ sysalloc_tag }}"
   changed_when: true
+  ignore_errors: true
   when: inventory_hostname in groups['server']
 
 - name: Tag axum-perf-server-sysalloc for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server-sysalloc:{{ sysalloc_tag }} axum-perf-server-sysalloc"
   changed_when: true
+  ignore_errors: true
   when: inventory_hostname in groups['server']
 
 # Server: pull monoio server image
