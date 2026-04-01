@@ -44,9 +44,8 @@ async fn delete_user(req: Request) -> Response {
     }))
 }
 
-static COMPRESSION_TEXT: LazyLock<String> = LazyLock::new(|| {
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(100)
-});
+static COMPRESSION_TEXT: LazyLock<String> =
+    LazyLock::new(|| "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(100));
 
 static COMPRESSION_JSON: LazyLock<String> = LazyLock::new(|| {
     let data: Vec<_> = (0..100)

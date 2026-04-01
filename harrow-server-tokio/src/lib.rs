@@ -56,19 +56,18 @@ impl HttpBody for TimeoutBody {
         match this.inner.poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 // Got a frame — reset deadline for the next one.
-                this.deadline.reset(tokio::time::Instant::now() + *this.timeout);
-                Poll::Ready(Some(Ok(frame.map_data(|d| Bytes::from(d)))))
+                this.deadline
+                    .reset(tokio::time::Instant::now() + *this.timeout);
+                Poll::Ready(Some(Ok(frame.map_data(Bytes::from))))
             }
-            Poll::Ready(Some(Err(e))) => {
-                Poll::Ready(Some(Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)))
-            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(
+                Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+            ))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => {
                 // Body not ready — check if deadline expired.
                 match this.deadline.poll(cx) {
-                    Poll::Ready(()) => Poll::Ready(Some(Err(
-                        "body read timeout".into(),
-                    ))),
+                    Poll::Ready(()) => Poll::Ready(Some(Err("body read timeout".into()))),
                     Poll::Pending => Poll::Pending,
                 }
             }
@@ -87,8 +86,7 @@ impl HttpBody for TimeoutBody {
 /// Convert a `hyper::body::Incoming` into a harrow `Body` with a read timeout.
 fn box_incoming_with_timeout(incoming: Incoming, timeout: Duration) -> Body {
     use http_body_util::BodyExt;
-    TimeoutBody::new(incoming, timeout)
-        .boxed()
+    TimeoutBody::new(incoming, timeout).boxed()
 }
 
 /// Configuration for server connection handling.

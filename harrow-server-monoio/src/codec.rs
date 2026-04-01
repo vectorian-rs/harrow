@@ -272,16 +272,14 @@ mod tests {
 
     #[test]
     fn fuzz_http_request_parsing() {
-        check!().for_each(|input: &[u8]| {
-            match try_parse_request(input) {
-                Ok(parsed) => {
-                    assert!(parsed.header_len <= input.len());
-                    assert!(!(parsed.content_length.is_some() && parsed.chunked));
-                }
-                Err(CodecError::Incomplete | CodecError::Invalid(_)) => {}
-                Err(CodecError::BodyTooLarge) => {
-                    panic!("BodyTooLarge from try_parse_request is unexpected");
-                }
+        check!().for_each(|input: &[u8]| match try_parse_request(input) {
+            Ok(parsed) => {
+                assert!(parsed.header_len <= input.len());
+                assert!(!(parsed.content_length.is_some() && parsed.chunked));
+            }
+            Err(CodecError::Incomplete | CodecError::Invalid(_)) => {}
+            Err(CodecError::BodyTooLarge) => {
+                panic!("BodyTooLarge from try_parse_request is unexpected");
             }
         });
     }
@@ -308,7 +306,8 @@ mod tests {
                     assert!(body.len() <= 64);
                 }
                 Ok(None) => {}
-                Err(CodecError::BodyTooLarge | CodecError::Invalid(_) | CodecError::Incomplete) => {}
+                Err(CodecError::BodyTooLarge | CodecError::Invalid(_) | CodecError::Incomplete) => {
+                }
             }
         });
     }

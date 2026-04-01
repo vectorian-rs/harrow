@@ -262,9 +262,11 @@ impl crate::response::IntoResponse for BodyError {
     fn into_response(self) -> crate::response::Response {
         use http::StatusCode;
         match &self {
-            BodyError::TooLarge => crate::problem::ProblemDetail::new(StatusCode::PAYLOAD_TOO_LARGE)
-                .detail(self.to_string())
-                .into_response(),
+            BodyError::TooLarge => {
+                crate::problem::ProblemDetail::new(StatusCode::PAYLOAD_TOO_LARGE)
+                    .detail(self.to_string())
+                    .into_response()
+            }
             _ => crate::problem::ProblemDetail::new(StatusCode::BAD_REQUEST)
                 .detail(self.to_string())
                 .into_response(),

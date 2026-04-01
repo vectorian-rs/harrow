@@ -155,7 +155,9 @@ fn main() {
     }
 
     let io_driver = harrow::runtime::monoio::detect_io_driver();
-    eprintln!("harrow-server-monoio listening on {addr} [allocator: {ALLOCATOR_NAME}, io: {io_driver}]");
+    eprintln!(
+        "harrow-server-monoio listening on {addr} [allocator: {ALLOCATOR_NAME}, io: {io_driver}]"
+    );
     harrow::runtime::monoio::run_with_config(
         app,
         addr,

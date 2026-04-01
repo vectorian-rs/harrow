@@ -556,7 +556,6 @@ async fn slow_handler(_req: Request) -> Response {
     Response::text("slow")
 }
 
-
 // -- Body Limit Middleware (Client) -------------------------------------------
 
 #[tokio::test]

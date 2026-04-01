@@ -104,7 +104,9 @@ pub fn record_server_start(addr: std::net::SocketAddr, config: &super::ServerCon
         "harrow-monoio server starting"
     );
     if io_driver == super::kernel_check::IoDriver::Epoll {
-        tracing::warn!("io_uring unavailable — falling back to epoll. For io_uring, run with --security-opt seccomp=unconfined or a custom seccomp profile.");
+        tracing::warn!(
+            "io_uring unavailable — falling back to epoll. For io_uring, run with --security-opt seccomp=unconfined or a custom seccomp profile."
+        );
     }
 }
 

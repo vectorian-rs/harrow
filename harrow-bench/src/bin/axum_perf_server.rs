@@ -25,17 +25,30 @@ async fn text_handler() -> &'static str {
     "ok"
 }
 
-static TEXT_128KB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "A".repeat(128 * 1024));
-static TEXT_256KB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "B".repeat(256 * 1024));
-static TEXT_512KB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "C".repeat(512 * 1024));
+static TEXT_128KB: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| "A".repeat(128 * 1024));
+static TEXT_256KB: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| "B".repeat(256 * 1024));
+static TEXT_512KB: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| "C".repeat(512 * 1024));
 static TEXT_1MB: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "D".repeat(1024 * 1024));
 
-async fn text_128kb_handler() -> String { TEXT_128KB.clone() }
-async fn text_256kb_handler() -> String { TEXT_256KB.clone() }
-async fn text_512kb_handler() -> String { TEXT_512KB.clone() }
-async fn text_1mb_handler() -> String { TEXT_1MB.clone() }
+async fn text_128kb_handler() -> String {
+    TEXT_128KB.clone()
+}
+async fn text_256kb_handler() -> String {
+    TEXT_256KB.clone()
+}
+async fn text_512kb_handler() -> String {
+    TEXT_512KB.clone()
+}
+async fn text_1mb_handler() -> String {
+    TEXT_1MB.clone()
+}
 
-async fn echo_body_handler(body: axum::body::Bytes) -> axum::body::Bytes { body }
+async fn echo_body_handler(body: axum::body::Bytes) -> axum::body::Bytes {
+    body
+}
 
 async fn json_small_handler() -> impl IntoResponse {
     Json(&*SMALL_PAYLOAD)

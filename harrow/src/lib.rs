@@ -27,7 +27,7 @@
 
 pub use harrow_core::client::{Client, TestResponse};
 pub use harrow_core::handler;
-pub use harrow_core::middleware::{Middleware, Next};
+pub use harrow_core::middleware::{Middleware, Next, map_request, map_response, unless, when};
 pub use harrow_core::path::PathPattern;
 pub use harrow_core::problem::ProblemDetail;
 pub use harrow_core::request::{BodyError, Request};
@@ -75,7 +75,9 @@ pub mod runtime {
     /// Available when the `tokio` feature is enabled.
     #[cfg(feature = "tokio")]
     pub mod tokio {
-        pub use harrow_server_tokio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+        pub use harrow_server_tokio::{
+            ServerConfig, serve, serve_with_config, serve_with_shutdown,
+        };
     }
 
     /// Monoio-based server (io_uring + thread-per-core).
@@ -87,11 +89,11 @@ pub mod runtime {
     /// - Custom seccomp profile if running in containers
     #[cfg(feature = "monoio")]
     pub mod monoio {
+        pub use harrow_server_monoio::kernel_check::{IoDriver, detect_io_driver};
         pub use harrow_server_monoio::{
             ServerConfig, ServerHandle, run, run_with_config, serve, serve_with_config,
             serve_with_shutdown, start, start_with_config,
         };
-        pub use harrow_server_monoio::kernel_check::{IoDriver, detect_io_driver};
     }
 }
 
