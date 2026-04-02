@@ -865,6 +865,260 @@ layer before the handler runs.
    RPS it saturates the server, making these benchmarks meaningful.
    Vegeta (Go) maxed out at 64K RPS — 21x slower.
 
+## 2026-04-01: Middleware Cleanup — Backend-Neutral at Last
+
+Three changes made `harrow-middleware` fully runtime-agnostic:
+
+### 1. Removed `timeout_middleware`
+
+The timeout middleware used `tokio::time::timeout` directly. It was
+redundant now that both server backends have connection-level timeouts
+in `ServerConfig`:
+
+- `header_read_timeout` (default 5s)
+- `body_read_timeout` (configurable, default None for zero overhead)
+- `connection_timeout` (default 300s)
+
+Per-route handler timeouts are application code — users wrap their
+handler in their runtime's timeout directly.
+
+### 2. Removed `InMemorySessionStore` and `InMemoryBackend`
+
+Both used `tokio::spawn` + `tokio::time::sleep` for background sweeper
+tasks. Both were single-node, no-persistence implementations unsuitable
+for production.
+
+The `SessionStore` trait and `RateLimitBackend` trait remain. Users
+implement them with Redis, DynamoDB, or whatever distributed store
+fits their deployment. The middleware functions (`session_middleware`,
+`rate_limit_middleware`) work with any implementation.
+
+Test-only in-memory implementations live in `harrow-bench` for
+benchmarks and integration tests.
+
+### 3. Added middleware combinators
+
+Four composable middleware helpers that work with both backends:
+
+```rust
+// Transform request before handler
+app.middleware(map_request(|mut req| { req.set_ext(start_time()); req }))
+
+// Transform response after handler
+app.middleware(map_response(|resp| resp.header("x-served-by", "harrow")))
+
+// Apply middleware conditionally
+app.middleware(when(|req| req.path().starts_with("/api"), auth))
+
+// Skip middleware for specific routes
+app.middleware(unless(|req| req.path() == "/health", logging))
+```
+
+These cover the `route_layer` use case from Axum without adding
+per-route middleware dispatch complexity.
+
+### Result
+
+`harrow-middleware` no longer depends on `tokio` or `dashmap` in
+production code. Every middleware feature works identically on both
+the Tokio and Monoio backends.
+
+## Migrating from Axum
+
+This section is a practical migration reference for developers coming
+from Axum. It shows Axum patterns and their Harrow equivalents
+side-by-side, is honest about what migrates easily, and is explicit
+about what Harrow deliberately does not support.
+
+### Core Difference
+
+Axum uses **extractors** — typed parameters in handler signatures that
+the framework resolves automatically:
+
+```rust
+// Axum
+async fn get_user(Path(id): Path<u32>, State(db): State<DbPool>) -> Json<User> {
+    let user = db.find(id).await.unwrap();
+    Json(user)
+}
+```
+
+Harrow uses **explicit request access** — one `Request` parameter,
+you pull what you need:
+
+```rust
+// Harrow
+async fn get_user(req: Request) -> Response {
+    let id: u32 = req.param("id").parse().unwrap();
+    let db = req.require_state::<Arc<DbPool>>().unwrap();
+    let user = db.find(id).await.unwrap();
+    Response::json(&user)
+}
+```
+
+More verbose, but errors appear at the extraction site, not at route
+registration. No trait bound puzzles, no `#[debug_handler]`.
+
+### Handlers
+
+**Basic handler:**
+
+```rust
+// Axum
+async fn hello() -> &'static str { "hello" }
+app.route("/", get(hello));
+
+// Harrow
+async fn hello(_req: Request) -> Response { Response::text("hello") }
+app.get("/", hello);
+```
+
+**JSON request/response:**
+
+```rust
+// Axum
+async fn create_user(Json(user): Json<CreateUser>) -> (StatusCode, Json<User>) {
+    let created = save(user).await;
+    (StatusCode::CREATED, Json(created))
+}
+
+// Harrow
+async fn create_user(req: Request) -> Result<Response, BodyError> {
+    let user: CreateUser = req.body_json().await?;
+    let created = save(user).await;
+    Ok(Response::json(&created).status(201))
+}
+```
+
+`BodyError` implements `IntoResponse`, so `?` works directly. Parse
+errors return 400, body too large returns 413.
+
+**Application state:**
+
+```rust
+// Axum — single state struct
+let app = Router::new().route("/users", get(list_users)).with_state(state);
+async fn list_users(State(state): State<AppState>) -> Json<Vec<User>> { ... }
+
+// Harrow — each type is independent
+let app = App::new().state(Arc::new(db)).state(Arc::new(config));
+async fn list_users(req: Request) -> Response {
+    let db = req.require_state::<Arc<DbPool>>().unwrap();
+    ...
+}
+```
+
+### Middleware
+
+**Simple middleware** — nearly identical:
+
+```rust
+// Axum
+async fn auth(req: Request, next: Next) -> Response {
+    if req.headers().get("authorization").is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    next.run(req).await
+}
+app.layer(middleware::from_fn(auth));
+
+// Harrow
+async fn auth(req: Request, next: Next) -> Response {
+    if req.header("authorization").is_none() {
+        return Response::new(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    next.run(req).await
+}
+app.middleware(auth);
+```
+
+**Request/response transforms:**
+
+```rust
+// Axum
+app.layer(SetResponseHeaderLayer::new(header::SERVER, HeaderValue::from_static("harrow")));
+
+// Harrow
+app.middleware(map_response(|resp| resp.header("server", "harrow")));
+```
+
+**Conditional middleware:**
+
+```rust
+// Axum — no built-in, use custom from_fn
+// Harrow — built-in combinators
+app.middleware(when(|req| req.path().starts_with("/api"), auth));
+app.middleware(unless(|req| req.path() == "/health", logging));
+```
+
+**Scoped middleware:**
+
+```rust
+// Axum — route_layer applies only to matched routes
+let api = Router::new().route("/users", get(list)).route_layer(from_fn(auth));
+
+// Harrow — use groups or `when`
+app.group("/api", |g| { g.middleware(auth).get("/users", list) });
+// or:
+app.middleware(when(|req| req.path().starts_with("/api"), auth));
+```
+
+**Tower layers — no Harrow equivalent:**
+
+```rust
+// Axum
+app.layer(TimeoutLayer::new(Duration::from_secs(30)));
+
+// Harrow — connection timeouts live in ServerConfig, not middleware
+serve_with_config(app, addr, shutdown, ServerConfig {
+    header_read_timeout: Some(Duration::from_secs(5)),
+    body_read_timeout: Some(Duration::from_secs(30)),
+    ..Default::default()
+});
+```
+
+Tower layers do not work with Harrow. This is deliberate — Harrow
+supports both Tokio and Monoio, and Tower assumes Tokio.
+
+### Sessions and Rate Limiting
+
+Both follow the same pattern: Harrow provides the **trait** and
+**middleware**, you provide the **backend implementation**.
+
+```rust
+// Harrow — bring your own store
+impl SessionStore for RedisSessionStore { ... }
+app.middleware(session_middleware(RedisSessionStore::new(pool), config));
+
+impl RateLimitBackend for RedisRateLimit { ... }
+app.middleware(rate_limit_middleware(RedisRateLimit::new(pool), key_extractor));
+```
+
+Harrow does not ship in-memory stores. Use Redis, DynamoDB, or another
+distributed store for production.
+
+### What Harrow Does Not Have
+
+| Feature | Reason |
+|---|---|
+| Tower `Layer`/`Service` ecosystem | Backend independence over ecosystem size |
+| Extractor-based handlers | Explicit request API by design |
+| `ServiceBuilder` composition | Use `.middleware()` chaining |
+| Built-in WebSocket / SSE | Not yet implemented |
+| `tower-http` compatibility | No Tower dependency |
+
+### Migration Decision
+
+**Migrate to Harrow if** you want backend independence (Tokio + Monoio),
+prefer explicit request handling, and your middleware is mostly `from_fn`
+style.
+
+**Stay with Axum if** you depend on Tower middleware crates, need
+WebSocket/SSE today, or your team is invested in the extractor pattern.
+
+The full migration reference with additional examples is in
+[`docs/migration-from-axum.md`](./migration-from-axum.md).
+
 ## What This Document Should Become
 
 Every time we touch performance-critical code, this file should answer four
