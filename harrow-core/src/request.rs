@@ -280,6 +280,12 @@ impl crate::response::IntoResponse for BodyError {
     }
 }
 
+impl From<BodyError> for crate::response::Response {
+    fn from(err: BodyError) -> Self {
+        crate::response::IntoResponse::into_response(err)
+    }
+}
+
 /// Convert a `hyper::body::Incoming` into a harrow `Body`.
 /// Called at the server boundary to box the hyper-specific body type.
 pub fn box_incoming(incoming: hyper::body::Incoming) -> Body {

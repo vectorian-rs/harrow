@@ -27,6 +27,12 @@ impl crate::response::IntoResponse for MissingStateError {
     }
 }
 
+impl From<MissingStateError> for crate::response::Response {
+    fn from(err: MissingStateError) -> Self {
+        crate::response::IntoResponse::into_response(err)
+    }
+}
+
 /// Error returned when a required per-request extension is not present.
 #[derive(Debug)]
 pub struct MissingExtError {
@@ -48,6 +54,12 @@ impl std::error::Error for MissingExtError {}
 impl crate::response::IntoResponse for MissingExtError {
     fn into_response(self) -> crate::response::Response {
         crate::response::Response::new(http::StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+    }
+}
+
+impl From<MissingExtError> for crate::response::Response {
+    fn from(err: MissingExtError) -> Self {
+        crate::response::IntoResponse::into_response(err)
     }
 }
 

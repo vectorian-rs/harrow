@@ -13,18 +13,18 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/l1x/harrow"
 
 [workspace.dependencies]
-harrow-core = { path = "harrow-core", version = "0.9.1" }
-harrow-o11y = { path = "harrow-o11y", version = "0.9.1" }
-harrow-middleware = { path = "harrow-middleware", version = "0.9.1" }
-harrow-serde = { path = "harrow-serde", version = "0.9.1" }
-harrow-server-tokio = { path = "harrow-server-tokio", version = "0.9.1" }
-harrow-server-monoio = { path = "harrow-server-monoio", version = "0.9.1" }
+harrow-core = { path = "harrow-core", version = "0.9.2" }
+harrow-o11y = { path = "harrow-o11y", version = "0.9.2" }
+harrow-middleware = { path = "harrow-middleware", version = "0.9.2" }
+harrow-serde = { path = "harrow-serde", version = "0.9.2" }
+harrow-server-tokio = { path = "harrow-server-tokio", version = "0.9.2" }
+harrow-server-monoio = { path = "harrow-server-monoio", version = "0.9.2" }
 
 bytes = "1"
 http = "1"

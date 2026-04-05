@@ -65,6 +65,12 @@ impl crate::response::IntoResponse for WsError {
     }
 }
 
+impl From<WsError> for Response {
+    fn from(err: WsError) -> Self {
+        crate::response::IntoResponse::into_response(err)
+    }
+}
+
 /// Validate that a request is a valid WebSocket upgrade request.
 /// Returns the `Sec-WebSocket-Key` value on success.
 pub fn validate_upgrade(req: &Request) -> Result<String, WsError> {
