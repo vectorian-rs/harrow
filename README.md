@@ -15,20 +15,22 @@ A thin, macro-free HTTP framework over Hyper with opt-in observability.
 
 Harrow requires you to explicitly select an HTTP server backend. There is no default — you must pick exactly one:
 
-| Backend | Feature | Best For | Platform |
-|---------|---------|----------|----------|
-| **Tokio + Hyper** | `tokio` | Cross-platform, development, containers | Linux, macOS, Windows |
-| **Monoio + io_uring** | `monoio` | Maximum throughput on Linux 6.1+ | Linux 6.1+ only |
+| Backend               | Feature  | Best For                                | Platform              |
+| --------------------- | -------- | --------------------------------------- | --------------------- |
+| **Tokio + Hyper**     | `tokio`  | Cross-platform, development, containers | Linux, macOS, Windows |
+| **Monoio + io_uring** | `monoio` | Maximum throughput on Linux 6.1+        | Linux 6.1+ only       |
 
 ### Choosing a Backend
 
 **Use Tokio** for:
+
 - Cross-platform development (macOS, Windows)
 - Container deployments (Docker, ECS Fargate, Lambda)
 - When you need TLS support (`tls` feature)
 - General-purpose HTTP services
 
 **Use Monoio** for:
+
 - High-throughput Linux servers (2-3x throughput at 16+ cores)
 - Thread-per-core architecture with io_uring
 - Bare metal or EC2 deployments with kernel 6.1+
@@ -38,12 +40,12 @@ Harrow requires you to explicitly select an HTTP server backend. There is no def
 ```toml
 # Tokio backend (cross-platform)
 [dependencies]
-harrow = { version = "0.8", features = ["tokio", "json"] }
+harrow = { version = "0.9", features = ["tokio", "json"] }
 tokio = { version = "1", features = ["full"] }  # Required for #[tokio::main] and tokio APIs
 
 # io_uring backend (Linux 6.1+ only)
 [dependencies]
-harrow = { version = "0.7", features = ["monoio", "json"] }
+harrow = { version = "0.9", features = ["monoio", "json"] }
 # Harrow bootstraps monoio worker threads internally via `harrow::runtime::monoio::run(...)`
 ```
 
@@ -65,7 +67,7 @@ See [`examples/monoio_hello.rs`](harrow/examples/monoio_hello.rs) for a complete
 
 ```toml
 [dependencies]
-harrow = { version = "0.8", features = ["tokio"] }
+harrow = { version = "0.9", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }  # Required for #[tokio::main]
 ```
 
@@ -129,16 +131,16 @@ let app = App::new()
 
 ## Workspace layout
 
-| Crate | Purpose |
-|-------|---------|
-| `harrow` | Public API -- re-exports core types and feature-gated middleware |
-| `harrow-core` | Request, Response, routing, middleware trait, app builder |
-| `harrow-middleware` | Timeout, request-id, CORS, compression, o11y middleware |
-| `harrow-o11y` | O11yConfig and rolly integration types |
-| `harrow-server-tokio` | Tokio/Hyper server binding, TLS, graceful shutdown |
-| `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux |
-| `harrow-bench` | Criterion benchmarks and load testing tools |
+| Crate                  | Purpose                                                          |
+| ---------------------- | ---------------------------------------------------------------- |
+| `harrow`               | Public API -- re-exports core types and feature-gated middleware |
+| `harrow-core`          | Request, Response, routing, middleware trait, app builder        |
+| `harrow-middleware`    | Request-id, CORS, compression, session, rate-limit, o11y        |
+| `harrow-o11y`          | O11yConfig and rolly integration types                           |
+| `harrow-server-tokio`  | Tokio/Hyper server binding, TLS, graceful shutdown               |
+| `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux                |
+| `harrow-bench`         | Criterion benchmarks and load testing tools                      |
 
 ## License
 
-Licensed under MIT or Apache-2.0.
+Licensed under the [MIT License](LICENSE).
