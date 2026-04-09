@@ -1,4 +1,4 @@
-//! Comprehensive test server for Vegeta load testing (Tokio backend).
+//! Comprehensive test server for load testing (Tokio backend).
 //!
 //! This server exposes all Harrow features for load testing:
 //! - All HTTP methods (GET, POST, PUT, PATCH, DELETE)
@@ -8,7 +8,7 @@
 //! - Health/liveness/readiness probes
 //! - Error responses (404, 405)
 //!
-//! Run with: cargo run --example vegeta_target_tokio --features tokio,request-id,cors,session,json
+//! Run with: cargo run --example bench_target_tokio --features tokio,request-id,cors,session,json
 
 mod common;
 
@@ -164,7 +164,7 @@ async fn session_destroy(req: Request) -> Response {
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let addr = common::parse_args("vegeta_target_tokio");
+    let addr = common::parse_args("bench_target_tokio");
 
     let session_config = SessionConfig::new([0u8; 32])
         .cookie_name("sid")

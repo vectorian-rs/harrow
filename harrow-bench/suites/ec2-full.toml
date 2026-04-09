@@ -1,0 +1,196 @@
+name = "ec2-full"
+description = "Full benchmark suite for EC2 spot runs — spinr (max throughput) + wrk3 (constant rate with CO correction)"
+
+# =============================================================================
+# SPINR — max throughput mode (open loop, measures ceiling)
+# =============================================================================
+
+# --- Text responses ---
+[[case]]
+id = "spinr-text-c128"
+generator = "spinr"
+template = "../spinr/text-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "spinr-text-c32"
+generator = "spinr"
+template = "../spinr/text-c32.toml"
+concurrency = 32
+
+[[case]]
+id = "spinr-text-128kb-c128"
+generator = "spinr"
+template = "../spinr/text-128kb-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "spinr-text-256kb-c128"
+generator = "spinr"
+template = "../spinr/text-256kb-c128.toml"
+concurrency = 128
+
+# --- JSON responses ---
+[[case]]
+id = "spinr-json-1kb-c128"
+generator = "spinr"
+template = "../spinr/json-1kb-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "spinr-json-10kb-c128"
+generator = "spinr"
+template = "../spinr/json-10kb-c128.toml"
+concurrency = 128
+
+# --- Compression ---
+[[case]]
+id = "spinr-compression-json-1kb-c128"
+generator = "spinr"
+template = "../spinr/compression-json-1kb-c128.toml"
+concurrency = 128
+server_flags = ["--compression"]
+
+[[case]]
+id = "spinr-brotli-json-1kb-c128"
+generator = "spinr"
+template = "../spinr/brotli-json-1kb-c128.toml"
+concurrency = 128
+server_flags = ["--compression"]
+
+# --- MessagePack ---
+[[case]]
+id = "spinr-msgpack-1kb-c128"
+generator = "spinr"
+template = "../spinr/msgpack-1kb-c128.toml"
+concurrency = 128
+
+# --- Sessions (spinr only — requires cookie headers) ---
+[[case]]
+id = "spinr-session-read-c128"
+generator = "spinr"
+template = "../spinr/session-read-c128.toml"
+concurrency = 128
+server_flags = ["--session"]
+
+[[case]]
+id = "spinr-session-write-c128"
+generator = "spinr"
+template = "../spinr/session-write-c128.toml"
+concurrency = 128
+server_flags = ["--session"]
+
+[[case]]
+id = "spinr-session-new-c32"
+generator = "spinr"
+template = "../spinr/session-new-c32.toml"
+concurrency = 32
+server_flags = ["--session"]
+
+# =============================================================================
+# WRK3 — constant rate with Coordinated Omission correction
+# =============================================================================
+# wrk3 tests use a fixed target rate. This measures latency under load
+# accurately, unlike open-loop generators that mask queue time.
+# Rate should be set below the spinr-measured ceiling to get clean latency.
+
+# --- Text responses ---
+[[case]]
+id = "wrk3-text-c128"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 100000
+
+[case.context]
+path = "/text"
+
+[[case]]
+id = "wrk3-text-c32"
+generator = "wrk3"
+template = "../wrk3/text-c32.wrk3.toml"
+concurrency = 32
+rate = 50000
+
+[case.context]
+path = "/text"
+
+[[case]]
+id = "wrk3-text-128kb-c128"
+generator = "wrk3"
+template = "../wrk3/text-128kb-c128.wrk3.toml"
+concurrency = 128
+rate = 20000
+
+[case.context]
+path = "/text/128kb"
+
+# --- JSON responses ---
+[[case]]
+id = "wrk3-json-1kb-c128"
+generator = "wrk3"
+template = "../wrk3/json-1kb-c128.wrk3.toml"
+concurrency = 128
+rate = 100000
+
+[case.context]
+path = "/json/1kb"
+
+[[case]]
+id = "wrk3-json-10kb-c128"
+generator = "wrk3"
+template = "../wrk3/json-10kb-c128.wrk3.toml"
+concurrency = 128
+rate = 50000
+
+[case.context]
+path = "/json/10kb"
+
+# --- Compression ---
+[[case]]
+id = "wrk3-compression-json-1kb-c128"
+generator = "wrk3"
+template = "../wrk3/compression-json-1kb-c128.wrk3.toml"
+concurrency = 128
+rate = 80000
+server_flags = ["--compression"]
+
+[case.context]
+path = "/json/1kb"
+headers = ["Accept-Encoding: gzip, br"]
+
+[[case]]
+id = "wrk3-brotli-json-1kb-c128"
+generator = "wrk3"
+template = "../wrk3/brotli-json-1kb-c128.wrk3.toml"
+concurrency = 128
+rate = 80000
+server_flags = ["--compression"]
+
+[case.context]
+path = "/json/1kb"
+headers = ["Accept-Encoding: br"]
+
+# --- MessagePack ---
+[[case]]
+id = "wrk3-msgpack-1kb-c128"
+generator = "wrk3"
+template = "../wrk3/msgpack-1kb-c128.wrk3.toml"
+concurrency = 128
+rate = 100000
+
+[case.context]
+path = "/msgpack/1kb"
+
+# --- Session read (wrk3 can do GET with cookie header) ---
+[[case]]
+id = "wrk3-session-read-c128"
+generator = "wrk3"
+template = "../wrk3/session-read-c128.wrk3.toml"
+concurrency = 128
+rate = 50000
+server_flags = ["--session"]
+
+[case.context]
+path = "/session/get"
+headers = ["Cookie: sid=00000000000000001111111111111111.8087963058b4ac62ee1bed1887ad691ca6c5af4fe478ceff97e8cb39e712b0bc"]

@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::perf_summary;
 
+use super::ops::{
+    chrono_lite_utc, http_health_check, metric_f64, run_local, scp_to_remote, spinr_metrics,
+    ssh_health_check, ssh_run, timestamp_slug, val_str, validate_spinr_metrics,
+    validation_success_rate,
+};
 use super::schema::{
     BenchmarkMetrics, CaseReport, CompareSide, GitDescriptor, ImageDescriptor,
     ImplementationLabels, ImplementationResult, LatencyMetrics, LoadProfile, RUN_SCHEMA_VERSION,
@@ -25,10 +27,10 @@ use super::template::{render_template_file, render_template_str};
 
 const DEFAULT_PORT: u16 = 3090;
 const DEFAULT_SSH_USER: &str = "alpine";
-const DEFAULT_SPINR_IMAGE: &str = "spinr:arm64";
+const DEFAULT_SPINR_IMAGE: &str = "spinr:arm64-0.5.1";
 const DEFAULT_SPINR_BUILD_TASK: &str = "docker:loadgen:spinr";
-const DEFAULT_VEGETA_IMAGE: &str = "vegeta:arm64";
-const DEFAULT_VEGETA_BUILD_TASK: &str = "docker:loadgen:vegeta";
+const DEFAULT_WRK3_IMAGE: &str = "wrk3:arm64-0.2.0";
+const DEFAULT_WRK3_BUILD_TASK: &str = "docker:loadgen:wrk3";
 const SLEEP_BETWEEN_RUNS: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
@@ -86,32 +88,6 @@ struct RunVariant {
     implementation: ImplementationSpec,
     variant_label: String,
     compare_side: Option<CompareSide>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct VegetaMetrics {
-    #[serde(rename = "latencies")]
-    latencies: VegetaLatencies,
-    #[serde(rename = "throughput")]
-    throughput: f64,
-    #[serde(rename = "success")]
-    success: f64,
-    #[serde(rename = "status_codes")]
-    status_codes: BTreeMap<String, u64>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct VegetaLatencies {
-    #[serde(rename = "mean")]
-    mean: f64,
-    #[serde(rename = "50th")]
-    p50: f64,
-    #[serde(rename = "95th")]
-    p95: f64,
-    #[serde(rename = "99th")]
-    p99: f64,
-    #[serde(rename = "max")]
-    max: f64,
 }
 
 struct BenchRunResult {
@@ -375,7 +351,7 @@ fn render_case_template(
 
     let suffix = match case.generator {
         LoadGeneratorKind::Spinr => "toml",
-        LoadGeneratorKind::Vegeta => "targets.txt",
+        LoadGeneratorKind::Wrk3 => "wrk3.toml",
     };
     let rendered_path = results_dir
         .join("rendered")
@@ -466,9 +442,7 @@ fn run_case_for_variant(
         LoadGeneratorKind::Spinr => {
             run_spinr_bench(config, &key, rendered_template, &raw_metrics_path)
         }
-        LoadGeneratorKind::Vegeta => {
-            run_vegeta_bench(config, case, &key, rendered_template, &raw_metrics_path)
-        }
+        LoadGeneratorKind::Wrk3 => run_wrk3_bench(config, case, &raw_metrics_path),
     };
 
     let completed_at_utc = chrono_lite_utc();
@@ -626,7 +600,7 @@ fn ensure_loadgen_image(
 ) -> Result<(), String> {
     let (image, build_task) = match generator {
         LoadGeneratorKind::Spinr => (DEFAULT_SPINR_IMAGE, Some(DEFAULT_SPINR_BUILD_TASK)),
-        LoadGeneratorKind::Vegeta => (DEFAULT_VEGETA_IMAGE, Some(DEFAULT_VEGETA_BUILD_TASK)),
+        LoadGeneratorKind::Wrk3 => (DEFAULT_WRK3_IMAGE, Some(DEFAULT_WRK3_BUILD_TASK)),
     };
 
     let inspect_cmd = format!("docker image inspect {image} >/dev/null 2>&1 && echo ok");
@@ -698,13 +672,20 @@ fn start_server_container(
         config.deployment_mode.as_str()
     );
 
+    // io_uring backends (monoio) need --privileged to bypass Docker seccomp filters
+    let privileged = if variant.implementation.backend.as_deref() == Some("monoio") {
+        " --privileged"
+    } else {
+        ""
+    };
+
     match config.deployment_mode {
         DeploymentMode::Local => {
             let _ = run_local(&format!(
                 "docker rm -f {container_name} >/dev/null 2>&1 || true"
             ));
             let docker_cmd = format!(
-                "docker run -d --name {container_name} --network host --ulimit nofile=65535:65535 {} {}",
+                "docker run -d --name {container_name} --network host --ulimit nofile=65535:65535{privileged} {} {}",
                 variant.implementation.image, command
             );
             let out = run_local(&docker_cmd)
@@ -723,7 +704,7 @@ fn start_server_container(
                 &format!("docker rm -f {container_name} >/dev/null 2>&1 || true"),
             );
             let docker_cmd = format!(
-                "docker run -d --name {container_name} --network host --ulimit nofile=65535:65535 {} {}",
+                "docker run -d --name {container_name} --network host --ulimit nofile=65535:65535{privileged} {} {}",
                 variant.implementation.image, command
             );
             let out = ssh_server(config, &docker_cmd)
@@ -767,11 +748,22 @@ fn wait_for_server(
 ) -> Result<(), String> {
     let host = config.server_private_ip.as_deref().unwrap_or("127.0.0.1");
     let addr = format!("{host}:{}", config.port);
+    let health_path = implementation.health_path();
     println!("    Waiting for {addr}...");
 
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if http_health_check(host, config.port, implementation.health_path()) {
+        let ok = match config.deployment_mode {
+            DeploymentMode::Local => http_health_check(host, config.port, health_path),
+            DeploymentMode::Remote => ssh_health_check(
+                &config.ssh_user,
+                config.server_ssh.as_deref().unwrap_or_default(),
+                host,
+                config.port,
+                health_path,
+            ),
+        };
+        if ok {
             println!("    Health endpoint passed");
             return Ok(());
         }
@@ -779,36 +771,8 @@ fn wait_for_server(
     }
 
     Err(format!(
-        "server on {addr} did not pass GET {} within {timeout:?}",
-        implementation.health_path()
+        "server on {addr} did not pass GET {health_path} within {timeout:?}",
     ))
-}
-
-fn http_health_check(host: &str, port: u16, path: &str) -> bool {
-    let addr = match format!("{host}:{port}").parse() {
-        Ok(addr) => addr,
-        Err(_) => return false,
-    };
-
-    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
-        Ok(stream) => stream,
-        Err(_) => return false,
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
-    if stream.write_all(request.as_bytes()).is_err() {
-        return false;
-    }
-
-    let mut buf = [0u8; 256];
-    let n = match stream.read(&mut buf) {
-        Ok(n) if n > 0 => n,
-        _ => return false,
-    };
-    let response = String::from_utf8_lossy(&buf[..n]);
-    response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
 }
 
 fn run_spinr_bench(
@@ -837,7 +801,7 @@ fn run_spinr_bench(
     };
 
     if config.deployment_mode == DeploymentMode::Remote {
-        cleanup_remote_file(config, RemoteSide::Client, &format!("/tmp/{key}.toml"));
+        cleanup_remote_file(config, &format!("/tmp/{key}.toml"));
     }
 
     match result {
@@ -890,29 +854,40 @@ fn run_spinr_bench(
     }
 }
 
-fn run_vegeta_bench(
-    config: &CommonRunConfig,
-    case: &CaseSpec,
-    key: &str,
-    rendered_template: &Path,
-    output_path: &Path,
-) -> BenchRunResult {
+fn run_wrk3_bench(config: &CommonRunConfig, case: &CaseSpec, output_path: &Path) -> BenchRunResult {
     let duration = case.duration_secs.unwrap_or(config.duration_secs);
     let warmup = case.warmup_secs.unwrap_or(config.warmup_secs);
-    let rate = case.rate.unwrap_or(1_000);
-    let workers = resolved_concurrency(case).unwrap_or(128);
-    let duration_str = format!("{duration}s");
-    let warmup_str = format!("{warmup}s");
+    let connections = resolved_concurrency(case).unwrap_or(128);
+    let threads = std::cmp::min(connections, 12);
+    let rate = case.rate.unwrap_or(50_000);
+    let server_ip = config.server_private_ip.as_deref().unwrap_or("127.0.0.1");
+    let url = case
+        .context
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/");
+    let base_url = format!("http://{server_ip}:{}{url}", config.port);
 
+    // Build -H flags from context.headers (array of "Key: Value" strings)
+    let header_flags = case
+        .context
+        .get("headers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|h| h.as_str())
+                .map(|h| {
+                    let escaped = h.replace('\'', "'\\''");
+                    format!(" -H '{escaped}'")
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+
+    // wrk3 doesn't have a separate warmup flag — run a short warmup pass first
     if warmup > 0 {
-        let warmup_cmd = vegeta_attack_command(
-            config,
-            key,
-            rendered_template,
-            &warmup_str,
-            rate,
-            workers,
-            false,
+        let warmup_cmd = format!(
+            "docker run --rm --network host {DEFAULT_WRK3_IMAGE} -t{threads} -c{connections} -d{warmup}s -R{rate}{header_flags} {base_url}"
         );
         let _ = match config.deployment_mode {
             DeploymentMode::Local => run_local(&warmup_cmd),
@@ -920,60 +895,53 @@ fn run_vegeta_bench(
         };
     }
 
-    let cmd = vegeta_attack_command(
-        config,
-        key,
-        rendered_template,
-        &duration_str,
-        rate,
-        workers,
-        true,
+    let cmd = format!(
+        "docker run --rm --network host {DEFAULT_WRK3_IMAGE} -t{threads} -c{connections} -d{duration}s -R{rate} -L{header_flags} {base_url}"
     );
     let result = match config.deployment_mode {
         DeploymentMode::Local => run_local(&cmd),
         DeploymentMode::Remote => ssh_client(config, &cmd),
     };
 
-    if config.deployment_mode == DeploymentMode::Remote {
-        cleanup_remote_file(config, RemoteSide::Client, &format!("/tmp/{key}.targets"));
-    }
-
     match result {
         Ok(out) if out.status.success() => {
-            let metrics: Option<VegetaMetrics> = serde_json::from_slice(&out.stdout).ok();
-            if let Some(metrics) = metrics {
-                let converted = convert_vegeta_to_spinr_format(&metrics);
-                let _ = fs::write(
-                    output_path,
-                    serde_json::to_vec_pretty(&converted).unwrap_or_default(),
-                );
+            let _ = fs::write(output_path, &out.stdout);
+            let raw = String::from_utf8_lossy(&out.stdout);
 
-                println!(
-                    "    -> rps={:.3} p99={:.3}ms success={:.1}%",
-                    metrics.throughput,
-                    metrics.latencies.p99 / 1_000_000.0,
-                    metrics.success * 100.0
-                );
-
-                let error = validate_vegeta_metrics(&metrics).err();
-                BenchRunResult {
-                    value: Some(converted),
-                    error,
-                    raw_output_path: output_path.to_path_buf(),
+            match parse_wrk3_output(&raw) {
+                Some(value) => {
+                    let metrics = spinr_metrics(&value);
+                    let success_rate = validation_success_rate(metrics);
+                    println!(
+                        "    -> rps={} p99={}ms success={:.1}%",
+                        val_str(metrics, "rps"),
+                        val_str(metrics, "latency_p99_ms"),
+                        success_rate * 100.0
+                    );
+                    if let Err(error) = validate_spinr_metrics(metrics) {
+                        return BenchRunResult {
+                            value: Some(value),
+                            error: Some(error),
+                            raw_output_path: output_path.to_path_buf(),
+                        };
+                    }
+                    BenchRunResult {
+                        value: Some(value),
+                        error: None,
+                        raw_output_path: output_path.to_path_buf(),
+                    }
                 }
-            } else {
-                let _ = fs::write(output_path, &out.stdout);
-                BenchRunResult {
+                None => BenchRunResult {
                     value: None,
-                    error: Some("vegeta returned non-JSON output".into()),
+                    error: Some("failed to parse wrk3 output".into()),
                     raw_output_path: output_path.to_path_buf(),
-                }
+                },
             }
         }
         Ok(out) => BenchRunResult {
             value: None,
             error: Some(format!(
-                "vegeta benchmark failed (exit {}): {}",
+                "wrk3 benchmark failed (exit {}): {}",
                 out.status,
                 String::from_utf8_lossy(&out.stderr).trim()
             )),
@@ -981,38 +949,154 @@ fn run_vegeta_bench(
         },
         Err(error) => BenchRunResult {
             value: None,
-            error: Some(format!("failed to run vegeta benchmark: {error}")),
+            error: Some(format!("failed to run wrk3 benchmark: {error}")),
             raw_output_path: output_path.to_path_buf(),
         },
     }
 }
 
-fn vegeta_attack_command(
-    config: &CommonRunConfig,
-    key: &str,
-    rendered_template: &Path,
-    duration_str: &str,
-    rate: u32,
-    workers: u32,
-    with_report: bool,
-) -> String {
-    let target_path = match config.deployment_mode {
-        DeploymentMode::Local => rendered_template.display().to_string(),
-        DeploymentMode::Remote => {
-            let remote_target = format!("/tmp/{key}.targets");
-            scp_to_client(config, rendered_template, &remote_target);
-            remote_target
+/// Parse wrk3 text output into the spinr-compatible JSON format.
+///
+/// wrk3 with `-L` outputs an HdrHistogram percentile table like:
+/// ```text
+///   50.000%    1.23ms
+///   75.000%    2.34ms
+///   90.000%    3.45ms
+///   99.000%    5.67ms
+///   99.900%    8.90ms
+///   99.990%   12.34ms
+///   99.999%   56.78ms
+///  100.000%  123.45ms
+/// ```
+/// and a summary line like:
+/// ```text
+///   12345 requests in 30.00s, 1.23MB read
+/// Requests/sec:  12345.67
+/// Transfer/sec:    123.45KB
+/// ```
+fn parse_wrk3_output(raw: &str) -> Option<Value> {
+    let mut p50 = 0.0_f64;
+    let mut p75 = 0.0_f64;
+    let mut p90 = 0.0_f64;
+    let mut p95 = 0.0_f64;
+    let mut p99 = 0.0_f64;
+    let mut p999 = 0.0_f64;
+    let mut p9999 = 0.0_f64;
+    let mut max_latency = 0.0_f64;
+    let mut rps = 0.0_f64;
+    let mut total_requests = 0_u64;
+    let mut errors = 0_u64;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+
+        // Parse summary percentile lines: "  50.000%    1.23ms"
+        if let Some(pct_end) = trimmed.find('%') {
+            let pct_str = trimmed[..pct_end].trim();
+            if let Ok(pct) = pct_str.parse::<f64>()
+                && let Some(latency_ms) = parse_wrk3_latency(&trimmed[pct_end + 1..])
+            {
+                if (pct - 50.0).abs() < 0.01 {
+                    p50 = latency_ms;
+                } else if (pct - 75.0).abs() < 0.01 {
+                    p75 = latency_ms;
+                } else if (pct - 90.0).abs() < 0.01 {
+                    p90 = latency_ms;
+                } else if (pct - 95.0).abs() < 0.01 {
+                    p95 = latency_ms;
+                } else if (pct - 99.0).abs() < 0.01 {
+                    p99 = latency_ms;
+                } else if (pct - 99.9).abs() < 0.01 {
+                    p999 = latency_ms;
+                } else if (pct - 99.99).abs() < 0.001 {
+                    p9999 = latency_ms;
+                } else if (pct - 100.0).abs() < 0.001 {
+                    max_latency = latency_ms;
+                }
+            }
         }
-    };
 
-    let attack_cmd = format!(
-        "docker run --rm --network host -v {target_path}:/targets.txt {DEFAULT_VEGETA_IMAGE} attack -targets=/targets.txt -duration={duration_str} -rate={rate}/s -workers={workers} -max-workers={workers}"
-    );
+        // Parse detailed spectrum lines for p95 if the summary block omits it:
+        // "  2.503     0.950000        94647        20.00"
+        if p95 == 0.0 && !trimmed.contains('%') && !trimmed.is_empty() {
+            let mut words = trimmed.split_whitespace();
+            if let (Some(val_str), Some(pct_str)) = (words.next(), words.next())
+                && words.count() == 2
+                && let (Ok(value_ms), Ok(pct)) = (val_str.parse::<f64>(), pct_str.parse::<f64>())
+                && (pct - 0.95).abs() < 0.001
+            {
+                p95 = value_ms;
+            }
+        }
 
-    if with_report {
-        format!("{attack_cmd} | docker run --rm -i {DEFAULT_VEGETA_IMAGE} report -type=json")
+        if let Some(val) = trimmed.strip_prefix("Requests/sec:") {
+            rps = val.trim().parse().unwrap_or(0.0);
+        }
+
+        if trimmed.contains("requests in")
+            && let Some(count_str) = trimmed.split_whitespace().next()
+        {
+            total_requests = count_str.parse().unwrap_or(0);
+        }
+
+        // Parse "Socket errors: connect 0, read 5, write 0, timeout 2"
+        if let Some(rest) = trimmed.strip_prefix("Socket errors:") {
+            for part in rest.split(',') {
+                errors += part
+                    .split_whitespace()
+                    .filter_map(|w| w.parse::<u64>().ok())
+                    .next()
+                    .unwrap_or(0);
+            }
+        }
+
+        if trimmed.starts_with("Non-2xx")
+            && let Some(count) = trimmed.split_whitespace().last()
+        {
+            errors += count.parse::<u64>().unwrap_or(0);
+        }
+    }
+
+    if total_requests == 0 && rps == 0.0 {
+        return None;
+    }
+
+    let successful = total_requests.saturating_sub(errors);
+
+    Some(serde_json::json!({
+        "scenarios": [{
+            "metrics": {
+                "rps": rps,
+                "latency_p50_ms": p50,
+                "latency_p75_ms": p75,
+                "latency_p90_ms": p90,
+                "latency_p95_ms": p95,
+                "latency_p99_ms": p99,
+                "latency_p999_ms": p999,
+                "latency_p9999_ms": p9999,
+                "latency_max_ms": max_latency,
+                "total_requests": total_requests,
+                "successful_requests": successful,
+                "failed_requests": errors,
+                "status_codes": {
+                    "200": successful
+                }
+            }
+        }]
+    }))
+}
+
+/// Parse a wrk3 latency value like "1.23ms", "45.67us", "1.23s"
+fn parse_wrk3_latency(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if let Some(val) = s.strip_suffix("ms") {
+        val.trim().parse().ok()
+    } else if let Some(val) = s.strip_suffix("us") {
+        val.trim().parse::<f64>().ok().map(|v| v / 1000.0)
+    } else if let Some(val) = s.strip_suffix('s') {
+        val.trim().parse::<f64>().ok().map(|v| v * 1000.0)
     } else {
-        format!("{attack_cmd} >/dev/null")
+        None
     }
 }
 
@@ -1184,18 +1268,6 @@ fn sanitize_label(value: &str) -> String {
         .collect()
 }
 
-fn spinr_metrics<'a>(value: &'a Value) -> &'a Value {
-    value.pointer("/scenarios/0/metrics").unwrap_or(value)
-}
-
-fn metric_u64(value: &Value, key: &str) -> Option<u64> {
-    value.get(key).and_then(Value::as_u64)
-}
-
-fn metric_f64(value: &Value, key: &str) -> f64 {
-    value.get(key).and_then(Value::as_f64).unwrap_or_default()
-}
-
 fn status_code_map(metrics: &Value) -> BTreeMap<String, u64> {
     metrics
         .get("status_codes")
@@ -1207,142 +1279,6 @@ fn status_code_map(metrics: &Value) -> BTreeMap<String, u64> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn validation_success_rate(metrics: &Value) -> f64 {
-    let successful = metric_u64(metrics, "successful_requests").unwrap_or_default();
-    let failed = metric_u64(metrics, "failed_requests").unwrap_or_default();
-    let total = metric_u64(metrics, "total_requests").unwrap_or(successful + failed);
-    if total > 0 {
-        successful as f64 / total as f64
-    } else if failed == 0 {
-        1.0
-    } else {
-        0.0
-    }
-}
-
-fn validate_spinr_metrics(metrics: &Value) -> Result<(), String> {
-    let successful = metric_u64(metrics, "successful_requests").unwrap_or_default();
-    let failed = metric_u64(metrics, "failed_requests").unwrap_or_default();
-    let total = metric_u64(metrics, "total_requests").unwrap_or(successful + failed);
-    let success_rate = validation_success_rate(metrics);
-
-    if successful == 0 {
-        return Err(format!(
-            "benchmark produced no successful requests (status_codes={})",
-            format_status_codes(metrics)
-        ));
-    }
-    if failed > 0 {
-        return Err(format!(
-            "benchmark reported {failed} failed requests out of {total} (success={:.1}%, status_codes={})",
-            success_rate * 100.0,
-            format_status_codes(metrics)
-        ));
-    }
-
-    Ok(())
-}
-
-fn validate_vegeta_metrics(metrics: &VegetaMetrics) -> Result<(), String> {
-    if metrics.success <= 0.0 {
-        return Err(format!(
-            "benchmark produced no successful requests (status_codes={})",
-            format_status_code_map(&metrics.status_codes)
-        ));
-    }
-    if metrics.success < 1.0 {
-        return Err(format!(
-            "benchmark reported failed requests (success={:.1}%, status_codes={})",
-            metrics.success * 100.0,
-            format_status_code_map(&metrics.status_codes)
-        ));
-    }
-
-    Ok(())
-}
-
-fn format_status_codes(metrics: &Value) -> String {
-    metrics
-        .get("status_codes")
-        .map(Value::to_string)
-        .unwrap_or_else(|| "-".into())
-}
-
-fn format_status_code_map(codes: &BTreeMap<String, u64>) -> String {
-    if codes.is_empty() {
-        return "-".into();
-    }
-    codes
-        .iter()
-        .map(|(status, count)| format!("{status}:{count}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn convert_vegeta_to_spinr_format(metrics: &VegetaMetrics) -> Value {
-    let ns_to_ms = |ns: f64| ns / 1_000_000.0;
-    serde_json::json!({
-        "scenarios": [{
-            "metrics": {
-                "rps": metrics.throughput,
-                "latency_mean_ms": ns_to_ms(metrics.latencies.mean),
-                "latency_p50_ms": ns_to_ms(metrics.latencies.p50),
-                "latency_p95_ms": ns_to_ms(metrics.latencies.p95),
-                "latency_p99_ms": ns_to_ms(metrics.latencies.p99),
-                "latency_p999_ms": ns_to_ms(metrics.latencies.max),
-                "latency_max_ms": ns_to_ms(metrics.latencies.max),
-                "success_rate": metrics.success,
-                "status_codes": metrics.status_codes
-            }
-        }]
-    })
-}
-
-fn val_str(value: &Value, key: &str) -> String {
-    match value.get(key) {
-        Some(Value::Number(number)) => {
-            if let Some(float) = number.as_f64() {
-                if float == float.floor() && float.abs() < 1e15 {
-                    format!("{}", float as i64)
-                } else {
-                    format!("{float:.3}")
-                }
-            } else {
-                number.to_string()
-            }
-        }
-        Some(other) => other.to_string(),
-        None => "-".into(),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum RemoteSide {
-    Client,
-}
-
-fn run_local(cmd: &str) -> std::io::Result<Output> {
-    Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-}
-
-fn ssh_run(user: &str, host: &str, remote_cmd: &str) -> std::io::Result<Output> {
-    Command::new("ssh")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg(format!("{user}@{host}"))
-        .arg(remote_cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
 }
 
 fn ssh_server(config: &CommonRunConfig, remote_cmd: &str) -> std::io::Result<Output> {
@@ -1361,47 +1297,14 @@ fn ssh_client(config: &CommonRunConfig, remote_cmd: &str) -> std::io::Result<Out
     )
 }
 
-fn ssh_side(
-    config: &CommonRunConfig,
-    side: RemoteSide,
-    remote_cmd: &str,
-) -> std::io::Result<Output> {
-    match side {
-        RemoteSide::Client => ssh_client(config, remote_cmd),
-    }
-}
-
-fn scp_to_remote(config: &CommonRunConfig, host: &str, local_path: &Path, remote_path: &str) {
-    let out = Command::new("scp")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no")
-        .arg(local_path)
-        .arg(format!("{}@{host}:{remote_path}", config.ssh_user))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-
-    match out {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
-            eprintln!(
-                "    warning: scp to {} failed: {}",
-                remote_path,
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        Err(error) => eprintln!("    warning: scp to {} failed: {error}", remote_path),
-    }
-}
-
 fn scp_to_client(config: &CommonRunConfig, local_path: &Path, remote_path: &str) {
     if let Some(host) = config.client_ssh.as_deref() {
-        scp_to_remote(config, host, local_path, remote_path);
+        scp_to_remote(&config.ssh_user, host, local_path, remote_path);
     }
 }
 
-fn cleanup_remote_file(config: &CommonRunConfig, side: RemoteSide, remote_path: &str) {
-    let _ = ssh_side(config, side, &format!("rm -f {remote_path}"));
+fn cleanup_remote_file(config: &CommonRunConfig, remote_path: &str) {
+    let _ = ssh_client(config, &format!("rm -f {remote_path}"));
 }
 
 fn git_sha() -> String {
@@ -1430,24 +1333,4 @@ fn git_dirty() -> bool {
         .output()
         .ok()
         .is_some_and(|output| output.status.success() && !output.stdout.is_empty())
-}
-
-fn chrono_lite_utc() -> String {
-    match Command::new("date")
-        .args(["-u", "+%Y-%m-%d %H:%M:%S UTC"])
-        .output()
-    {
-        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        Err(_) => "unknown".into(),
-    }
-}
-
-fn timestamp_slug() -> String {
-    match Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H-%M-%SZ"])
-        .output()
-    {
-        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        Err(_) => "unknown".into(),
-    }
 }

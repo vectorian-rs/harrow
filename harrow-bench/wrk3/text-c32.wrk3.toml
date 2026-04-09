@@ -1,0 +1,8 @@
+# wrk3 — text endpoint, 32 connections
+[wrk3]
+url = "{{ base_url }}/text"
+threads = 8
+connections = {{ connections }}
+rate = {{ rate }}
+duration_secs = {{ duration_secs }}
+warmup_secs = {{ warmup_secs }}

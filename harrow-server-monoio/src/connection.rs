@@ -34,6 +34,18 @@ pub(crate) enum ProtocolVersion {
     Http2PriorKnowledge,
 }
 
+/// Per-connection configuration extracted from `ServerConfig`.
+pub(crate) struct ConnConfig {
+    pub shared: Arc<SharedState>,
+    pub remote_addr: Option<SocketAddr>,
+    pub header_read_timeout: Option<Duration>,
+    pub body_read_timeout: Option<Duration>,
+    pub connection_timeout: Option<Duration>,
+    pub max_h2_streams: u32,
+    pub active_count: Rc<Cell<usize>>,
+    pub protocol: ProtocolVersion,
+}
+
 /// Handle a single TCP connection.
 ///
 /// Dispatches to the appropriate protocol handler based on configuration.
@@ -41,50 +53,17 @@ pub(crate) enum ProtocolVersion {
 /// # Cancellation Safety
 /// When a connection timeout fires, the protocol handler is responsible
 /// for properly cancelling any in-flight I/O operations.
-pub(crate) async fn handle_connection(
-    stream: TcpStream,
-    remote_addr: Option<SocketAddr>,
-    shared: Arc<SharedState>,
-    header_read_timeout: Option<Duration>,
-    body_read_timeout: Option<Duration>,
-    connection_timeout: Option<Duration>,
-    max_h2_streams: u32,
-    active_count: Rc<Cell<usize>>,
-    protocol: ProtocolVersion,
-) {
+pub(crate) async fn handle_connection(stream: TcpStream, conn: ConnConfig) {
+    let protocol = conn.protocol;
+    let remote_addr = conn.remote_addr;
     match protocol {
         ProtocolVersion::Http11 => {
-            tracing::debug!(
-                remote_addr = ?remote_addr,
-                "using HTTP/1.1"
-            );
-            crate::h1::handle_connection(
-                stream,
-                remote_addr,
-                shared,
-                header_read_timeout,
-                body_read_timeout,
-                connection_timeout,
-                active_count,
-            )
-            .await;
+            tracing::debug!(?remote_addr, "using HTTP/1.1");
+            crate::h1::handle_connection(stream, conn).await;
         }
         ProtocolVersion::Http2PriorKnowledge => {
-            tracing::debug!(
-                remote_addr = ?remote_addr,
-                "using HTTP/2 (prior knowledge)"
-            );
-            crate::h2::handle_connection(
-                stream,
-                remote_addr,
-                shared,
-                header_read_timeout,
-                body_read_timeout,
-                connection_timeout,
-                max_h2_streams,
-                active_count,
-            )
-            .await;
+            tracing::debug!(?remote_addr, "using HTTP/2 (prior knowledge)");
+            crate::h2::handle_connection(stream, conn).await;
         }
     }
 }

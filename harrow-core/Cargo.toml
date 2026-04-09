@@ -24,6 +24,7 @@ hyper = { workspace = true }
 pin-project-lite = { workspace = true }
 matchit = { workspace = true }
 percent-encoding = { workspace = true }
+tracing = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 harrow-serde = { workspace = true, optional = true }

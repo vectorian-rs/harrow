@@ -105,7 +105,7 @@ use std::time::Duration;
 use monoio::net::{ListenerOpts, TcpListener};
 
 use harrow_core::dispatch::SharedState;
-use harrow_core::route::{App, RouteTable};
+use harrow_core::route::App;
 
 use connection::ProtocolVersion;
 
@@ -258,8 +258,8 @@ pub fn start_with_config(
         return Err(Box::new(err));
     }
 
-    let shared = build_shared_state(app);
-    print_route_table(&shared.route_table);
+    let shared = app.into_shared_state();
+    shared.route_table.print_routes();
 
     let worker_count = resolved_worker_count(config.workers)?;
     let worker_config = per_worker_config(config, worker_count);
@@ -416,9 +416,9 @@ pub async fn serve_with_config(
         return Err(Box::new(e));
     }
 
-    let shared = build_shared_state(app);
+    let shared = app.into_shared_state();
 
-    print_route_table(&shared.route_table);
+    shared.route_table.print_routes();
 
     let listener = TcpListener::bind_with_config(addr, &listener_options())?;
     o11y::record_server_start(addr, &config);
@@ -475,14 +475,16 @@ async fn serve_listener(
 
                 monoio::spawn(connection::handle_connection(
                     stream,
-                    Some(remote),
-                    shared,
-                    header_read_timeout,
-                    body_read_timeout,
-                    connection_timeout,
-                    max_h2_streams,
-                    counter,
-                    protocol,
+                    connection::ConnConfig {
+                        shared,
+                        remote_addr: Some(remote),
+                        header_read_timeout,
+                        body_read_timeout,
+                        connection_timeout,
+                        max_h2_streams,
+                        active_count: counter,
+                        protocol,
+                    },
                 ));
             }
             () = &mut shutdown => {
@@ -511,16 +513,6 @@ async fn wait_for_shutdown(shutdown: Arc<AtomicBool>) {
     while !shutdown.load(Ordering::Acquire) {
         monoio::time::sleep(Duration::from_millis(50)).await;
     }
-}
-
-fn build_shared_state(app: App) -> Arc<SharedState> {
-    let (route_table, middleware, state, max_body_size) = app.into_parts();
-    Arc::new(SharedState {
-        route_table,
-        middleware,
-        state: Arc::new(state),
-        max_body_size,
-    })
 }
 
 fn listener_options() -> ListenerOpts {
@@ -621,32 +613,5 @@ fn spawn_worker(
     WorkerThread {
         handle,
         startup: startup_rx,
-    }
-}
-
-fn print_route_table(table: &RouteTable) {
-    if table.is_empty() {
-        return;
-    }
-    for route in table.iter() {
-        let method = format!("{:6}", route.method.as_str());
-        let pattern = route.pattern.as_str();
-        let name = route
-            .metadata
-            .name
-            .as_deref()
-            .map(|n| format!(" [{n}]"))
-            .unwrap_or_default();
-        let tags = if route.metadata.tags.is_empty() {
-            String::new()
-        } else {
-            format!("  tags: {}", route.metadata.tags.join(", "))
-        };
-        let mw = if route.middleware.is_empty() {
-            String::new()
-        } else {
-            format!("  ({}mw)", route.middleware.len())
-        };
-        tracing::info!("  {method} {pattern}{name}{tags}{mw}");
     }
 }

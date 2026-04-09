@@ -1,0 +1,9 @@
+# wrk3 — brotli-only JSON 1KB, 128 connections
+[wrk3]
+url = "{{ base_url }}/json/1kb"
+threads = 12
+connections = {{ connections }}
+rate = {{ rate }}
+duration_secs = {{ duration_secs }}
+warmup_secs = {{ warmup_secs }}
+headers = ["Accept-Encoding: br"]

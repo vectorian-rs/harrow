@@ -29,7 +29,7 @@ cargo run --example monoio_hello --features monoio
 
 For quick performance validation during development:
 
-### Using Vegeta (Recommended)
+### Using spinr (Recommended)
 ```bash
 # Start server in background
 cargo run --example hello --features tokio &
@@ -38,19 +38,19 @@ SERVER_PID=$!
 # Wait for server to start
 sleep 2
 
-# Run load test
-vegeta attack -duration=10s -rate=1000 http://localhost:3000/ | vegeta report
+# Run load test with spinr
+spinr bench harrow-bench/spinr/text-c128.toml -j
 
 # Cleanup
 kill $SERVER_PID
 ```
 
-### Using wrk (Alternative)
+### Using wrk3 (Alternative)
 ```bash
 cargo run --example hello --features tokio &
 SERVER_PID=$!
 sleep 2
-wrk -t12 -c400 -d30s http://localhost:3000/
+wrk -t12 -c400 -d30s -R50000 -L http://localhost:3000/
 kill $SERVER_PID
 ```
 

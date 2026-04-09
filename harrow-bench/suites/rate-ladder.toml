@@ -1,0 +1,52 @@
+name = "rate-ladder"
+description = "wrk3 rate ladder on text-c128 — find the latency inflection point"
+
+[[case]]
+id = "wrk3-text-c128-500k"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 500000
+
+[case.context]
+path = "/text"
+
+[[case]]
+id = "wrk3-text-c128-600k"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 600000
+
+[case.context]
+path = "/text"
+
+[[case]]
+id = "wrk3-text-c128-700k"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 700000
+
+[case.context]
+path = "/text"
+
+[[case]]
+id = "wrk3-text-c128-800k"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 800000
+
+[case.context]
+path = "/text"
+
+[[case]]
+id = "wrk3-text-c128-900k"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 900000
+
+[case.context]
+path = "/text"

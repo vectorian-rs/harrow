@@ -1,6 +1,6 @@
 [[implementation]]
 id = "harrow-tokio-dev"
-image = "harrow-perf-server:dev-arm64"
+image = "harrow-perf-server:arm64-0.9.4"
 build_task = "docker:dev-arm64:harrow-perf-server"
 command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
@@ -11,7 +11,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-tokio-prod"
-image = "harrow-perf-server:prod-arm64"
+image = "harrow-perf-server:arm64-0.9.4"
 build_task = "docker:prod-arm64:harrow-perf-server"
 command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
@@ -22,7 +22,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-tokio-perf"
-image = "harrow-perf-server:perf-arm64"
+image = "harrow-perf-server:arm64-0.9.4"
 build_task = "docker:perf-arm64:harrow-perf-server"
 command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
@@ -33,7 +33,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-monoio-dev"
-image = "harrow-server-monoio:dev-arm64"
+image = "harrow-server-monoio:arm64-0.9.4"
 build_task = "docker:dev-arm64:harrow-server-monoio"
 command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
@@ -44,7 +44,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-monoio-prod"
-image = "harrow-server-monoio:prod-arm64"
+image = "harrow-server-monoio:arm64-0.9.4"
 build_task = "docker:prod-arm64:harrow-server-monoio"
 command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
@@ -55,7 +55,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-monoio-perf"
-image = "harrow-server-monoio:perf-arm64"
+image = "harrow-server-monoio:arm64-0.9.4"
 build_task = "docker:perf-arm64:harrow-server-monoio"
 command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
@@ -66,7 +66,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "axum-dev"
-image = "axum-perf-server:dev-arm64"
+image = "axum-perf-server:arm64-0.9.4"
 build_task = "docker:dev-arm64:axum-perf-server"
 command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
@@ -77,7 +77,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "axum-prod"
-image = "axum-perf-server:prod-arm64"
+image = "axum-perf-server:arm64-0.9.4"
 build_task = "docker:prod-arm64:axum-perf-server"
 command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
@@ -88,7 +88,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "axum-perf"
-image = "axum-perf-server:perf-arm64"
+image = "axum-perf-server:arm64-0.9.4"
 build_task = "docker:perf-arm64:axum-perf-server"
 command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"

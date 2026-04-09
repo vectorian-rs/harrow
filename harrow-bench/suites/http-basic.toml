@@ -1,5 +1,5 @@
 name = "http-basic"
-description = "Basic HTTP benchmark cases using Spinr and Vegeta templates"
+description = "Basic HTTP benchmark cases using Spinr and wrk3"
 
 [[case]]
 id = "text-c128"
@@ -8,8 +8,11 @@ template = "../spinr/text-c128.toml"
 concurrency = 128
 
 [[case]]
-id = "text-vegeta-c128"
-generator = "vegeta"
-template = "../vegeta/text-c128.targets.j2"
+id = "text-wrk3-c128"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
 concurrency = 128
-rate = 200000
+rate = 50000
+
+[case.context]
+path = "/text"

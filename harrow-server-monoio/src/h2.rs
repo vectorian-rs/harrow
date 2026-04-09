@@ -34,7 +34,6 @@
 //! └──────────────────────────────────────────┘
 //! ```
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -403,16 +402,14 @@ async fn send_h2_response(
 /// Handle a single TCP connection with HTTP/2.
 ///
 /// This is the public entry point that creates an H2Connection and runs it.
-pub(crate) async fn handle_connection(
-    stream: TcpStream,
-    remote_addr: Option<SocketAddr>,
-    shared: Arc<SharedState>,
-    header_read_timeout: Option<Duration>,
-    body_read_timeout: Option<Duration>,
-    connection_timeout: Option<Duration>,
-    max_concurrent_streams: u32,
-    active_count: std::rc::Rc<std::cell::Cell<usize>>,
-) {
+pub(crate) async fn handle_connection(stream: TcpStream, conn: crate::connection::ConnConfig) {
+    let remote_addr = conn.remote_addr;
+    let shared = conn.shared;
+    let header_read_timeout = conn.header_read_timeout;
+    let body_read_timeout = conn.body_read_timeout;
+    let connection_timeout = conn.connection_timeout;
+    let max_concurrent_streams = conn.max_h2_streams;
+    let active_count = conn.active_count;
     use crate::o11y::connection_span;
     use tracing::Instrument;
 

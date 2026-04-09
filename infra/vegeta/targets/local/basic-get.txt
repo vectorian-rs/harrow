@@ -1,5 +1,0 @@
-# Basic GET endpoints - high throughput test (LOCAL)
-GET http://localhost:3000/
-GET http://localhost:3000/health
-GET http://localhost:3000/live
-GET http://localhost:3000/ready

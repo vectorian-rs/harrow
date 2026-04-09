@@ -144,13 +144,7 @@ fn bench_inproc_full_pipeline(c: &mut Criterion) {
             .middleware(noop_middleware)
             .get("/users/:id", param_state_handler)
             .get("/health", text_handler);
-        let (route_table, middleware, state, max_body_size) = app.into_parts();
-        Arc::new(SharedState {
-            route_table,
-            middleware,
-            state: Arc::new(state),
-            max_body_size,
-        })
+        app.into_shared_state()
     };
 
     let axum_router = {

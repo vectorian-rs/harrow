@@ -84,13 +84,7 @@ async fn start_axum_server(app: Router) -> SocketAddr {
 }
 
 async fn start_harrow_variant_server(app: App, variant: HarrowVariant) -> SocketAddr {
-    let (route_table, middleware, state, max_body_size) = app.into_parts();
-    let shared = Arc::new(SharedState {
-        route_table,
-        middleware,
-        state: Arc::new(state),
-        max_body_size,
-    });
+    let shared = app.into_shared_state();
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

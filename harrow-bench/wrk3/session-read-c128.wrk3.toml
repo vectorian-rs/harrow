@@ -1,0 +1,9 @@
+# wrk3 — session read, 128 connections
+[wrk3]
+url = "{{ base_url }}/session/get"
+threads = 12
+connections = {{ connections }}
+rate = {{ rate }}
+duration_secs = {{ duration_secs }}
+warmup_secs = {{ warmup_secs }}
+headers = ["Cookie: sid=00000000000000001111111111111111.8087963058b4ac62ee1bed1887ad691ca6c5af4fe478ceff97e8cb39e712b0bc"]

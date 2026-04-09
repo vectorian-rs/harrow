@@ -48,14 +48,14 @@ impl DeploymentMode {
 #[serde(rename_all = "lowercase")]
 pub enum LoadGeneratorKind {
     Spinr,
-    Vegeta,
+    Wrk3,
 }
 
 impl LoadGeneratorKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Spinr => "spinr",
-            Self::Vegeta => "vegeta",
+            Self::Wrk3 => "wrk3",
         }
     }
 }

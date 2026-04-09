@@ -15,14 +15,22 @@
 //!   Use for maximum throughput on Linux 6.1+ bare metal or EC2.
 //!   Requires custom seccomp profile in containers.
 //!
+//! - **`meguri`**: Pure io_uring backend using Harrow's own io_uring library.
+//!   Exposes advanced io_uring features (registered buffers, buffer rings,
+//!   zero-copy send, multishot recv) that Monoio does not support.
+//!   Linux only. No Tokio dependency.
+//!
 //! ### Feature Flag Selection
 //!
 //! ```toml
 //! # Tokio backend (cross-platform)
-//! harrow = { version = "0.8", features = ["tokio"] }
+//! harrow = { version = "0.9", features = ["tokio"] }
 //!
-//! # io_uring backend (Linux 6.1+ only)
-//! harrow = { version = "0.8", features = ["monoio"] }
+//! # io_uring backend via Monoio (Linux 6.1+ only)
+//! harrow = { version = "0.9", features = ["monoio"] }
+//!
+//! # io_uring backend via Meguri (Linux only, advanced features)
+//! harrow = { version = "0.9", features = ["meguri"] }
 //! ```
 
 pub use harrow_core::client::{Client, TestResponse};
@@ -35,34 +43,38 @@ pub use harrow_core::response::{IntoResponse, Response, ResponseBody};
 pub use harrow_core::route::{App, Group, Route, RouteMetadata, RouteSummary, RouteTable};
 pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 
-// Server backend selection via feature flags
-//
-// # Feature Selection
-//
-// You must enable exactly one server backend feature:
-// - `tokio`: Traditional async/await with Tokio + Hyper (cross-platform)
-// - `monoio`: High-performance io_uring with thread-per-core (Linux 6.1+)
-//
-// When exactly one feature is enabled, the server API is re-exported at the
-// crate root for convenience. When both are enabled, use the explicit
-// `runtime::tokio` or `runtime::monoio` modules.
-
-#[cfg(all(feature = "tokio", not(feature = "monoio")))]
+// Root-level re-exports for single-backend mode.
+#[cfg(all(feature = "tokio", not(feature = "monoio"), not(feature = "meguri")))]
 pub use harrow_server_tokio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
 
-#[cfg(all(feature = "monoio", not(feature = "tokio")))]
+#[cfg(all(feature = "monoio", not(feature = "tokio"), not(feature = "meguri")))]
 pub use harrow_server_monoio::{
     ServerConfig, ServerHandle, run, run_with_config, serve, serve_with_config,
     serve_with_shutdown, start, start_with_config,
 };
 
-// Compile-time checks for feature selection
-#[cfg(not(any(feature = "tokio", feature = "monoio")))]
+#[cfg(all(feature = "meguri", not(target_os = "linux")))]
+compile_error!(
+    "the `meguri` server backend requires Linux. io_uring is a Linux kernel \
+     feature and is not available on macOS, Windows, or BSD. \
+     Use `tokio` for cross-platform development instead."
+);
+
+#[cfg(all(
+    feature = "meguri",
+    not(feature = "tokio"),
+    not(feature = "monoio"),
+    target_os = "linux"
+))]
+pub use harrow_server_meguri::{ServerConfig, serve, serve_with_config};
+
+#[cfg(not(any(feature = "tokio", feature = "monoio", feature = "meguri")))]
 compile_error!(
     "harrow requires a server backend feature. \
      Enable exactly one of: `tokio` for cross-platform compatibility, \
-     or `monoio` for io_uring performance on Linux 6.1+. \
-     Example: harrow = {{ version = \"0.5\", features = [\"tokio\"] }}"
+     `monoio` for io_uring via Monoio (Linux 6.1+), \
+     or `meguri` for pure io_uring (Linux). \
+     Example: harrow = {{ version = \"0.9\", features = [\"tokio\"] }}"
 );
 
 /// Runtime-specific server APIs.
@@ -83,6 +95,8 @@ pub mod runtime {
     /// Monoio-based server (io_uring + thread-per-core).
     ///
     /// Available when the `monoio` feature is enabled.
+    /// Falls back to epoll on non-Linux platforms, but io_uring is required
+    /// for the intended performance characteristics.
     ///
     /// # Requirements
     /// - Linux kernel 6.1+ for full io_uring support
@@ -94,6 +108,23 @@ pub mod runtime {
             ServerConfig, ServerHandle, run, run_with_config, serve, serve_with_config,
             serve_with_shutdown, start, start_with_config,
         };
+    }
+
+    /// Meguri-based server (pure io_uring, no Tokio).
+    ///
+    /// Available when the `meguri` feature is enabled.
+    ///
+    /// This is Harrow's own io_uring implementation, exposing advanced
+    /// features that Monoio does not support: registered buffers, buffer
+    /// rings, zero-copy send, multishot recv, operation chaining.
+    ///
+    /// # Requirements
+    /// - Linux kernel 5.6+ (basic io_uring)
+    /// - Linux kernel 5.11+ for EXT_ARG timeout optimization
+    /// - Linux kernel 6.0+ for SEND_ZC
+    #[cfg(all(feature = "meguri", target_os = "linux"))]
+    pub mod meguri {
+        pub use harrow_server_meguri::{ServerConfig, serve, serve_with_config};
     }
 }
 

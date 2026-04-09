@@ -186,6 +186,31 @@ impl RouteTable {
         self.routes.is_empty()
     }
 
+    /// Log registered routes via `tracing::info!`.
+    pub fn print_routes(&self) {
+        for route in &self.routes {
+            let method = format!("{:6}", route.method.as_str());
+            let pattern = route.pattern.as_str();
+            let name = route
+                .metadata
+                .name
+                .as_deref()
+                .map(|n| format!(" [{n}]"))
+                .unwrap_or_default();
+            let tags = if route.metadata.tags.is_empty() {
+                String::new()
+            } else {
+                format!("  tags: {}", route.metadata.tags.join(", "))
+            };
+            let mw = if route.middleware.is_empty() {
+                String::new()
+            } else {
+                format!("  ({}mw)", route.middleware.len())
+            };
+            tracing::info!("  {method} {pattern}{name}{tags}{mw}");
+        }
+    }
+
     /// Get a route by index.
     pub fn get(&self, idx: usize) -> Option<&Route> {
         self.routes.get(idx)
@@ -504,14 +529,19 @@ impl App {
     /// Create a test client that dispatches requests through the full
     /// middleware + routing pipeline without TCP.
     pub fn client(self) -> crate::client::Client {
+        crate::client::Client::new(self.into_shared_state())
+    }
+
+    /// Consume the builder and return a shared state suitable for dispatching
+    /// requests.
+    pub fn into_shared_state(self) -> Arc<crate::dispatch::SharedState> {
         let (route_table, middleware, state, max_body_size) = self.into_parts();
-        let shared = Arc::new(crate::dispatch::SharedState {
+        Arc::new(crate::dispatch::SharedState {
             route_table,
             middleware,
             state: Arc::new(state),
             max_body_size,
-        });
-        crate::client::Client::new(shared)
+        })
     }
 
     /// Consume the builder, returning the parts needed by the server.

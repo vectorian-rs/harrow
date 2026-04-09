@@ -22,13 +22,7 @@ fn harrow_request(method: &str, uri: &str) -> http::Request<harrow_core::request
 }
 
 fn shared_state_from_app(app: App) -> Arc<SharedState> {
-    let (route_table, middleware, state, max_body_size) = app.into_parts();
-    Arc::new(SharedState {
-        route_table,
-        middleware,
-        state: Arc::new(state),
-        max_body_size,
-    })
+    app.into_shared_state()
 }
 
 fn build_text_shared_state(depth: usize) -> Arc<SharedState> {

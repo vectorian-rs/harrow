@@ -120,17 +120,17 @@ run = "docker build --provenance=false -t harrow-perf-server-sysalloc:prod-arm64
 description = "Build prod ARM64 axum-perf-server with system allocator"
 run = "docker build --provenance=false -t axum-perf-server-sysalloc:prod-arm64 -f tokio.perf.arm64.Dockerfile --target axum-perf-server-sysalloc ."
 
-[tasks."docker:loadgen:vegeta"]
-description = "Build ARM64 vegeta load generator image"
-run = "docker build --provenance=false --platform linux/arm64 -t vegeta:arm64 -f infra/load-generators/vegeta.Dockerfile infra/load-generators"
-
 [tasks."docker:loadgen:spinr"]
 description = "Build ARM64 spinr load generator image"
 run = "docker build --provenance=false --platform linux/arm64 -t spinr:arm64 -f infra/load-generators/spinr.Dockerfile infra/load-generators"
 
+[tasks."docker:loadgen:wrk3"]
+description = "Build ARM64 wrk3 load generator image"
+run = "docker build --provenance=false --platform linux/arm64 -t wrk3:arm64 -f infra/load-generators/wrk3.Dockerfile infra/load-generators"
+
 [tasks."docker:loadgen:all"]
-description = "Build all load generator images (spinr, vegeta)"
-depends = ["docker:loadgen:vegeta", "docker:loadgen:spinr"]
+description = "Build all load generator images (spinr, wrk3)"
+depends = ["docker:loadgen:spinr", "docker:loadgen:wrk3"]
 
 [tasks."docker:all"]
 description = "Build all ARM64 Docker images"
@@ -197,16 +197,16 @@ description = "Push all bench images to ECR (including monoio and sysalloc)"
 depends = ["bench:ecr-push", "bench:ecr-push-monoio", "bench:ecr-push-sysalloc", "bench:ecr-push-loadgen"]
 
 [tasks."bench:ecr-push-loadgen"]
-description = "Push load generator images (spinr, vegeta) to ECR"
+description = "Push load generator images (spinr, wrk3) to ECR"
 run = """
 SPINR_VERSION=0.5.1
-VEGETA_VERSION=12.12.0
+WRK3_VERSION=0.2.0
 ECR=529001354082.dkr.ecr.eu-west-1.amazonaws.com
 aws ecr get-login-password --region eu-west-1 --profile datadeft-dev | docker login --username AWS --password-stdin https://$ECR
 # Spinr
 docker tag spinr:arm64 $ECR/harrow/load-generators:spinr-v${SPINR_VERSION} && docker push $ECR/harrow/load-generators:spinr-v${SPINR_VERSION}
-# Vegeta
-docker tag vegeta:arm64 $ECR/harrow/load-generators:vegeta-v${VEGETA_VERSION} && docker push $ECR/harrow/load-generators:vegeta-v${VEGETA_VERSION}
+# wrk3
+docker tag wrk3:arm64 $ECR/harrow/load-generators:wrk3-v${WRK3_VERSION} && docker push $ECR/harrow/load-generators:wrk3-v${WRK3_VERSION}
 """
 
 [tasks."bench:build-push-loadgen"]

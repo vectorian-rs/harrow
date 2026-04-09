@@ -1,6 +1,0 @@
-# Test all HTTP methods (DOCKER)
-GET http://tokio-server:3000/
-POST http://tokio-server:3000/echo
-PUT http://tokio-server:3000/echo
-PATCH http://tokio-server:3000/echo
-DELETE http://tokio-server:3000/echo

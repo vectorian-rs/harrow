@@ -18,9 +18,9 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::{Sleep, sleep};
 
-use harrow_core::dispatch::{SharedState, dispatch};
+use harrow_core::dispatch::dispatch;
 use harrow_core::request::{Body, box_incoming};
-use harrow_core::route::{App, RouteTable};
+use harrow_core::route::App;
 
 // Wraps a hyper `Incoming` body with a per-frame read timeout.
 // Each call to `poll_frame` resets a deadline. If no frame arrives
@@ -149,15 +149,9 @@ pub async fn serve_with_config(
     shutdown: impl Future<Output = ()>,
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (route_table, middleware, state, max_body_size) = app.into_parts();
-    let shared = Arc::new(SharedState {
-        route_table,
-        middleware,
-        state: Arc::new(state),
-        max_body_size,
-    });
+    let shared = app.into_shared_state();
 
-    print_route_table(&shared.route_table);
+    shared.route_table.print_routes();
 
     let listener = TcpListener::bind(addr).await?;
     tracing::info!("harrow listening on {addr}");
@@ -263,31 +257,4 @@ pub async fn serve_with_config(
     }
 
     Ok(())
-}
-
-fn print_route_table(table: &RouteTable) {
-    if table.is_empty() {
-        return;
-    }
-    for route in table.iter() {
-        let method = format!("{:6}", route.method.as_str());
-        let pattern = route.pattern.as_str();
-        let name = route
-            .metadata
-            .name
-            .as_deref()
-            .map(|n| format!(" [{n}]"))
-            .unwrap_or_default();
-        let tags = if route.metadata.tags.is_empty() {
-            String::new()
-        } else {
-            format!("  tags: {}", route.metadata.tags.join(", "))
-        };
-        let mw = if route.middleware.is_empty() {
-            String::new()
-        } else {
-            format!("  ({}mw)", route.middleware.len())
-        };
-        tracing::info!("  {method} {pattern}{name}{tags}{mw}");
-    }
 }

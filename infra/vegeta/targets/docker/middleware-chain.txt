@@ -1,6 +1,0 @@
-# Test middleware chain execution (DOCKER)
-# These endpoints test: request-id, cors, timeout middleware
-GET http://tokio-server:3000/middleware-test
-GET http://tokio-server:3000/health
-GET http://tokio-server:3000/live
-GET http://tokio-server:3000/ready

@@ -11,9 +11,7 @@
 //! All I/O operations use cancellable variants to prevent use-after-free
 //! when timeouts fire or connections are dropped.
 
-use std::cell::Cell;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -493,15 +491,13 @@ impl H1Connection {
 /// Handle a single TCP connection with keep-alive support.
 ///
 /// This is the public entry point that creates an H1Connection and runs it.
-pub(crate) async fn handle_connection(
-    stream: TcpStream,
-    remote_addr: Option<SocketAddr>,
-    shared: Arc<SharedState>,
-    header_read_timeout: Option<Duration>,
-    body_read_timeout: Option<Duration>,
-    connection_timeout: Option<Duration>,
-    active_count: Rc<Cell<usize>>,
-) {
+pub(crate) async fn handle_connection(stream: TcpStream, conn: crate::connection::ConnConfig) {
+    let remote_addr = conn.remote_addr;
+    let shared = conn.shared;
+    let header_read_timeout = conn.header_read_timeout;
+    let body_read_timeout = conn.body_read_timeout;
+    let connection_timeout = conn.connection_timeout;
+    let active_count = conn.active_count;
     use crate::o11y::{ConnectionMetrics, connection_span};
     use tracing::Instrument;
 

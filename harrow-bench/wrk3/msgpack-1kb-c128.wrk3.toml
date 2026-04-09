@@ -1,0 +1,8 @@
+# wrk3 — MessagePack 1KB endpoint, 128 connections
+[wrk3]
+url = "{{ base_url }}/msgpack/1kb"
+threads = 12
+connections = {{ connections }}
+rate = {{ rate }}
+duration_secs = {{ duration_secs }}
+warmup_secs = {{ warmup_secs }}

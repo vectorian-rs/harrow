@@ -1,0 +1,82 @@
+name = "spinr-vs-wrk3"
+description = "Side-by-side comparison of spinr (max throughput) vs wrk3 (1M target rate ceiling test)"
+
+# =============================================================================
+# TEXT c128
+# =============================================================================
+
+[[case]]
+id = "spinr-text-c128"
+generator = "spinr"
+template = "../spinr/text-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "wrk3-text-c128-1M"
+generator = "wrk3"
+template = "../wrk3/text-c128.wrk3.toml"
+concurrency = 128
+rate = 1000000
+
+[case.context]
+path = "/text"
+
+# =============================================================================
+# JSON 1KB c128
+# =============================================================================
+
+[[case]]
+id = "spinr-json-1kb-c128"
+generator = "spinr"
+template = "../spinr/json-1kb-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "wrk3-json-1kb-c128-1M"
+generator = "wrk3"
+template = "../wrk3/json-1kb-c128.wrk3.toml"
+concurrency = 128
+rate = 1000000
+
+[case.context]
+path = "/json/1kb"
+
+# =============================================================================
+# JSON 10KB c128
+# =============================================================================
+
+[[case]]
+id = "spinr-json-10kb-c128"
+generator = "spinr"
+template = "../spinr/json-10kb-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "wrk3-json-10kb-c128-1M"
+generator = "wrk3"
+template = "../wrk3/json-10kb-c128.wrk3.toml"
+concurrency = 128
+rate = 1000000
+
+[case.context]
+path = "/json/10kb"
+
+# =============================================================================
+# MSGPACK 1KB c128
+# =============================================================================
+
+[[case]]
+id = "spinr-msgpack-1kb-c128"
+generator = "spinr"
+template = "../spinr/msgpack-1kb-c128.toml"
+concurrency = 128
+
+[[case]]
+id = "wrk3-msgpack-1kb-c128-1M"
+generator = "wrk3"
+template = "../wrk3/msgpack-1kb-c128.wrk3.toml"
+concurrency = 128
+rate = 1000000
+
+[case.context]
+path = "/msgpack/1kb"

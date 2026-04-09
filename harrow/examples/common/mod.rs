@@ -1,4 +1,4 @@
-//! Shared handlers and utilities for vegeta load-test examples.
+//! Shared handlers and utilities for load-test examples.
 
 use std::net::{IpAddr, SocketAddr};
 

@@ -42,6 +42,16 @@
 !harrow-server-monoio/src/
 !harrow-server-monoio/src/**
 
+!harrow-server-meguri/
+!harrow-server-meguri/Cargo.toml
+!harrow-server-meguri/src/
+!harrow-server-meguri/src/**
+
+!meguri/
+!meguri/Cargo.toml
+!meguri/src/
+!meguri/src/**
+
 !harrow-bench/
 !harrow-bench/benches/
 !harrow-bench/benches/**

@@ -1,0 +1,9 @@
+# wrk3 — compressed JSON 1KB (gzip+brotli), 128 connections
+[wrk3]
+url = "{{ base_url }}/json/1kb"
+threads = 12
+connections = {{ connections }}
+rate = {{ rate }}
+duration_secs = {{ duration_secs }}
+warmup_secs = {{ warmup_secs }}
+headers = ["Accept-Encoding: gzip, br"]

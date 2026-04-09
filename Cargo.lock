@@ -905,6 +905,7 @@ dependencies = [
  "harrow-core",
  "harrow-middleware",
  "harrow-o11y",
+ "harrow-server-meguri",
  "harrow-server-monoio",
  "harrow-server-tokio",
  "http",
@@ -968,6 +969,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1008,6 +1010,23 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "harrow-server-meguri"
+version = "0.9.4"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "harrow-core",
+ "harrow-middleware",
+ "harrow-o11y",
+ "http",
+ "http-body-util",
+ "libc",
+ "meguri",
+ "proptest",
+ "tracing",
 ]
 
 [[package]]
@@ -1493,6 +1512,17 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
+name = "meguri"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "libc",
+ "proptest",
+ "slab",
+ "tracing",
+]
 
 [[package]]
 name = "memchr"

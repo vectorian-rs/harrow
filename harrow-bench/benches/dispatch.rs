@@ -54,27 +54,11 @@ fn bench_dispatch(c: &mut Criterion) {
     let mut group = c.benchmark_group("dispatch");
 
     // --- Harrow setup ---
-    let harrow_text_shared = {
-        let app = App::new().get("/echo", text_handler);
-        let (route_table, middleware, state, max_body_size) = app.into_parts();
-        Arc::new(SharedState {
-            route_table,
-            middleware,
-            state: Arc::new(state),
-            max_body_size,
-        })
-    };
+    let harrow_text_shared = App::new().get("/echo", text_handler).into_shared_state();
 
-    let harrow_json_shared = {
-        let app = App::new().get("/echo", json_1kb_handler);
-        let (route_table, middleware, state, max_body_size) = app.into_parts();
-        Arc::new(SharedState {
-            route_table,
-            middleware,
-            state: Arc::new(state),
-            max_body_size,
-        })
-    };
+    let harrow_json_shared = App::new()
+        .get("/echo", json_1kb_handler)
+        .into_shared_state();
 
     // --- Axum setup ---
     let axum_text_router = Router::new().route("/echo", get(axum_text_handler));

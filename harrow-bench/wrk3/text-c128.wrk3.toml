@@ -1,0 +1,11 @@
+# wrk3 bench config — text endpoint, 128 connections
+# These values are read by the harness from the CaseSpec, not by wrk3 directly.
+# The template is rendered and stored as an artifact for reproducibility.
+
+[wrk3]
+url = "{{ base_url }}/text"
+threads = 12
+connections = {{ connections }}
+rate = {{ rate }}
+duration_secs = {{ duration_secs }}
+warmup_secs = {{ warmup_secs }}
