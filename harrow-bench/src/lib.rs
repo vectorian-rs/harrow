@@ -6,17 +6,54 @@
 pub mod harness;
 pub mod perf_summary;
 
+/// Parse `--bind ADDR` and `--port PORT` CLI args common to all perf server binaries.
+pub fn parse_bind_port() -> (String, u16) {
+    let args: Vec<String> = std::env::args().collect();
+    let bin_name = args
+        .first()
+        .and_then(|s| s.rsplit('/').next())
+        .unwrap_or("perf-server");
+    let mut bind = "127.0.0.1".to_string();
+    let mut port: u16 = 3090;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--bind" => {
+                bind = args.get(i + 1).expect("--bind requires an address").clone();
+                i += 2;
+            }
+            "--port" => {
+                port = args
+                    .get(i + 1)
+                    .expect("--port requires a number")
+                    .parse()
+                    .expect("invalid port number");
+                i += 2;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                eprintln!("usage: {bin_name} [--bind ADDR] [--port PORT]");
+                std::process::exit(1);
+            }
+        }
+    }
+    (bind, port)
+}
+
 /// Set up the global allocator and define `ALLOCATOR_NAME`.
 ///
 /// Usage: put `harrow_bench::setup_allocator!();` at the top of each perf server binary.
 #[macro_export]
 macro_rules! setup_allocator {
     () => {
+        #[cfg(all(feature = "mimalloc", feature = "jemalloc"))]
+        compile_error!("features `mimalloc` and `jemalloc` are mutually exclusive");
+
         #[cfg(feature = "mimalloc")]
         #[global_allocator]
         static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-        #[cfg(feature = "jemalloc")]
+        #[cfg(all(feature = "jemalloc", not(feature = "mimalloc")))]
         #[global_allocator]
         static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 

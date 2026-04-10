@@ -35,38 +35,9 @@ async fn health_handler() -> &'static str {
     "ok"
 }
 
-fn parse_args() -> (String, u16) {
-    let args: Vec<String> = std::env::args().collect();
-    let mut bind = "127.0.0.1".to_string();
-    let mut port: u16 = 3090;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--bind" => {
-                bind = args.get(i + 1).expect("--bind requires an address").clone();
-                i += 2;
-            }
-            "--port" => {
-                port = args
-                    .get(i + 1)
-                    .expect("--port requires a number")
-                    .parse()
-                    .expect("invalid port number");
-                i += 2;
-            }
-            other => {
-                eprintln!("unknown option: {other}");
-                eprintln!("usage: ntex-perf-server [--bind ADDR] [--port PORT]");
-                std::process::exit(1);
-            }
-        }
-    }
-    (bind, port)
-}
-
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
-    let (bind, port) = parse_args();
+    let (bind, port) = harrow_bench::parse_bind_port();
     let addr = format!("{bind}:{port}");
 
     eprintln!("ntex-perf-server listening on {addr} [allocator: {ALLOCATOR_NAME}]");
