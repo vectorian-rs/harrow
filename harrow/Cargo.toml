@@ -13,7 +13,7 @@ default = []
 # Server backends (pick exactly one)
 tokio = ["dep:harrow-server-tokio"]
 monoio = ["dep:harrow-server-monoio"]
-meguri = ["dep:harrow-server-meguri"]  # Linux only — will fail to compile on other platforms
+meguri = ["dep:harrow-server-meguri"]  # Linux only — not yet published to crates.io
 
 # Content formats
 json = ["harrow-core/json"]
