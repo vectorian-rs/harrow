@@ -10,7 +10,7 @@ RUN set -ex \
  && tar xzf /tmp/wrk3.tar.gz -C /tmp \
  && mv /tmp/wrk3-v${WRK3_VERSION}-linux-arm64/wrk /tmp/wrk
 
-FROM debian:testing-slim
+FROM gcr.io/distroless/cc-debian13:latest-arm64
 COPY --from=downloader /tmp/wrk /usr/local/bin/wrk
 ENTRYPOINT ["/usr/local/bin/wrk"]
 CMD ["--help"]

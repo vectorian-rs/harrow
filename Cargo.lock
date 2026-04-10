@@ -1095,7 +1095,6 @@ dependencies = [
 name = "harrow-bench"
 version = "0.9.4"
 dependencies = [
- "anyhow",
  "axum",
  "blake3",
  "bytes",

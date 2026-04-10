@@ -51,6 +51,18 @@ run = "docker build --provenance=false -t harrow-perf-server:prod-arm64 -f tokio
 description = "Build prod ARM64 axum-perf-server image"
 run = "docker build --provenance=false -t axum-perf-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target axum-perf-server ."
 
+[tasks."docker:prod-arm64:tako-perf-server"]
+description = "Build prod ARM64 tako-perf-server image"
+run = "docker build --provenance=false -t tako-perf-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target tako-perf-server ."
+
+[tasks."docker:prod-arm64:salvo-perf-server"]
+description = "Build prod ARM64 salvo-perf-server image"
+run = "docker build --provenance=false -t salvo-perf-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target salvo-perf-server ."
+
+[tasks."docker:prod-arm64:warp-perf-server"]
+description = "Build prod ARM64 warp-perf-server image"
+run = "docker build --provenance=false -t warp-perf-server:prod-arm64 -f tokio.prod.arm64.Dockerfile --target warp-perf-server ."
+
 [tasks."docker:prod-arm64"]
 description = "Build all prod ARM64 Docker images"
 depends = [
@@ -58,6 +70,9 @@ depends = [
   "docker:prod-arm64:axum-server",
   "docker:prod-arm64:harrow-perf-server",
   "docker:prod-arm64:axum-perf-server",
+  "docker:prod-arm64:tako-perf-server",
+  "docker:prod-arm64:salvo-perf-server",
+  "docker:prod-arm64:warp-perf-server",
 ]
 
 [tasks."docker:dev-arm64:harrow-server-tokio"]

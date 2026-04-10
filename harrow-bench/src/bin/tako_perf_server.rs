@@ -74,11 +74,11 @@ fn parse_args() -> (String, u16) {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let (bind, port) = parse_args();
     let addr = format!("{bind}:{port}");
 
-    let listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind(&addr).await.unwrap();
 
     let mut router = Router::new();
     router.route(Method::GET, "/text", text_handler);
@@ -88,6 +88,4 @@ async fn main() -> anyhow::Result<()> {
 
     eprintln!("tako-perf-server listening on {addr} [allocator: {ALLOCATOR_NAME}]");
     tako::serve(listener, router).await;
-
-    Ok(())
 }
