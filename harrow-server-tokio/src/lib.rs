@@ -122,7 +122,7 @@ impl Default for ServerConfig {
     }
 }
 
-/// Serve the application on the given address.
+/// Serve the application on the given address (single-runtime mode).
 pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     serve_with_config(
         app,
@@ -131,6 +131,176 @@ pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error:
         ServerConfig::default(),
     )
     .await
+}
+
+/// Serve with one tokio `current_thread` runtime per CPU core.
+///
+/// Each worker binds to the same address via `SO_REUSEPORT` and runs an
+/// independent accept loop. This eliminates cross-thread task scheduling
+/// overhead and keeps connections pinned to the core that accepted them.
+///
+/// This function blocks the calling thread until shutdown. Call it from
+/// `main()` — not from inside an async runtime.
+///
+/// ```no_run
+/// let app = harrow_core::route::App::new();
+/// let addr = "0.0.0.0:3090".parse().unwrap();
+/// harrow_server_tokio::serve_multi_worker(app, addr, Default::default());
+/// ```
+pub fn serve_multi_worker(
+    app: App,
+    addr: SocketAddr,
+    config: ServerConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let shared = app.into_shared_state();
+    shared.route_table.print_routes();
+
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    tracing::info!("harrow listening on {addr} [{workers} workers, SO_REUSEPORT]");
+
+    let mut handles = Vec::with_capacity(workers);
+    for worker_id in 0..workers {
+        let shared = Arc::clone(&shared);
+        let shutdown = Arc::clone(&shutdown);
+        let config_max = config.max_connections / workers;
+        let header_read_timeout = config.header_read_timeout;
+        let connection_timeout = config.connection_timeout;
+        let body_read_timeout = config.body_read_timeout;
+
+        let handle = std::thread::Builder::new()
+            .name(format!("harrow-w{worker_id}"))
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime");
+
+                rt.block_on(async move {
+                    let listener =
+                        reuseport_listener(addr).expect("failed to bind SO_REUSEPORT listener");
+
+                    let semaphore = Arc::new(Semaphore::new(config_max));
+                    let mut connections: JoinSet<()> = JoinSet::new();
+
+                    loop {
+                        if shutdown.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        while connections.try_join_next().is_some() {}
+
+                        let result = tokio::select! {
+                            r = listener.accept() => r,
+                            () = tokio::time::sleep(Duration::from_millis(100)) => {
+                                if shutdown.load(Ordering::Relaxed) { break; }
+                                continue;
+                            }
+                        };
+
+                        let (stream, _remote) = match result {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                tracing::error!(worker = worker_id, "accept error: {e}");
+                                continue;
+                            }
+                        };
+
+                        let permit = match semaphore.clone().try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                drop(stream);
+                                continue;
+                            }
+                        };
+
+                        let io = TokioIo::new(stream);
+                        let shared = Arc::clone(&shared);
+
+                        connections.spawn(async move {
+                            let _permit = permit;
+
+                            let service = service_fn(move |req: http::Request<Incoming>| {
+                                let shared = Arc::clone(&shared);
+                                async move {
+                                    let boxed = if let Some(brt) = body_read_timeout {
+                                        req.map(|body| box_incoming_with_timeout(body, brt))
+                                    } else {
+                                        req.map(box_incoming)
+                                    };
+                                    Ok::<_, std::convert::Infallible>(dispatch(shared, boxed).await)
+                                }
+                            });
+
+                            let mut builder = hyper_util::server::conn::auto::Builder::new(
+                                hyper_util::rt::TokioExecutor::new(),
+                            );
+                            if let Some(hrt) = header_read_timeout {
+                                builder
+                                    .http1()
+                                    .timer(hyper_util::rt::TokioTimer::new())
+                                    .header_read_timeout(hrt);
+                            }
+                            let conn = builder
+                                .serve_connection_with_upgrades(io, service)
+                                .into_owned();
+
+                            if let Some(ct) = connection_timeout {
+                                match tokio::time::timeout(ct, conn).await {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(e)) => {
+                                        tracing::error!("connection error: {e}")
+                                    }
+                                    Err(_) => {
+                                        tracing::warn!("connection timed out")
+                                    }
+                                }
+                            } else if let Err(e) = conn.await {
+                                tracing::error!("connection error: {e}");
+                            }
+                        });
+                    }
+
+                    // Drain
+                    while connections.join_next().await.is_some() {}
+                });
+            })?;
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().expect("worker thread panicked");
+    }
+
+    Ok(())
+}
+
+/// Create a `TcpListener` with `SO_REUSEPORT` set before binding.
+fn reuseport_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    let domain = if addr.is_ipv6() {
+        Domain::IPV6
+    } else {
+        Domain::IPV4
+    };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(65535)?;
+
+    let std_listener: std::net::TcpListener = socket.into();
+    TcpListener::from_std(std_listener)
 }
 
 /// Serve with a graceful shutdown signal.

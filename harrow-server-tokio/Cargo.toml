@@ -24,6 +24,7 @@ futures-util = { workspace = true }
 hyper-util = { workspace = true }
 pin-project-lite = { workspace = true }
 tokio = { workspace = true }
+socket2 = { version = "0.5", features = ["all"] }
 tracing = { workspace = true }
 
 # Optional TLS

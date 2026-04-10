@@ -45,7 +45,9 @@ pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 
 // Root-level re-exports for single-backend mode.
 #[cfg(all(feature = "tokio", not(feature = "monoio"), not(feature = "meguri")))]
-pub use harrow_server_tokio::{ServerConfig, serve, serve_with_config, serve_with_shutdown};
+pub use harrow_server_tokio::{
+    ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
+};
 
 #[cfg(all(feature = "monoio", not(feature = "tokio"), not(feature = "meguri")))]
 pub use harrow_server_monoio::{

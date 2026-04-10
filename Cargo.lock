@@ -1265,7 +1265,7 @@ dependencies = [
 
 [[package]]
 name = "harrow"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "bytes",
  "harrow-core",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-bench"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "axum",
  "blake3",
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-core"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "base64",
  "bytes",
@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-middleware"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "blake3",
  "brotli 7.0.0",
@@ -1367,7 +1367,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-o11y"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "harrow-core",
  "rolly",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-serde"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "bytes",
  "rmp-serde",
@@ -1386,24 +1386,26 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-meguri"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "bytes",
- "futures-util",
  "harrow-core",
  "harrow-middleware",
  "harrow-o11y",
  "http",
  "http-body-util",
+ "httparse",
  "libc",
  "meguri",
  "proptest",
+ "slab",
+ "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "harrow-server-monoio"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "bolero",
  "bytes",
@@ -1423,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-tokio"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "bytes",
  "dashmap",
@@ -1439,6 +1441,7 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "rustls 0.23.37",
+ "socket2 0.5.10",
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tracing",
@@ -3107,9 +3110,9 @@ dependencies = [
 
 [[package]]
 name = "rolly"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "770b1c8a41fb0cc0841e63c23394212c7ded8e7d7652d9ea8b99811830ca930a"
+checksum = "e9f721b893a5f1bda795df545a4970cf324b5f0d626f95b84e65121aaf626f3c"
 dependencies = [
  "blake3",
  "libc",
@@ -3121,9 +3124,9 @@ dependencies = [
 
 [[package]]
 name = "rolly-tokio"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aab78e0c16dd233bd1ef680fb4e73e63be0f992decb5e5be7278d636393fd38"
+checksum = "2a062131cb9805e4287b6c29bcbc5bbe6c1a7b7c20fbdf74fa69a81edb5ec5c5"
 dependencies = [
  "bytes",
  "reqwest",
