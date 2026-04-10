@@ -6,8 +6,9 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::syscall::{
-    IORING_OP_ACCEPT, IORING_OP_NOP, IORING_OP_READ, IORING_OP_RECV, IORING_OP_SEND,
-    IORING_OP_WRITE, IoUringParams, IoUringSqe,
+    IORING_OP_ACCEPT, IORING_OP_ASYNC_CANCEL, IORING_OP_CLOSE, IORING_OP_LINK_TIMEOUT,
+    IORING_OP_NOP, IORING_OP_READ, IORING_OP_RECV, IORING_OP_SEND, IORING_OP_TIMEOUT,
+    IORING_OP_WRITE, IOSQE_IO_LINK, IoUringParams, IoUringSqe,
 };
 
 /// The submission queue.
@@ -253,6 +254,89 @@ impl SubmissionQueue {
         sqe.off = addrlen as u64;
         sqe.rw_flags = flags;
         sqe.user_data = user_data;
+        true
+    }
+
+    /// Build and push a `Timeout` SQE.
+    ///
+    /// `ts` must remain valid until the CQE is reaped.
+    pub fn push_timeout(
+        &mut self,
+        user_data: u64,
+        ts: *const libc::timespec,
+        count: u32,
+        flags: u32,
+    ) -> bool {
+        let Some(sqe) = self.next_sqe() else {
+            return false;
+        };
+        sqe.opcode = IORING_OP_TIMEOUT;
+        sqe.fd = -1;
+        sqe.addr = ts as u64;
+        sqe.len = count;
+        sqe.rw_flags = flags;
+        sqe.user_data = user_data;
+        true
+    }
+
+    /// Build and push a `LinkTimeout` SQE (linked to the previous SQE).
+    ///
+    /// The previous SQE must have been pushed with `IOSQE_IO_LINK` flag.
+    /// `ts` must remain valid until the CQE is reaped.
+    pub fn push_link_timeout(
+        &mut self,
+        user_data: u64,
+        ts: *const libc::timespec,
+    ) -> bool {
+        let Some(sqe) = self.next_sqe() else {
+            return false;
+        };
+        sqe.opcode = IORING_OP_LINK_TIMEOUT;
+        sqe.fd = -1;
+        sqe.addr = ts as u64;
+        sqe.len = 1;
+        sqe.user_data = user_data;
+        true
+    }
+
+    /// Build and push an `AsyncCancel` SQE.
+    ///
+    /// Cancels a pending operation identified by `target_user_data`.
+    pub fn push_cancel(&mut self, user_data: u64, target_user_data: u64) -> bool {
+        let Some(sqe) = self.next_sqe() else {
+            return false;
+        };
+        sqe.opcode = IORING_OP_ASYNC_CANCEL;
+        sqe.fd = -1;
+        sqe.addr = target_user_data;
+        sqe.user_data = user_data;
+        true
+    }
+
+    /// Build and push a `Close` SQE.
+    pub fn push_close(&mut self, user_data: u64, fd: i32) -> bool {
+        let Some(sqe) = self.next_sqe() else {
+            return false;
+        };
+        sqe.opcode = IORING_OP_CLOSE;
+        sqe.fd = fd;
+        sqe.user_data = user_data;
+        true
+    }
+
+    /// Set the `IOSQE_IO_LINK` flag on the most recently pushed SQE.
+    ///
+    /// Links the previous SQE to the next one. If the previous SQE fails
+    /// or is cancelled, the linked SQE is also cancelled.
+    ///
+    /// Returns `false` if no SQE has been pushed yet.
+    pub fn link_last(&mut self) -> bool {
+        if self.sq_tail == self.load_head() {
+            return false;
+        }
+        let prev_idx = self.sq_tail.wrapping_sub(1) & self.ring_mask;
+        let sqe = unsafe { &mut *self.sqes.add(prev_idx as usize) };
+        sqe.flags |= IOSQE_IO_LINK;
         true
     }
 }

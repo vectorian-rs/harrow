@@ -247,6 +247,11 @@ impl Ring {
         &self.cq
     }
 
+    /// Access the completion queue mutably.
+    pub fn cq_mut(&mut self) -> &mut CompletionQueue {
+        &mut self.cq
+    }
+
     /// Access the dispatcher for registering wakers.
     pub fn dispatcher(&mut self) -> &mut Dispatcher {
         &mut self.dispatcher

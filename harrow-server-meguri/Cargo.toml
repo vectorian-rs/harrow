@@ -23,9 +23,11 @@ meguri = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
+httparse = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
-futures-util = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+slab = "0.4"
 
 [dev-dependencies]
 harrow-middleware = { workspace = true }
