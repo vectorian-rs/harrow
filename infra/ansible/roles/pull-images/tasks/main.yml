@@ -1,37 +1,37 @@
 # Server: pull bench images (3 allocator variants, each containing all 6 framework binaries)
 - name: Pull harrow-bench prod-mimalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc-{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-bench prod-mimalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc harrow-bench:prod-mimalloc"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc-{{ harrow_version }} harrow-bench:prod-mimalloc-{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Pull harrow-bench prod-jemalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc-{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-bench prod-jemalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc harrow-bench:prod-jemalloc"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc-{{ harrow_version }} harrow-bench:prod-jemalloc-{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Pull harrow-bench prod-sysalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc-{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-bench prod-sysalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc harrow-bench:prod-sysalloc"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc-{{ harrow_version }} harrow-bench:prod-sysalloc-{{ harrow_version }}"
   changed_when: true
   when: inventory_hostname in groups['server']
 

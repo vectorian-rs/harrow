@@ -7,7 +7,7 @@
 
 [[implementation]]
 id = "harrow-tokio-prod-mimalloc-0.9.4"
-image = "harrow-bench:prod-mimalloc"
+image = "harrow-bench:prod-mimalloc-0.9.4"
 command = "/usr/local/bin/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "tokio"
@@ -17,7 +17,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "axum-tokio-prod-mimalloc-0.8.8"
-image = "harrow-bench:prod-mimalloc"
+image = "harrow-bench:prod-mimalloc-0.9.4"
 command = "/usr/local/bin/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
 backend = "tokio"
@@ -27,7 +27,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "tako-tokio-prod-mimalloc-1.1.1"
-image = "harrow-bench:prod-mimalloc"
+image = "harrow-bench:prod-mimalloc-0.9.4"
 command = "/usr/local/bin/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "tako"
 backend = "tokio"
@@ -37,7 +37,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "salvo-tokio-prod-mimalloc-0.90.1"
-image = "harrow-bench:prod-mimalloc"
+image = "harrow-bench:prod-mimalloc-0.9.4"
 command = "/usr/local/bin/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "salvo"
 backend = "tokio"
@@ -47,7 +47,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "warp-tokio-prod-mimalloc-0.4.2"
-image = "harrow-bench:prod-mimalloc"
+image = "harrow-bench:prod-mimalloc-0.9.4"
 command = "/usr/local/bin/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "warp"
 backend = "tokio"
@@ -57,7 +57,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "ntex-tokio-prod-mimalloc-3.7.2"
-image = "harrow-bench:prod-mimalloc"
+image = "harrow-bench:prod-mimalloc-0.9.4"
 command = "/usr/local/bin/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "ntex"
 backend = "tokio"
@@ -71,7 +71,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-tokio-prod-jemalloc-0.9.4"
-image = "harrow-bench:prod-jemalloc"
+image = "harrow-bench:prod-jemalloc-0.9.4"
 command = "/usr/local/bin/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "tokio"
@@ -81,7 +81,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "axum-tokio-prod-jemalloc-0.8.8"
-image = "harrow-bench:prod-jemalloc"
+image = "harrow-bench:prod-jemalloc-0.9.4"
 command = "/usr/local/bin/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
 backend = "tokio"
@@ -91,7 +91,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "tako-tokio-prod-jemalloc-1.1.1"
-image = "harrow-bench:prod-jemalloc"
+image = "harrow-bench:prod-jemalloc-0.9.4"
 command = "/usr/local/bin/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "tako"
 backend = "tokio"
@@ -101,7 +101,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "salvo-tokio-prod-jemalloc-0.90.1"
-image = "harrow-bench:prod-jemalloc"
+image = "harrow-bench:prod-jemalloc-0.9.4"
 command = "/usr/local/bin/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "salvo"
 backend = "tokio"
@@ -111,7 +111,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "warp-tokio-prod-jemalloc-0.4.2"
-image = "harrow-bench:prod-jemalloc"
+image = "harrow-bench:prod-jemalloc-0.9.4"
 command = "/usr/local/bin/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "warp"
 backend = "tokio"
@@ -121,7 +121,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "ntex-tokio-prod-jemalloc-3.7.2"
-image = "harrow-bench:prod-jemalloc"
+image = "harrow-bench:prod-jemalloc-0.9.4"
 command = "/usr/local/bin/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "ntex"
 backend = "tokio"
@@ -135,7 +135,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "harrow-tokio-prod-sysalloc-0.9.4"
-image = "harrow-bench:prod-sysalloc"
+image = "harrow-bench:prod-sysalloc-0.9.4"
 command = "/usr/local/bin/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "tokio"
@@ -145,7 +145,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "axum-tokio-prod-sysalloc-0.8.8"
-image = "harrow-bench:prod-sysalloc"
+image = "harrow-bench:prod-sysalloc-0.9.4"
 command = "/usr/local/bin/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
 backend = "tokio"
@@ -155,7 +155,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "tako-tokio-prod-sysalloc-1.1.1"
-image = "harrow-bench:prod-sysalloc"
+image = "harrow-bench:prod-sysalloc-0.9.4"
 command = "/usr/local/bin/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "tako"
 backend = "tokio"
@@ -165,7 +165,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "salvo-tokio-prod-sysalloc-0.90.1"
-image = "harrow-bench:prod-sysalloc"
+image = "harrow-bench:prod-sysalloc-0.9.4"
 command = "/usr/local/bin/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "salvo"
 backend = "tokio"
@@ -175,7 +175,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "warp-tokio-prod-sysalloc-0.4.2"
-image = "harrow-bench:prod-sysalloc"
+image = "harrow-bench:prod-sysalloc-0.9.4"
 command = "/usr/local/bin/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "warp"
 backend = "tokio"
@@ -185,7 +185,7 @@ platform = "linux/arm64"
 
 [[implementation]]
 id = "ntex-tokio-prod-sysalloc-3.7.2"
-image = "harrow-bench:prod-sysalloc"
+image = "harrow-bench:prod-sysalloc-0.9.4"
 command = "/usr/local/bin/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "ntex"
 backend = "tokio"
