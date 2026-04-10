@@ -1,19 +1,14 @@
-[[implementation]]
-id = "harrow-tokio-dev"
-image = "harrow-perf-server:arm64-0.9.4"
-build_task = "docker:dev-arm64:harrow-perf-server"
-command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
-framework = "harrow"
-backend = "tokio"
-profile = "dev"
-health_path = "/health"
-platform = "linux/arm64"
+# Naming: {framework}-{io}-{profile}-{allocator}-{version}
+# Image:  harrow-bench:prod-{allocator} (all 6 framework binaries in one image)
+
+# =============================================================================
+# mimalloc
+# =============================================================================
 
 [[implementation]]
-id = "harrow-tokio-prod"
-image = "harrow-perf-server:arm64-0.9.4"
-build_task = "docker:prod-arm64:harrow-perf-server"
-command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "harrow-tokio-prod-mimalloc-0.9.4"
+image = "harrow-bench:prod-mimalloc"
+command = "/usr/local/bin/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "tokio"
 profile = "prod"
@@ -21,65 +16,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "harrow-tokio-perf"
-image = "harrow-perf-server:arm64-0.9.4"
-build_task = "docker:perf-arm64:harrow-perf-server"
-command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
-framework = "harrow"
-backend = "tokio"
-profile = "perf"
-health_path = "/health"
-platform = "linux/arm64"
-
-[[implementation]]
-id = "harrow-monoio-dev"
-image = "harrow-server-monoio:arm64-0.9.4"
-build_task = "docker:dev-arm64:harrow-server-monoio"
-command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
-framework = "harrow"
-backend = "monoio"
-profile = "dev"
-health_path = "/health"
-platform = "linux/arm64"
-
-[[implementation]]
-id = "harrow-monoio-prod"
-image = "harrow-server-monoio:arm64-0.9.4"
-build_task = "docker:prod-arm64:harrow-server-monoio"
-command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
-framework = "harrow"
-backend = "monoio"
-profile = "prod"
-health_path = "/health"
-platform = "linux/arm64"
-
-[[implementation]]
-id = "harrow-monoio-perf"
-image = "harrow-server-monoio:arm64-0.9.4"
-build_task = "docker:perf-arm64:harrow-server-monoio"
-command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
-framework = "harrow"
-backend = "monoio"
-profile = "perf"
-health_path = "/health"
-platform = "linux/arm64"
-
-[[implementation]]
-id = "axum-dev"
-image = "axum-perf-server:arm64-0.9.4"
-build_task = "docker:dev-arm64:axum-perf-server"
-command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
-framework = "axum"
-backend = "tokio"
-profile = "dev"
-health_path = "/health"
-platform = "linux/arm64"
-
-[[implementation]]
-id = "axum-prod"
-image = "axum-perf-server:arm64-0.9.4"
-build_task = "docker:prod-arm64:axum-perf-server"
-command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "axum-tokio-prod-mimalloc-0.8.8"
+image = "harrow-bench:prod-mimalloc"
+command = "/usr/local/bin/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
 backend = "tokio"
 profile = "prod"
@@ -87,21 +26,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "axum-perf"
-image = "axum-perf-server:arm64-0.9.4"
-build_task = "docker:perf-arm64:axum-perf-server"
-command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
-framework = "axum"
-backend = "tokio"
-profile = "perf"
-health_path = "/health"
-platform = "linux/arm64"
-
-[[implementation]]
-id = "tako-prod"
-image = "tako-perf-server:arm64-0.9.4"
-build_task = "docker:prod-arm64:tako-perf-server"
-command = "/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "tako-tokio-prod-mimalloc-1.1.1"
+image = "harrow-bench:prod-mimalloc"
+command = "/usr/local/bin/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "tako"
 backend = "tokio"
 profile = "prod"
@@ -109,10 +36,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "salvo-prod"
-image = "salvo-perf-server:arm64-0.9.4"
-build_task = "docker:prod-arm64:salvo-perf-server"
-command = "/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "salvo-tokio-prod-mimalloc-0.90.1"
+image = "harrow-bench:prod-mimalloc"
+command = "/usr/local/bin/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "salvo"
 backend = "tokio"
 profile = "prod"
@@ -120,10 +46,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "warp-prod"
-image = "warp-perf-server:arm64-0.9.4"
-build_task = "docker:prod-arm64:warp-perf-server"
-command = "/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "warp-tokio-prod-mimalloc-0.4.2"
+image = "harrow-bench:prod-mimalloc"
+command = "/usr/local/bin/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "warp"
 backend = "tokio"
 profile = "prod"
@@ -131,23 +56,23 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "ntex-prod"
-image = "ntex-perf-server:arm64-0.9.4"
-build_task = "docker:prod-arm64:ntex-perf-server"
-command = "/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "ntex-tokio-prod-mimalloc-3.7.2"
+image = "harrow-bench:prod-mimalloc"
+command = "/usr/local/bin/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "ntex"
 backend = "tokio"
 profile = "prod"
 health_path = "/health"
 platform = "linux/arm64"
 
-# ── jemalloc variants ────────────────────────────────────────────────
+# =============================================================================
+# jemalloc
+# =============================================================================
 
 [[implementation]]
-id = "harrow-jemalloc"
-image = "harrow-perf-server:arm64-0.9.4-jemalloc"
-build_task = "docker:prod-arm64:harrow-perf-server-jemalloc"
-command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "harrow-tokio-prod-jemalloc-0.9.4"
+image = "harrow-bench:prod-jemalloc"
+command = "/usr/local/bin/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "tokio"
 profile = "prod"
@@ -155,10 +80,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "axum-jemalloc"
-image = "axum-perf-server:arm64-0.9.4-jemalloc"
-build_task = "docker:prod-arm64:axum-perf-server-jemalloc"
-command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "axum-tokio-prod-jemalloc-0.8.8"
+image = "harrow-bench:prod-jemalloc"
+command = "/usr/local/bin/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
 backend = "tokio"
 profile = "prod"
@@ -166,10 +90,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "tako-jemalloc"
-image = "tako-perf-server:arm64-0.9.4-jemalloc"
-build_task = "docker:prod-arm64:tako-perf-server-jemalloc"
-command = "/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "tako-tokio-prod-jemalloc-1.1.1"
+image = "harrow-bench:prod-jemalloc"
+command = "/usr/local/bin/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "tako"
 backend = "tokio"
 profile = "prod"
@@ -177,10 +100,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "salvo-jemalloc"
-image = "salvo-perf-server:arm64-0.9.4-jemalloc"
-build_task = "docker:prod-arm64:salvo-perf-server-jemalloc"
-command = "/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "salvo-tokio-prod-jemalloc-0.90.1"
+image = "harrow-bench:prod-jemalloc"
+command = "/usr/local/bin/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "salvo"
 backend = "tokio"
 profile = "prod"
@@ -188,10 +110,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "warp-jemalloc"
-image = "warp-perf-server:arm64-0.9.4-jemalloc"
-build_task = "docker:prod-arm64:warp-perf-server-jemalloc"
-command = "/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "warp-tokio-prod-jemalloc-0.4.2"
+image = "harrow-bench:prod-jemalloc"
+command = "/usr/local/bin/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "warp"
 backend = "tokio"
 profile = "prod"
@@ -199,23 +120,23 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "ntex-jemalloc"
-image = "ntex-perf-server:arm64-0.9.4-jemalloc"
-build_task = "docker:prod-arm64:ntex-perf-server-jemalloc"
-command = "/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "ntex-tokio-prod-jemalloc-3.7.2"
+image = "harrow-bench:prod-jemalloc"
+command = "/usr/local/bin/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "ntex"
 backend = "tokio"
 profile = "prod"
 health_path = "/health"
 platform = "linux/arm64"
 
-# ── sysalloc variants ───────────────────────────────────────────────
+# =============================================================================
+# system allocator
+# =============================================================================
 
 [[implementation]]
-id = "harrow-sysalloc"
-image = "harrow-perf-server:arm64-0.9.4-sysalloc"
-build_task = "docker:prod-arm64:harrow-perf-server-sysalloc"
-command = "/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "harrow-tokio-prod-sysalloc-0.9.4"
+image = "harrow-bench:prod-sysalloc"
+command = "/usr/local/bin/harrow-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "tokio"
 profile = "prod"
@@ -223,10 +144,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "axum-sysalloc"
-image = "axum-perf-server:arm64-0.9.4-sysalloc"
-build_task = "docker:prod-arm64:axum-perf-server-sysalloc"
-command = "/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "axum-tokio-prod-sysalloc-0.8.8"
+image = "harrow-bench:prod-sysalloc"
+command = "/usr/local/bin/axum-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "axum"
 backend = "tokio"
 profile = "prod"
@@ -234,10 +154,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "tako-sysalloc"
-image = "tako-perf-server:arm64-0.9.4-sysalloc"
-build_task = "docker:prod-arm64:tako-perf-server-sysalloc"
-command = "/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "tako-tokio-prod-sysalloc-1.1.1"
+image = "harrow-bench:prod-sysalloc"
+command = "/usr/local/bin/tako-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "tako"
 backend = "tokio"
 profile = "prod"
@@ -245,10 +164,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "salvo-sysalloc"
-image = "salvo-perf-server:arm64-0.9.4-sysalloc"
-build_task = "docker:prod-arm64:salvo-perf-server-sysalloc"
-command = "/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "salvo-tokio-prod-sysalloc-0.90.1"
+image = "harrow-bench:prod-sysalloc"
+command = "/usr/local/bin/salvo-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "salvo"
 backend = "tokio"
 profile = "prod"
@@ -256,10 +174,9 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "warp-sysalloc"
-image = "warp-perf-server:arm64-0.9.4-sysalloc"
-build_task = "docker:prod-arm64:warp-perf-server-sysalloc"
-command = "/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "warp-tokio-prod-sysalloc-0.4.2"
+image = "harrow-bench:prod-sysalloc"
+command = "/usr/local/bin/warp-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "warp"
 backend = "tokio"
 profile = "prod"
@@ -267,12 +184,25 @@ health_path = "/health"
 platform = "linux/arm64"
 
 [[implementation]]
-id = "ntex-sysalloc"
-image = "ntex-perf-server:arm64-0.9.4-sysalloc"
-build_task = "docker:prod-arm64:ntex-perf-server-sysalloc"
-command = "/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
+id = "ntex-tokio-prod-sysalloc-3.7.2"
+image = "harrow-bench:prod-sysalloc"
+command = "/usr/local/bin/ntex-perf-server --bind 0.0.0.0 --port {{ port }}"
 framework = "ntex"
 backend = "tokio"
+profile = "prod"
+health_path = "/health"
+platform = "linux/arm64"
+
+# =============================================================================
+# monoio (mimalloc only — separate Dockerfile, io_uring backend)
+# =============================================================================
+
+[[implementation]]
+id = "harrow-monoio-prod-mimalloc-0.9.4"
+image = "harrow-server-monoio:arm64-0.9.4"
+command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
+framework = "harrow"
+backend = "monoio"
 profile = "prod"
 health_path = "/health"
 platform = "linux/arm64"

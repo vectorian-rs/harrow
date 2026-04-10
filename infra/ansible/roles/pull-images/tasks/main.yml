@@ -1,29 +1,41 @@
-# Server: pull perf server images
-- name: Pull harrow-perf-server from ECR
+# Server: pull bench images (3 allocator variants, each containing all 6 framework binaries)
+- name: Pull harrow-bench prod-mimalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server:{{ harrow_version }}"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc"
   changed_when: true
   when: inventory_hostname in groups['server']
 
-- name: Tag harrow-perf-server for local use
+- name: Tag harrow-bench prod-mimalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server:{{ harrow_version }} harrow-perf-server:arm64-{{ harrow_version }}"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc harrow-bench:prod-mimalloc"
   changed_when: true
   when: inventory_hostname in groups['server']
 
-- name: Pull axum-perf-server from ECR
+- name: Pull harrow-bench prod-jemalloc from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/axum-perf-server:{{ harrow_version }}"
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc"
   changed_when: true
   when: inventory_hostname in groups['server']
 
-- name: Tag axum-perf-server for local use
+- name: Tag harrow-bench prod-jemalloc for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/axum-perf-server:{{ harrow_version }} axum-perf-server:arm64-{{ harrow_version }}"
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc harrow-bench:prod-jemalloc"
   changed_when: true
   when: inventory_hostname in groups['server']
 
-# Server: pull monoio server image
+- name: Pull harrow-bench prod-sysalloc from ECR
+  ansible.builtin.command:
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
+- name: Tag harrow-bench prod-sysalloc for local use
+  ansible.builtin.command:
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc harrow-bench:prod-sysalloc"
+  changed_when: true
+  when: inventory_hostname in groups['server']
+
+# Server: pull monoio (separate image, io_uring backend)
 - name: Pull harrow-server-monoio from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/harrow-server-monoio:{{ harrow_version }}"
@@ -36,56 +48,7 @@
   changed_when: true
   when: inventory_hostname in groups['server']
 
-# Server: pull framework comparison servers
-- name: Pull tako-perf-server from ECR
-  ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:tako-v{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Tag tako-perf-server for local use
-  ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:tako-v{{ harrow_version }} tako-perf-server:arm64-{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Pull salvo-perf-server from ECR
-  ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:salvo-v{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Tag salvo-perf-server for local use
-  ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:salvo-v{{ harrow_version }} salvo-perf-server:arm64-{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Pull warp-perf-server from ECR
-  ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:warp-v{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Tag warp-perf-server for local use
-  ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:warp-v{{ harrow_version }} warp-perf-server:arm64-{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Pull ntex-perf-server from ECR
-  ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:ntex-v{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-- name: Tag ntex-perf-server for local use
-  ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:ntex-v{{ harrow_version }} ntex-perf-server:arm64-{{ harrow_version }}"
-  changed_when: true
-  when: inventory_hostname in groups['server']
-
-# Client: pull spinr load tester
+# Client: pull load testers
 - name: Pull spinr from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/spinr:{{ spinr_version }}"
@@ -98,7 +61,6 @@
   changed_when: true
   when: inventory_hostname in groups['client']
 
-# Client: pull wrk3 load tester
 - name: Pull wrk3 from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:wrk3-v{{ wrk3_version }}"

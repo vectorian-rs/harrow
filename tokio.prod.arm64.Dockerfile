@@ -49,14 +49,11 @@ ARG TARGET=aarch64-unknown-linux-gnu
 ARG REL=/app/target/aarch64-unknown-linux-gnu/release
 
 # Build with mimalloc (default features)
-RUN cargo build --locked --release --target=${TARGET} -p harrow-bench \
-        --bin harrow-server-tokio --bin axum-server ${PERF_BINS} && \
+RUN cargo build --locked --release --target=${TARGET} -p harrow-bench ${PERF_BINS} && \
     mkdir -p /stage/mimalloc && \
     for bin in harrow-perf-server axum-perf-server tako-perf-server salvo-perf-server warp-perf-server ntex-perf-server; do \
         cp ${REL}/${bin} /stage/mimalloc/${bin}; \
-    done && \
-    cp ${REL}/harrow-server-tokio /stage/harrow-server-tokio && \
-    cp ${REL}/axum-server /stage/axum-server
+    done
 
 # Build with jemalloc
 RUN cargo build --locked --release --target=${TARGET} -p harrow-bench \
@@ -75,103 +72,15 @@ RUN cargo build --locked --release --target=${TARGET} -p harrow-bench \
     done
 
 # ---------------------------------------------------------------------------
-# Non-perf server targets (unchanged)
+# One image per allocator — all 6 framework binaries inside each
 # ---------------------------------------------------------------------------
 
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-server-tokio
-COPY --from=build-env /stage/harrow-server-tokio /harrow-server-tokio
-CMD ["/harrow-server-tokio", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS axum-server
-COPY --from=build-env /stage/axum-server /axum-server
-CMD ["/axum-server", "--bind", "0.0.0.0"]
-
-# ---------------------------------------------------------------------------
-# mimalloc variants
-# ---------------------------------------------------------------------------
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-perf-server
+FROM gcr.io/distroless/cc-debian13:latest-arm64 AS prod-mimalloc
 ENV MIMALLOC_LARGE_OS_PAGES=1 MIMALLOC_ALLOW_DECOMMIT=0 MIMALLOC_EAGER_COMMIT=1
-COPY --from=build-env /stage/mimalloc/harrow-perf-server /harrow-perf-server
-CMD ["/harrow-perf-server", "--bind", "0.0.0.0"]
+COPY --from=build-env /stage/mimalloc/ /usr/local/bin/
 
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS axum-perf-server
-ENV MIMALLOC_LARGE_OS_PAGES=1 MIMALLOC_ALLOW_DECOMMIT=0 MIMALLOC_EAGER_COMMIT=1
-COPY --from=build-env /stage/mimalloc/axum-perf-server /axum-perf-server
-CMD ["/axum-perf-server", "--bind", "0.0.0.0"]
+FROM gcr.io/distroless/cc-debian13:latest-arm64 AS prod-jemalloc
+COPY --from=build-env /stage/jemalloc/ /usr/local/bin/
 
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS tako-perf-server
-ENV MIMALLOC_LARGE_OS_PAGES=1 MIMALLOC_ALLOW_DECOMMIT=0 MIMALLOC_EAGER_COMMIT=1
-COPY --from=build-env /stage/mimalloc/tako-perf-server /tako-perf-server
-CMD ["/tako-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS salvo-perf-server
-ENV MIMALLOC_LARGE_OS_PAGES=1 MIMALLOC_ALLOW_DECOMMIT=0 MIMALLOC_EAGER_COMMIT=1
-COPY --from=build-env /stage/mimalloc/salvo-perf-server /salvo-perf-server
-CMD ["/salvo-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS warp-perf-server
-ENV MIMALLOC_LARGE_OS_PAGES=1 MIMALLOC_ALLOW_DECOMMIT=0 MIMALLOC_EAGER_COMMIT=1
-COPY --from=build-env /stage/mimalloc/warp-perf-server /warp-perf-server
-CMD ["/warp-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-perf-server
-ENV MIMALLOC_LARGE_OS_PAGES=1 MIMALLOC_ALLOW_DECOMMIT=0 MIMALLOC_EAGER_COMMIT=1
-COPY --from=build-env /stage/mimalloc/ntex-perf-server /ntex-perf-server
-CMD ["/ntex-perf-server", "--bind", "0.0.0.0"]
-
-# ---------------------------------------------------------------------------
-# jemalloc variants
-# ---------------------------------------------------------------------------
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-perf-server-jemalloc
-COPY --from=build-env /stage/jemalloc/harrow-perf-server /harrow-perf-server
-CMD ["/harrow-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS axum-perf-server-jemalloc
-COPY --from=build-env /stage/jemalloc/axum-perf-server /axum-perf-server
-CMD ["/axum-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS tako-perf-server-jemalloc
-COPY --from=build-env /stage/jemalloc/tako-perf-server /tako-perf-server
-CMD ["/tako-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS salvo-perf-server-jemalloc
-COPY --from=build-env /stage/jemalloc/salvo-perf-server /salvo-perf-server
-CMD ["/salvo-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS warp-perf-server-jemalloc
-COPY --from=build-env /stage/jemalloc/warp-perf-server /warp-perf-server
-CMD ["/warp-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-perf-server-jemalloc
-COPY --from=build-env /stage/jemalloc/ntex-perf-server /ntex-perf-server
-CMD ["/ntex-perf-server", "--bind", "0.0.0.0"]
-
-# ---------------------------------------------------------------------------
-# system allocator variants
-# ---------------------------------------------------------------------------
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-perf-server-sysalloc
-COPY --from=build-env /stage/system/harrow-perf-server /harrow-perf-server
-CMD ["/harrow-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS axum-perf-server-sysalloc
-COPY --from=build-env /stage/system/axum-perf-server /axum-perf-server
-CMD ["/axum-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS tako-perf-server-sysalloc
-COPY --from=build-env /stage/system/tako-perf-server /tako-perf-server
-CMD ["/tako-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS salvo-perf-server-sysalloc
-COPY --from=build-env /stage/system/salvo-perf-server /salvo-perf-server
-CMD ["/salvo-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS warp-perf-server-sysalloc
-COPY --from=build-env /stage/system/warp-perf-server /warp-perf-server
-CMD ["/warp-perf-server", "--bind", "0.0.0.0"]
-
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-perf-server-sysalloc
-COPY --from=build-env /stage/system/ntex-perf-server /ntex-perf-server
-CMD ["/ntex-perf-server", "--bind", "0.0.0.0"]
+FROM gcr.io/distroless/cc-debian13:latest-arm64 AS prod-sysalloc
+COPY --from=build-env /stage/system/ /usr/local/bin/
