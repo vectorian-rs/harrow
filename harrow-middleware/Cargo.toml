@@ -37,7 +37,7 @@ getrandom = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
-rolly = { workspace = true }
+rolly-tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 harrow-o11y = { workspace = true }

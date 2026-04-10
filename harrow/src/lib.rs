@@ -220,11 +220,11 @@ mod o11y_ext {
 
     /// Holds the rolly `TelemetryGuard` so the OTLP exporter stays alive
     /// for the lifetime of the application.
-    struct TelemetryGuardHolder(#[allow(dead_code)] rolly::TelemetryGuard);
+    struct TelemetryGuardHolder(#[allow(dead_code)] rolly_tokio::TelemetryGuard);
 
     impl AppO11yExt for App {
         fn o11y(self, config: O11yConfig) -> Self {
-            let guard = rolly::init(config.clone().into());
+            let guard = rolly_tokio::init_global_once(config.clone().into());
 
             self.state(Arc::new(TelemetryGuardHolder(guard)))
                 .state(Arc::new(config))

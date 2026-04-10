@@ -1276,7 +1276,7 @@ dependencies = [
  "harrow-server-tokio",
  "http",
  "monoio",
- "rolly",
+ "rolly-tokio",
  "serde_json",
  "tokio",
  "tracing",
@@ -1359,6 +1359,7 @@ dependencies = [
  "http-body-util",
  "proptest",
  "rolly",
+ "rolly-tokio",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3106,22 +3107,30 @@ dependencies = [
 
 [[package]]
 name = "rolly"
-version = "0.10.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b8d2da3b4b51fd7dad7ad0eb464487160a65dbad89e2b607641567747cdeef0"
+checksum = "770b1c8a41fb0cc0841e63c23394212c7ded8e7d7652d9ea8b99811830ca930a"
 dependencies = [
  "blake3",
- "bytes",
- "http",
  "libc",
- "pin-project-lite",
  "rand 0.9.2",
- "reqwest",
- "tokio",
- "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "rolly-tokio"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aab78e0c16dd233bd1ef680fb4e73e63be0f992decb5e5be7278d636393fd38"
+dependencies = [
+ "bytes",
+ "reqwest",
+ "rolly",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

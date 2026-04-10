@@ -28,7 +28,7 @@ profiling = ["harrow-core/profiling", "harrow-server-tokio?/profiling", "harrow-
 # Middleware features — each pulls in harrow-middleware with the right feature
 request-id = ["dep:harrow-middleware", "harrow-middleware/request-id"]
 cors = ["dep:harrow-middleware", "harrow-middleware/cors"]
-o11y = ["dep:harrow-middleware", "harrow-middleware/o11y", "dep:harrow-o11y", "dep:rolly"]
+o11y = ["dep:harrow-middleware", "harrow-middleware/o11y", "dep:harrow-o11y", "dep:rolly-tokio"]
 catch-panic = ["dep:harrow-middleware", "harrow-middleware/catch-panic"]
 compression = ["dep:harrow-middleware", "harrow-middleware/compression"]
 body-limit = ["dep:harrow-middleware", "harrow-middleware/body-limit"]
@@ -43,7 +43,7 @@ harrow-o11y = { workspace = true, optional = true }
 harrow-server-tokio = { workspace = true, optional = true }
 harrow-server-monoio = { workspace = true, optional = true }
 harrow-server-meguri = { workspace = true, optional = true }
-rolly = { workspace = true, optional = true }
+rolly-tokio = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 
 [dev-dependencies]
