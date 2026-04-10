@@ -1,0 +1,33 @@
+[package]
+name = "harrow-server-meguri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "io_uring server backend for Harrow using meguri"
+
+# Linux only — io_uring is not available on other platforms.
+[build-dependencies]
+
+[target.'cfg(not(target_os = "linux"))'.build-dependencies]
+# No deps on non-Linux — we just want the build script to fail
+
+[features]
+default = []
+profiling = ["meguri/profiling"]
+
+[dependencies]
+harrow-core = { workspace = true }
+meguri = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+tracing = { workspace = true }
+libc = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+harrow-middleware = { workspace = true }
+harrow-o11y = { workspace = true }
+proptest = { workspace = true }

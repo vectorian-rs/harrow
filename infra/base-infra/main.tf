@@ -111,6 +111,13 @@ module "ecr_load_generators" {
   force-delete    = true
 }
 
+module "ecr_harrow_bench" {
+  source          = "s3::https://s3-eu-west-1.amazonaws.com/datadeft-tf-modules/components/ecr-v1.0.0.zip"
+  repository-name = "harrow/harrow-bench"
+  stage           = "bench"
+  force-delete    = true
+}
+
 # ---------------------------------------------------------------------------
 # IAM — ECR pull for bench instances
 # ---------------------------------------------------------------------------
@@ -160,6 +167,7 @@ resource "aws_iam_role_policy" "bench_ecr_pull" {
           module.ecr_harrow_server_monoio.ecr-repository-arn,
           module.ecr_vegeta.ecr-repository-arn,
           module.ecr_load_generators.ecr-repository-arn,
+          module.ecr_harrow_bench.ecr-repository-arn,
         ]
       }
     ]
