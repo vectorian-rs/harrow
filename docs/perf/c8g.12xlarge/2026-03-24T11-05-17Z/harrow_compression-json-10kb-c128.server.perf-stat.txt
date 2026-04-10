@@ -1,9 +1,0 @@
-# started on Tue Mar 24 11:16:16 2026
-
-842689.09,msec,task-clock,842689092208,100.00,38.300,CPUs utilized
-842309.39,msec,cpu-clock,842693570510,100.00,38.283,CPUs utilized
-1872915,,context-switches,842697275343,100.00,2.223,K/sec
-4417,,cpu-migrations,842700307320,100.00,5.242,/sec
-523,,page-faults,842702788551,100.00,0.621,/sec
-523,,minor-faults,842705006496,100.00,0.621,/sec
-0,,major-faults,842707134515,100.00,0.000,/sec

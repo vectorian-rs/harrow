@@ -1,5 +1,0 @@
-harrow-perf-server listening on 0.0.0.0:3090
-
-thread 'main' (1) panicked at harrow-bench/src/bin/harrow_perf_server.rs:104:6:
-called `Result::unwrap()` on an `Err` value: Os { code: 98, kind: AddrInUse, message: "Address already in use" }
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -1,3 +1,0 @@
-[submodule ".agent-prompts"]
-	path = .agent-prompts
-	url = https://github.com/l1x/agent-prompts.git
