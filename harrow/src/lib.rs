@@ -256,21 +256,28 @@ mod o11y_ext {
     use crate::App;
 
     /// Extension trait that wires observability into a Harrow application.
-    ///
-    /// `.o11y(config)` does three things:
-    ///
-    /// 1. **Tries** to initialize the global tracing subscriber via rolly.
-    ///    If a subscriber is already set (because the application set one up
-    ///    first), this step is silently skipped — no panic, no error.
-    /// 2. Stores `Arc<O11yConfig>` in application state.
-    /// 3. Registers the o11y middleware (request IDs, trace IDs, metrics).
-    ///
-    /// This means simple apps get a working one-liner, while apps that
-    /// manage their own subscriber (or compose rolly's layer into it via
-    /// [`harrow::o11y::build_layer`](super::o11y::build_layer)) are not
-    /// blocked.
     pub trait AppO11yExt {
+        /// Full observability setup: initializes the global tracing subscriber
+        /// via rolly **and** registers the o11y middleware + config.
+        ///
+        /// This is the one-liner for simple applications that don't manage
+        /// their own tracing subscriber.
+        ///
+        /// If a global subscriber is already set, the rolly subscriber is
+        /// skipped with a warning — the middleware is still registered.
+        /// For apps that intentionally own their subscriber, prefer
+        /// [`o11y_middleware`](Self::o11y_middleware) instead to avoid the
+        /// warning.
         fn o11y(self, config: O11yConfig) -> Self;
+
+        /// Register only the o11y middleware and `O11yConfig` state.
+        ///
+        /// Does **not** touch the global tracing subscriber. Use this when
+        /// the application manages its own subscriber (e.g. via
+        /// `tracing_subscriber::fmt().init()` or by composing
+        /// [`harrow::o11y::build_layer`](super::o11y::build_layer) into a
+        /// custom registry).
+        fn o11y_middleware(self, config: O11yConfig) -> Self;
     }
 
     /// Holds the rolly `TelemetryGuard` so the OTLP exporter stays alive
@@ -286,7 +293,8 @@ mod o11y_ext {
                         "harrow .o11y(): global tracing subscriber already set, \
                          skipping rolly subscriber initialization. \
                          OTLP export will only work if the existing subscriber \
-                         includes rolly's layer (see harrow::o11y::build_layer)."
+                         includes rolly's layer (see harrow::o11y::build_layer). \
+                         Consider using .o11y_middleware() instead."
                     );
                     self
                 }
@@ -295,7 +303,11 @@ mod o11y_ext {
                 }
             };
 
-            app.state(Arc::new(config))
+            app.o11y_middleware(config)
+        }
+
+        fn o11y_middleware(self, config: O11yConfig) -> Self {
+            self.state(Arc::new(config))
                 .middleware(o11y_middleware)
         }
     }

@@ -147,7 +147,7 @@ fn main() {
         let guard = init_telemetry(config.clone());
         std::mem::forget(guard);
 
-        app = app.o11y(config);
+        app = app.o11y_middleware(config);
         eprintln!("o11y enabled");
     }
 

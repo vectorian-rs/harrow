@@ -1,4 +1,4 @@
-use harrow::o11y::{O11yConfig, init_telemetry};
+use harrow::o11y::{init_telemetry, O11yConfig};
 use harrow::{App, AppO11yExt, Request, Response};
 
 async fn hello(_req: Request) -> Response {
@@ -28,7 +28,7 @@ async fn main() {
     let _guard = init_telemetry(config.clone());
 
     let app = App::new()
-        .o11y(config)
+        .o11y_middleware(config)
         .get("/", hello)
         .get("/greet/:name", greet)
         .group("/api", |g| g.get("/health", health));
