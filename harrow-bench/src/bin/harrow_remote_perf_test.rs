@@ -1174,7 +1174,16 @@ fn start_profilers(args: &Args, server_pid: u32, perf_mode: PerfMode) -> bool {
     ok
 }
 
-/// Stop profilers and collect artifacts to the local results directory.
+/// Stop profilers, collapse perf data on server, and download only
+/// the minimal artifacts needed for analysis:
+///
+/// - **collapsed stacks** (~100KB) instead of raw perf.data (100s MB)
+/// - **perf-stat.txt** (software counters, <1KB)
+/// - **strace.txt** (syscall summary, <2KB)
+///
+/// The server runs `perf script | stackcollapse-perf.pl` to produce
+/// the collapsed stacks. If stackcollapse-perf.pl is not available,
+/// falls back to a simple `perf script` download.
 fn stop_and_collect_profilers(args: &Args, key: &str) {
     if args.deployment_mode == DeploymentMode::Local {
         return;
@@ -1200,12 +1209,34 @@ fn stop_and_collect_profilers(args: &Args, key: &str) {
          [ -f $f ] && doas kill -9 $(cat $f) 2>/dev/null; done",
     );
 
-    // Collect artifacts via scp.
+    // Collapse perf data on the server to avoid transferring raw perf.data.
+    // Raw perf.data can be 100s of MB; collapsed stacks are ~100KB.
+    println!("  Collapsing perf data on server...");
+    let collapse_result = ssh_server(
+        args,
+        "if [ -f /tmp/perf.data ]; then \
+           doas perf script -i /tmp/perf.data 2>/dev/null | \
+           stackcollapse-perf.pl --all 2>/dev/null > /tmp/collapsed.txt; \
+           if [ ! -s /tmp/collapsed.txt ]; then \
+             doas perf script -i /tmp/perf.data 2>/dev/null > /tmp/perf-script.txt; \
+           fi; \
+         fi",
+    );
+
+    if let Ok(o) = &collapse_result {
+        if !o.status.success() {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!("    warning: collapse failed: {}", stderr.trim());
+        }
+    }
+
+    // Collect only the compact artifacts.
     let ssh_user = &args.ssh_user;
     let host = args.server_ssh.as_deref().unwrap();
 
     let artifacts = [
-        ("/tmp/perf.data", format!("perf_{key}.data")),
+        ("/tmp/collapsed.txt", format!("collapsed_{key}.txt")),
+        ("/tmp/perf-script.txt", format!("perf-script_{key}.txt")),
         ("/tmp/perf-stat.txt", format!("perf-stat_{key}.txt")),
         ("/tmp/strace.txt", format!("strace_{key}.txt")),
     ];
@@ -1214,7 +1245,37 @@ fn stop_and_collect_profilers(args: &Args, key: &str) {
         let local_path = args.results_dir.join(local_name);
         if ops::scp_from_remote(ssh_user, host, remote, &local_path) {
             let size = fs::metadata(&local_path).map(|m| m.len()).unwrap_or(0);
-            println!("    {local_name}: {size} bytes");
+            if size > 0 {
+                println!("    {local_name}: {size} bytes");
+            }
+        }
+    }
+
+    // Generate flamegraph SVG locally from collapsed stacks.
+    let collapsed_path = args.results_dir.join(format!("collapsed_{key}.txt"));
+    if collapsed_path.exists() && fs::metadata(&collapsed_path).map(|m| m.len()).unwrap_or(0) > 0 {
+        let svg_path = args.results_dir.join(format!("flamegraph_{key}.svg"));
+        let result = std::process::Command::new("flamegraph.pl")
+            .arg("--title")
+            .arg(key)
+            .arg(&collapsed_path)
+            .stdout(std::process::Stdio::from(
+                fs::File::create(&svg_path).unwrap(),
+            ))
+            .stderr(std::process::Stdio::piped())
+            .status();
+        match result {
+            Ok(s) if s.success() => {
+                let size = fs::metadata(&svg_path).map(|m| m.len()).unwrap_or(0);
+                println!("    flamegraph_{key}.svg: {size} bytes");
+            }
+            _ => {
+                eprintln!(
+                    "    warning: flamegraph.pl not found or failed. \
+                     Generate manually: flamegraph.pl {} > flamegraph.svg",
+                    collapsed_path.display()
+                );
+            }
         }
     }
 
@@ -1222,6 +1283,7 @@ fn stop_and_collect_profilers(args: &Args, key: &str) {
     let _ = ssh_server(
         args,
         "doas rm -f /tmp/perf.data /tmp/perf-stat.txt /tmp/strace.txt \
+         /tmp/collapsed.txt /tmp/perf-script.txt \
          /tmp/perf-record.pid /tmp/perf-stat.pid /tmp/strace.pid",
     );
 }

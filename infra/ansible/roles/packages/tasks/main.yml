@@ -37,7 +37,21 @@
       - sysstat
       - procps-ng
       - ethtool
+      - perl
     state: present
+
+- name: Install FlameGraph tools (stackcollapse-perf.pl, flamegraph.pl)
+  become: true
+  ansible.builtin.shell: |
+    if [ ! -f /usr/local/bin/stackcollapse-perf.pl ]; then
+      wget -q -O /tmp/flamegraph.tar.gz https://github.com/brendangregg/FlameGraph/archive/refs/heads/master.tar.gz
+      tar -xzf /tmp/flamegraph.tar.gz -C /tmp
+      cp /tmp/FlameGraph-master/stackcollapse-perf.pl /usr/local/bin/
+      cp /tmp/FlameGraph-master/flamegraph.pl /usr/local/bin/
+      chmod +x /usr/local/bin/stackcollapse-perf.pl /usr/local/bin/flamegraph.pl
+      rm -rf /tmp/flamegraph.tar.gz /tmp/FlameGraph-master
+    fi
+  changed_when: false
 
 - name: Check whether dool package is available
   become: true
