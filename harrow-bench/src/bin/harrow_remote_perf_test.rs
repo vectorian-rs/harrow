@@ -165,6 +165,7 @@ impl Allocator {
 enum Framework {
     Harrow,
     Axum,
+    Ntex,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,6 +198,16 @@ impl Framework {
         match self {
             Self::Harrow => "harrow",
             Self::Axum => "axum",
+            Self::Ntex => "ntex",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "harrow" => Some(Self::Harrow),
+            "axum" => Some(Self::Axum),
+            "ntex" => Some(Self::Ntex),
+            _ => None,
         }
     }
 
@@ -210,6 +221,10 @@ impl Framework {
             (Self::Axum, _) => {
                 let suffix = alloc.suffix();
                 format!("axum-perf-server{suffix}")
+            }
+            (Self::Ntex, _) => {
+                let suffix = alloc.suffix();
+                format!("ntex-perf-server{suffix}")
             }
         }
     }
@@ -225,6 +240,10 @@ impl Framework {
                 let suffix = alloc.suffix();
                 format!("axum-perf-server{suffix}")
             }
+            (Self::Ntex, _) => {
+                let suffix = alloc.suffix();
+                format!("ntex-perf-server{suffix}")
+            }
         }
     }
 
@@ -237,6 +256,7 @@ impl Framework {
                 format!("/harrow-perf-server --bind 0.0.0.0 --port {port}")
             }
             (Self::Axum, _) => format!("/axum-perf-server --bind 0.0.0.0 --port {port}"),
+            (Self::Ntex, _) => format!("/ntex-perf-server --bind 0.0.0.0 --port {port}"),
         };
         if extra_flags.is_empty() {
             base
@@ -247,9 +267,11 @@ impl Framework {
 
     fn supports_backend(self, backend: Backend) -> bool {
         match (self, backend) {
-            (Self::Harrow, _) => true, // Harrow supports both tokio and monoio
-            (Self::Axum, Backend::Monoio) => false, // Axum only supports tokio
+            (Self::Harrow, _) => true,
+            (Self::Axum, Backend::Monoio) => false,
             (Self::Axum, Backend::Tokio) => true,
+            (Self::Ntex, Backend::Monoio) => false,
+            (Self::Ntex, Backend::Tokio) => true,
         }
     }
 }
@@ -373,7 +395,7 @@ fn usage() -> ! {
          \x20 --perf-mode MODE       Perf mode: stat|record|both\n\
          \x20 --allocator ALLOC      Allocator: mimalloc|system (default: mimalloc)\n\
          \x20 --compare MODE         Comparison mode: framework|allocator\n\
-         \x20 --framework FW         Framework: harrow|axum (default: harrow)\n\
+         \x20 --framework FW         Framework: harrow|axum|ntex (default: harrow)\n\
          \x20 --backend BACKEND      Runtime backend: tokio|monoio (default: tokio, harrow only)\n\
          \n\
          EXAMPLES:\n\
@@ -541,14 +563,10 @@ fn parse_args() -> Args {
                 i += 2;
             }
             "--framework" => {
-                framework = match args[i + 1].as_str() {
-                    "harrow" => Framework::Harrow,
-                    "axum" => Framework::Axum,
-                    other => {
-                        eprintln!("invalid --framework: {other}");
-                        usage();
-                    }
-                };
+                framework = Framework::parse(&args[i + 1]).unwrap_or_else(|| {
+                    eprintln!("invalid --framework: {}", args[i + 1]);
+                    usage();
+                });
                 i += 2;
             }
             "--backend" => {
@@ -703,8 +721,8 @@ fn comparison_variants(args: &Args) -> Vec<Variant> {
                 allocator: args.allocator,
             },
             Variant {
-                label: "axum".into(),
-                framework: Framework::Axum,
+                label: "ntex".into(),
+                framework: Framework::Ntex,
                 allocator: args.allocator,
             },
         ],
@@ -1062,6 +1080,153 @@ fn collect_docker_logs(args: &Args, framework: Framework, allocator: Allocator, 
 }
 
 // ---------------------------------------------------------------------------
+// Perf / Strace Capture
+// ---------------------------------------------------------------------------
+
+/// Get the host-namespace PID of the server container's main process.
+fn get_container_pid(args: &Args, container_name: &str) -> Option<u32> {
+    let cmd = format!("docker inspect --format '{{{{.State.Pid}}}}' {container_name}");
+    let result = match args.deployment_mode {
+        DeploymentMode::Local => ops::run_local(&cmd),
+        DeploymentMode::Remote => ssh_server(args, &cmd),
+    };
+    result
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+}
+
+/// Start perf record, perf stat, and strace on the server.
+///
+/// Each tool runs as a background process. PID files are written to /tmp/
+/// so we can reliably stop them later. Returns whether at least perf record
+/// started successfully.
+fn start_profilers(args: &Args, server_pid: u32, perf_mode: PerfMode) -> bool {
+    if args.deployment_mode == DeploymentMode::Local {
+        eprintln!("  perf capture not supported in local mode");
+        return false;
+    }
+
+    println!("  Starting profilers on server (target PID {server_pid})...");
+
+    // Clean up any leftover artifacts/PIDs from previous runs.
+    let _ = ssh_server(
+        args,
+        "doas rm -f /tmp/perf.data /tmp/perf-stat.txt /tmp/strace.txt \
+         /tmp/perf-record.pid /tmp/perf-stat.pid /tmp/strace.pid",
+    );
+
+    let mut ok = true;
+
+    // perf record — CPU call stacks for flamegraph generation.
+    if matches!(perf_mode, PerfMode::Record | PerfMode::Both) {
+        let cmd = format!(
+            "doas sh -c 'perf record -g -F 99 -p {server_pid} -o /tmp/perf.data \
+             </dev/null >/dev/null 2>&1 & echo $! > /tmp/perf-record.pid'"
+        );
+        match ssh_server(args, &cmd) {
+            Ok(o) if o.status.success() => println!("    perf record: started"),
+            _ => {
+                eprintln!("    perf record: FAILED to start");
+                ok = false;
+            }
+        }
+    }
+
+    // perf stat — software event counters.
+    if matches!(perf_mode, PerfMode::Stat | PerfMode::Both) {
+        let cmd = format!(
+            "doas sh -c 'perf stat -e task-clock,context-switches,cpu-migrations,page-faults \
+             -p {server_pid} -o /tmp/perf-stat.txt \
+             </dev/null >/dev/null 2>&1 & echo $! > /tmp/perf-stat.pid'"
+        );
+        match ssh_server(args, &cmd) {
+            Ok(o) if o.status.success() => println!("    perf stat:   started"),
+            _ => eprintln!("    perf stat:   FAILED to start"),
+        }
+    }
+
+    // strace — syscall breakdown.
+    let cmd = format!(
+        "doas sh -c 'strace -c -f -p {server_pid} \
+         </dev/null >/dev/null 2>/tmp/strace.txt & echo $! > /tmp/strace.pid'"
+    );
+    match ssh_server(args, &cmd) {
+        Ok(o) if o.status.success() => println!("    strace:      started"),
+        _ => eprintln!("    strace:      FAILED to start"),
+    }
+
+    // Verify at least one profiler is running.
+    thread::sleep(Duration::from_millis(500));
+    let verify = ssh_server(
+        args,
+        "for f in /tmp/perf-record.pid /tmp/perf-stat.pid /tmp/strace.pid; do \
+         [ -f $f ] && kill -0 $(cat $f) 2>/dev/null && echo \"$(basename $f .pid): running\"; \
+         done",
+    );
+    if let Ok(o) = verify {
+        let out = String::from_utf8_lossy(&o.stdout);
+        for line in out.lines() {
+            println!("    {line}");
+        }
+    }
+
+    ok
+}
+
+/// Stop profilers and collect artifacts to the local results directory.
+fn stop_and_collect_profilers(args: &Args, key: &str) {
+    if args.deployment_mode == DeploymentMode::Local {
+        return;
+    }
+
+    println!("  Stopping profilers...");
+
+    // Send SIGINT to perf (triggers clean shutdown + data flush).
+    // Send SIGINT to strace (prints summary to stderr → /tmp/strace.txt).
+    let _ = ssh_server(
+        args,
+        "for f in /tmp/perf-record.pid /tmp/perf-stat.pid /tmp/strace.pid; do \
+         [ -f $f ] && doas kill -INT $(cat $f) 2>/dev/null; done",
+    );
+
+    // Give profilers time to flush data.
+    thread::sleep(Duration::from_secs(3));
+
+    // Force-kill anything still running.
+    let _ = ssh_server(
+        args,
+        "for f in /tmp/perf-record.pid /tmp/perf-stat.pid /tmp/strace.pid; do \
+         [ -f $f ] && doas kill -9 $(cat $f) 2>/dev/null; done",
+    );
+
+    // Collect artifacts via scp.
+    let ssh_user = &args.ssh_user;
+    let host = args.server_ssh.as_deref().unwrap();
+
+    let artifacts = [
+        ("/tmp/perf.data", format!("perf_{key}.data")),
+        ("/tmp/perf-stat.txt", format!("perf-stat_{key}.txt")),
+        ("/tmp/strace.txt", format!("strace_{key}.txt")),
+    ];
+
+    for (remote, local_name) in &artifacts {
+        let local_path = args.results_dir.join(local_name);
+        if ops::scp_from_remote(ssh_user, host, remote, &local_path) {
+            let size = fs::metadata(&local_path).map(|m| m.len()).unwrap_or(0);
+            println!("    {local_name}: {size} bytes");
+        }
+    }
+
+    // Cleanup remote temp files.
+    let _ = ssh_server(
+        args,
+        "doas rm -f /tmp/perf.data /tmp/perf-stat.txt /tmp/strace.txt \
+         /tmp/perf-record.pid /tmp/perf-stat.pid /tmp/strace.pid",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Per-Config Run
 // ---------------------------------------------------------------------------
 
@@ -1099,7 +1264,19 @@ fn run_config(args: &Args, target: &TestTarget, variant: &Variant) {
         std::process::exit(1);
     }
 
-    // 2. Run the benchmark
+    // 2. Start profilers (if --perf enabled)
+    let container_name = framework.container_name(args.backend, allocator);
+    if args.perf_enabled {
+        if let Some(pid) = get_container_pid(args, &container_name) {
+            start_profilers(args, pid, args.perf_mode);
+            // Let profilers settle before load starts.
+            thread::sleep(Duration::from_secs(2));
+        } else {
+            eprintln!("  warning: could not get container PID, skipping profilers");
+        }
+    }
+
+    // 3. Run the benchmark
     let outfile = args.results_dir.join(format!("{key}.json"));
     let started_at_utc = ops::chrono_lite_utc();
 
@@ -1133,7 +1310,12 @@ fn run_config(args: &Args, target: &TestTarget, variant: &Variant) {
         );
     }
 
-    // 3. Collect artifacts and stop
+    // 4. Stop profilers and collect perf artifacts
+    if args.perf_enabled {
+        stop_and_collect_profilers(args, &key);
+    }
+
+    // 5. Collect docker artifacts and stop
     collect_docker_stats(args, &key);
     collect_docker_logs(args, framework, allocator, &key);
     stop_server_container(args, framework, allocator);

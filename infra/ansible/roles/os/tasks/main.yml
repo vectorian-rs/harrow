@@ -6,9 +6,13 @@
     owner: root
     group: root
     mode: "0644"
-  notify: reload sysctl
 
-- name: Deploy file descriptor limits
+- name: Apply sysctl settings
+  become: true
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-bench.conf
+  changed_when: true
+
+- name: Deploy file descriptor limits (PAM-based systems)
   become: true
   ansible.builtin.template:
     src: limits.conf.j2
@@ -16,6 +20,29 @@
     owner: root
     group: root
     mode: "0644"
+
+- name: Raise system-wide file descriptor limit (Alpine)
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/rc.conf
+    regexp: "^rc_ulimit="
+    line: 'rc_ulimit="-n 32000"'
+    create: true
+
+- name: Set ulimit in shell profile for SSH sessions
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/profile.d/bench-ulimit.sh
+    content: "ulimit -Sn 32000 2>/dev/null; ulimit -Hn 32000 2>/dev/null\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apply hard limit immediately via prlimit on current shell
+  become: true
+  ansible.builtin.command: prlimit --nofile=32000:32000 --pid 1
+  changed_when: true
+  failed_when: false
 
 - name: Install chrony
   become: true

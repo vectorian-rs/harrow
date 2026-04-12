@@ -1,38 +1,44 @@
-# Server: pull bench images (3 allocator variants, each containing all 6 framework binaries)
+# Server: pull prod bench images (3 allocator variants, each containing all 6 framework binaries)
 - name: Pull harrow-bench prod-mimalloc from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-bench prod-mimalloc for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-mimalloc-{{ harrow_version }} harrow-bench:prod-mimalloc-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 - name: Pull harrow-bench prod-jemalloc from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-bench prod-jemalloc for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-jemalloc-{{ harrow_version }} harrow-bench:prod-jemalloc-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 - name: Pull harrow-bench prod-sysalloc from ECR
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-bench prod-sysalloc for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/harrow-bench:prod-sysalloc-{{ harrow_version }} harrow-bench:prod-sysalloc-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 # Server: pull monoio (separate image, io_uring backend)
@@ -40,12 +46,43 @@
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/harrow-server-monoio:{{ harrow_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 - name: Tag harrow-server-monoio for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/harrow-server-monoio:{{ harrow_version }} harrow-server-monoio:arm64-{{ harrow_version }}"
   changed_when: true
+  failed_when: false
+  when: inventory_hostname in groups['server']
+
+# Server: pull perf images (debug symbols + frame pointers)
+- name: Pull harrow-perf-server from ECR
+  ansible.builtin.command:
+    cmd: "docker pull {{ ecr_registry }}/harrow/harrow-perf-server:perf-{{ harrow_version }}"
+  changed_when: true
+  failed_when: false
+  when: inventory_hostname in groups['server']
+
+- name: Tag harrow-perf-server for local use
+  ansible.builtin.command:
+    cmd: "docker tag {{ ecr_registry }}/harrow/harrow-perf-server:perf-{{ harrow_version }} harrow-perf-server:perf-{{ harrow_version }}"
+  changed_when: true
+  failed_when: false
+  when: inventory_hostname in groups['server']
+
+- name: Pull ntex-perf-server from ECR
+  ansible.builtin.command:
+    cmd: "docker pull {{ ecr_registry }}/harrow/ntex-perf-server:perf-{{ harrow_version }}"
+  changed_when: true
+  failed_when: false
+  when: inventory_hostname in groups['server']
+
+- name: Tag ntex-perf-server for local use
+  ansible.builtin.command:
+    cmd: "docker tag {{ ecr_registry }}/harrow/ntex-perf-server:perf-{{ harrow_version }} ntex-perf-server:perf-{{ harrow_version }}"
+  changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['server']
 
 # Client: pull load testers
@@ -65,10 +102,12 @@
   ansible.builtin.command:
     cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:wrk3-v{{ wrk3_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['client']
 
 - name: Tag wrk3 for local use
   ansible.builtin.command:
     cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:wrk3-v{{ wrk3_version }} wrk3:arm64-{{ wrk3_version }}"
   changed_when: true
+  failed_when: false
   when: inventory_hostname in groups['client']

@@ -5,9 +5,9 @@ AWS_PROFILE = "datadeft-dev"
 ECR = "529001354082.dkr.ecr.eu-west-1.amazonaws.com"
 SPINR_VERSION = "0.5.1"
 WRK3_VERSION = "0.2.0"
-BENCH_SERVER_IP = "34.243.129.39"
-BENCH_CLIENT_IP = "54.229.238.38"
-BENCH_SERVER_PRIVATE_IP = "172.31.3.127"
+BENCH_SERVER_IP = "46.137.7.233"
+BENCH_CLIENT_IP = "34.241.249.214"
+BENCH_SERVER_PRIVATE_IP = "172.31.14.13"
 
 [settings]
 experimental = true
@@ -178,12 +178,12 @@ run = "docker tag wrk3:arm64 ${ECR}/harrow/load-generators:wrk3-v${WRK3_VERSION}
 [tasks."bench:ecr-push:perf-harrow"]
 description = "Push perf harrow image to ECR"
 depends = ["bench:ecr-login"]
-run = "docker tag harrow-perf-server:perf-arm64 ${ECR}/harrow/harrow-perf-server:perf-${HARROW_VERSION} && docker push ${ECR}/harrow/harrow-perf-server:perf-${HARROW_VERSION}"
+run = "docker tag harrow-perf-server:perf-arm64 $ECR/harrow/harrow-perf-server:perf-$HARROW_VERSION && docker push $ECR/harrow/harrow-perf-server:perf-$HARROW_VERSION"
 
 [tasks."bench:ecr-push:perf-ntex"]
 description = "Push perf ntex image to ECR"
 depends = ["bench:ecr-login"]
-run = "docker tag ntex-perf-server:perf-arm64 ${ECR}/harrow/ntex-perf-server:perf-${HARROW_VERSION} && docker push ${ECR}/harrow/ntex-perf-server:perf-${HARROW_VERSION}"
+run = "docker tag ntex-perf-server:perf-arm64 $ECR/harrow/ntex-perf-server:perf-$HARROW_VERSION && docker push $ECR/harrow/ntex-perf-server:perf-$HARROW_VERSION"
 
 [tasks."bench:ecr-push-all"]
 description = "Push all bench images to ECR"
@@ -203,17 +203,63 @@ depends = ["docker:loadgen:all", "bench:ecr-push:spinr", "bench:ecr-push:wrk3"]
 [tasks."bench:pull-images"]
 description = "Pull versioned bench images from ECR on all instances"
 run = """
-HARROW_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
-cd infra/ansible && ansible-playbook playbooks/pull-images.yml --extra-vars "harrow_version=$HARROW_VERSION spinr_version={{env.SPINR_VERSION}}"
+cd infra/ansible && ansible-playbook playbooks/pull-images.yml --extra-vars "harrow_version=$HARROW_VERSION spinr_version=$SPINR_VERSION"
 """
 
 [tasks."bench:setup-linux"]
 description = "Provision bench EC2 instances via Ansible"
 run = """
-HARROW_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
-cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "harrow_version=$HARROW_VERSION spinr_version={{env.SPINR_VERSION}}"
+cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "harrow_version=$HARROW_VERSION spinr_version=$SPINR_VERSION"
 """
 
+
+[tasks."bench:perf:harrow"]
+description = "Run perf capture for harrow (spinr + perf record + strace)"
+run = """
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework harrow --backend tokio --allocator mimalloc \
+  --perf --perf-mode both \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+"""
+
+[tasks."bench:perf:ntex"]
+description = "Run perf capture for ntex (spinr + perf record + strace)"
+run = """
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework ntex --backend tokio --allocator mimalloc \
+  --perf --perf-mode both \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+"""
+
+[tasks."bench:perf:all"]
+description = "Run perf capture for both harrow and ntex sequentially"
+run = """
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework harrow --backend tokio --allocator mimalloc \
+  --perf --perf-mode both \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework ntex --backend tokio --allocator mimalloc \
+  --perf --perf-mode both \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+"""
+
+[tasks."bench:verify"]
+description = "Verify OS tuning and images on both bench nodes"
+run = "bash infra/scripts/verify-bench.sh $BENCH_SERVER_IP $BENCH_CLIENT_IP"
 
 # Run all 19 implementations sequentially.
 # Runs all 19 implementations sequentially (one at a time — they share the same server)

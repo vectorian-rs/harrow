@@ -60,6 +60,33 @@ pub fn scp_to_remote(user: &str, host: &str, local_path: &Path, remote_path: &st
     }
 }
 
+pub fn scp_from_remote(user: &str, host: &str, remote_path: &str, local_path: &Path) -> bool {
+    let out = Command::new("scp")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=no")
+        .arg(format!("{user}@{host}:{remote_path}"))
+        .arg(local_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    match out {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            eprintln!(
+                "    warning: scp from {} failed: {}",
+                remote_path,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("    warning: scp from {} failed: {error}", remote_path);
+            false
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Health checks
 // ---------------------------------------------------------------------------

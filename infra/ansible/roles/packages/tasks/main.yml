@@ -33,6 +33,7 @@
   ansible.builtin.package:
     name:
       - perf
+      - strace
       - sysstat
       - procps-ng
       - ethtool
