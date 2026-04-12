@@ -393,7 +393,7 @@ fn spawn_worker(
         let result = worker_loop(shared, listener, &config, Arc::clone(&shutdown));
 
         let _ = completion.send(result.as_ref().map(|_| ()).map_err(|e| e.to_string()));
-        result.map_err(|e| e)
+        result
     });
 
     WorkerThread {
@@ -704,9 +704,7 @@ fn handle_accept(
 
     let conn = connection::Conn::new(fd);
     let conn_idx = conns.insert(conn);
-    if !submit_recv(ring, conn_idx, &mut conns[conn_idx]) {
-        close_conn(conn_idx, conns);
-    }
+    submit_recv_or_close(ring, conn_idx, conns);
 }
 
 #[cfg(target_os = "linux")]
@@ -808,9 +806,7 @@ fn handle_conn_completion(
                         (parts, body_data)
                     });
                     conn.set_response(parts, body_data);
-                    if !submit_write(ring, conn_idx, &mut conns[conn_idx]) {
-                        close_conn(conn_idx, conns);
-                    }
+                    submit_write_or_close(ring, conn_idx, conns);
                 } else {
                     tracing::error!("failed to build request for fd {}", conn.fd);
                     close_conn(conn_idx, conns);
@@ -896,18 +892,33 @@ fn submit_timeout(ring: &mut meguri::Ring, ts: &libc::timespec) {
 /// Sweep connections that have exceeded their timeouts.
 #[cfg(target_os = "linux")]
 fn sweep_timed_out_connections(conns: &mut slab::Slab<connection::Conn>, config: &ServerConfig) {
-    // Collect indices first to avoid borrow issues.
     let expired: Vec<usize> = conns
         .iter()
         .filter(|(_, c)| {
-            c.is_expired(config.connection_timeout) || c.read_timed_out(config.header_read_timeout)
+            !matches!(c.state, connection::ConnState::Closed)
+                && (c.is_expired(config.connection_timeout)
+                    || c.read_timed_out(config.header_read_timeout))
         })
         .map(|(i, _)| i)
         .collect();
 
     for idx in expired {
-        tracing::debug!("closing timed-out connection fd={}", conns[idx].fd);
-        close_conn(idx, conns);
+        let conn = &mut conns[idx];
+        tracing::debug!("closing timed-out connection fd={}", conn.fd);
+
+        if conn.recv_pending || conn.write_pending {
+            // I/O is in flight — close the fd so the kernel cancels the
+            // pending operation, but keep the slab entry alive until the
+            // CQE arrives.  The CQE handler will see the error and call
+            // close_conn to release the slot.
+            unsafe {
+                libc::close(conn.fd);
+            }
+            conn.fd = -1;
+            conn.state = connection::ConnState::Closed;
+        } else {
+            close_conn(idx, conns);
+        }
     }
 }
 
@@ -931,7 +942,31 @@ fn submit_continue(_ring: &mut meguri::Ring, _conn_idx: usize, conn: &mut connec
 #[cfg(target_os = "linux")]
 fn close_conn(conn_idx: usize, conns: &mut slab::Slab<connection::Conn>) {
     let conn = conns.remove(conn_idx);
-    unsafe {
-        libc::close(conn.fd);
+    if conn.fd >= 0 {
+        unsafe {
+            libc::close(conn.fd);
+        }
+    }
+}
+
+/// Submit a RECV or close the connection on SQ full.
+#[cfg(target_os = "linux")]
+fn submit_recv_or_close(
+    ring: &mut meguri::Ring,
+    conn_idx: usize,
+    conns: &mut slab::Slab<connection::Conn>,
+) {
+    submit_recv_or_close(ring, conn_idx, conns);
+}
+
+/// Submit a WRITE or close the connection on SQ full.
+#[cfg(target_os = "linux")]
+fn submit_write_or_close(
+    ring: &mut meguri::Ring,
+    conn_idx: usize,
+    conns: &mut slab::Slab<connection::Conn>,
+) {
+    if !submit_write(ring, conn_idx, &mut conns[conn_idx]) {
+        close_conn(conn_idx, conns);
     }
 }
