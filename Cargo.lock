@@ -1325,6 +1325,7 @@ dependencies = [
  "bytes",
  "http",
  "httparse",
+ "memchr",
  "proptest",
 ]
 

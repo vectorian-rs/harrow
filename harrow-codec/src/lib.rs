@@ -6,55 +6,35 @@
 //! This crate is runtime-agnostic — no tokio, no async. It operates
 //! on byte slices and [`BytesMut`] buffers.
 
+use std::io::Write as _;
+
 use bytes::{Bytes, BytesMut};
 use http::header::{CONNECTION, CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http::{HeaderMap, Method, StatusCode, Uri, Version};
 
-/// Maximum number of headers we parse per request.
 pub const MAX_HEADERS: usize = 100;
-
-/// Maximum size of the header read buffer (64 KiB).
 pub const MAX_HEADER_BUF: usize = 64 * 1024;
-
-/// Default read buffer size.
 pub const DEFAULT_BUFFER_SIZE: usize = 8192;
-
-/// Chunked transfer-encoding terminator.
 pub const CHUNK_TERMINATOR: &[u8] = b"0\r\n\r\n";
-
-/// HTTP/1.1 100 Continue interim response.
 pub const CONTINUE_100: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 
-// ---------------------------------------------------------------------------
-// Request parsing
-// ---------------------------------------------------------------------------
-
-/// Result of parsing HTTP/1.1 request headers.
+#[derive(Debug)]
 pub struct ParsedRequest {
     pub method: Method,
     pub uri: Uri,
     pub version: Version,
     pub headers: HeaderMap,
-    /// Number of bytes consumed from the buffer (headers + \r\n\r\n).
     pub header_len: usize,
-    /// Content-Length value, if present.
     pub content_length: Option<u64>,
-    /// Whether Transfer-Encoding: chunked is present.
     pub chunked: bool,
-    /// Whether to keep the connection alive after this request.
     pub keep_alive: bool,
-    /// Whether the client sent `Expect: 100-continue`.
     pub expect_continue: bool,
 }
 
-/// Errors from the codec layer.
 #[derive(Debug)]
 pub enum CodecError {
-    /// Need more data to parse headers.
     Incomplete,
-    /// Decoded chunked body exceeds the configured limit.
     BodyTooLarge,
-    /// Invalid HTTP request.
     Invalid(String),
 }
 
@@ -73,8 +53,7 @@ impl std::error::Error for CodecError {}
 /// Try to parse HTTP/1.1 request headers from the buffer.
 ///
 /// Returns [`CodecError::Incomplete`] if the buffer doesn't contain a
-/// complete header section yet. The caller should read more data and
-/// retry.
+/// complete header section yet.
 pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
     let mut headers_buf = [httparse::EMPTY_HEADER; MAX_HEADERS];
     let mut parsed = httparse::Request::new(&mut headers_buf);
@@ -119,26 +98,38 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
             .map_err(|e| CodecError::Invalid(e.to_string()))?;
 
         if name == CONTENT_LENGTH {
-            if let Ok(s) = std::str::from_utf8(h.value)
-                && let Ok(len) = s.trim().parse::<u64>()
-            {
-                content_length = Some(len);
+            let s = std::str::from_utf8(h.value)
+                .map_err(|_| CodecError::Invalid("invalid content-length encoding".into()))?;
+            let len: u64 = s
+                .trim()
+                .parse()
+                .map_err(|_| CodecError::Invalid("invalid content-length value".into()))?;
+            // RFC 9110 §8.6: reject duplicate Content-Length with different value.
+            if content_length.is_some_and(|prev| prev != len) {
+                return Err(CodecError::Invalid(
+                    "conflicting content-length values".into(),
+                ));
             }
+            content_length = Some(len);
         } else if name == TRANSFER_ENCODING {
-            if let Ok(s) = std::str::from_utf8(h.value)
-                && s.to_ascii_lowercase().contains("chunked")
-            {
-                chunked = true;
+            if let Ok(s) = std::str::from_utf8(h.value) {
+                for token in s.split(',') {
+                    if token.trim().eq_ignore_ascii_case("chunked") {
+                        chunked = true;
+                    }
+                }
             }
-        } else if name == CONNECTION
-            && let Ok(s) = std::str::from_utf8(h.value)
-        {
-            let lower = s.to_ascii_lowercase();
-            if lower.contains("close") {
-                conn_close = true;
-            }
-            if lower.contains("keep-alive") {
-                conn_keep_alive = true;
+        } else if name == CONNECTION {
+            if let Ok(s) = std::str::from_utf8(h.value) {
+                for token in s.split(',') {
+                    let token = token.trim();
+                    if token.eq_ignore_ascii_case("close") {
+                        conn_close = true;
+                    }
+                    if token.eq_ignore_ascii_case("keep-alive") {
+                        conn_keep_alive = true;
+                    }
+                }
             }
         } else if name == EXPECT
             && let Ok(s) = std::str::from_utf8(h.value)
@@ -181,13 +172,15 @@ fn should_keep_alive(version: Version, conn_close: bool, conn_keep_alive: bool) 
     version == Version::HTTP_11
 }
 
-// ---------------------------------------------------------------------------
-// Response serialization
-// ---------------------------------------------------------------------------
-
 /// Write the HTTP response status line + headers into a buffer.
-pub fn write_response_head(status: StatusCode, headers: &HeaderMap, chunked: bool) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(256);
+///
+/// Appends to `buf` without clearing it first.
+pub fn write_response_head_into(
+    status: StatusCode,
+    headers: &HeaderMap,
+    chunked: bool,
+    buf: &mut Vec<u8>,
+) {
     buf.extend_from_slice(b"HTTP/1.1 ");
     buf.extend_from_slice(status.as_str().as_bytes());
     buf.push(b' ');
@@ -206,21 +199,27 @@ pub fn write_response_head(status: StatusCode, headers: &HeaderMap, chunked: boo
     }
 
     buf.extend_from_slice(b"\r\n");
+}
+
+/// Write the HTTP response status line + headers, returning a new buffer.
+pub fn write_response_head(status: StatusCode, headers: &HeaderMap, chunked: bool) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(256);
+    write_response_head_into(status, headers, chunked, &mut buf);
     buf
 }
 
-// ---------------------------------------------------------------------------
-// Chunked transfer-encoding
-// ---------------------------------------------------------------------------
-
 /// Encode a single chunk for chunked transfer-encoding.
-pub fn encode_chunk(data: &[u8]) -> Vec<u8> {
-    let hex_len = format!("{:x}", data.len());
-    let mut buf = Vec::with_capacity(hex_len.len() + 2 + data.len() + 2);
-    buf.extend_from_slice(hex_len.as_bytes());
+pub fn encode_chunk_into(data: &[u8], buf: &mut Vec<u8>) {
+    let _ = write!(buf, "{:x}", data.len());
     buf.extend_from_slice(b"\r\n");
     buf.extend_from_slice(data);
     buf.extend_from_slice(b"\r\n");
+}
+
+/// Encode a single chunk, returning a new buffer.
+pub fn encode_chunk(data: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(data.len() + 20);
+    encode_chunk_into(data, &mut buf);
     buf
 }
 
@@ -274,13 +273,23 @@ pub fn decode_chunked_with_limit(
     }
 }
 
+/// SIMD-accelerated CRLF search via memchr.
 fn find_crlf(buf: &[u8]) -> Option<usize> {
-    buf.windows(2).position(|w| w == b"\r\n")
+    let mut start = 0;
+    while start < buf.len() {
+        match memchr::memchr(b'\r', &buf[start..]) {
+            Some(pos) => {
+                let abs = start + pos;
+                if abs + 1 < buf.len() && buf[abs + 1] == b'\n' {
+                    return Some(abs);
+                }
+                start = abs + 1;
+            }
+            None => return None,
+        }
+    }
+    None
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -327,6 +336,31 @@ mod tests {
     }
 
     #[test]
+    fn reject_invalid_content_length() {
+        let req = b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: abc\r\n\r\n";
+        assert!(matches!(
+            try_parse_request(req),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn reject_conflicting_content_lengths() {
+        let req = b"POST /data HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\n";
+        assert!(matches!(
+            try_parse_request(req),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn accept_duplicate_same_content_length() {
+        let req = b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello";
+        let parsed = try_parse_request(req).unwrap();
+        assert_eq!(parsed.content_length, Some(5));
+    }
+
+    #[test]
     fn incomplete_request() {
         let req = b"GET /hello HTTP/1.1\r\nHost: loc";
         assert!(matches!(
@@ -365,6 +399,21 @@ mod tests {
     }
 
     #[test]
+    fn chunked_in_comma_list() {
+        let req =
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip, chunked\r\n\r\n";
+        let parsed = try_parse_request(req).unwrap();
+        assert!(parsed.chunked);
+    }
+
+    #[test]
+    fn connection_tokens_comma_separated() {
+        let req = b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive, upgrade\r\n\r\n";
+        let parsed = try_parse_request(req).unwrap();
+        assert!(parsed.keep_alive);
+    }
+
+    #[test]
     fn write_response_head_basic() {
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "text/plain".parse().unwrap());
@@ -384,9 +433,30 @@ mod tests {
     }
 
     #[test]
+    fn write_response_head_into_reuses_buffer() {
+        let headers = HeaderMap::new();
+        let mut buf = Vec::with_capacity(512);
+        write_response_head_into(StatusCode::OK, &headers, false, &mut buf);
+        let first_len = buf.len();
+        assert!(first_len > 0);
+        buf.clear();
+        write_response_head_into(StatusCode::NOT_FOUND, &headers, false, &mut buf);
+        assert!(buf.len() > 0);
+        // Buffer capacity should not have grown (reused)
+        assert!(buf.capacity() >= 512);
+    }
+
+    #[test]
     fn encode_chunk_basic() {
         let chunk = encode_chunk(b"hello");
         assert_eq!(chunk, b"5\r\nhello\r\n");
+    }
+
+    #[test]
+    fn encode_chunk_into_reuses_buffer() {
+        let mut buf = Vec::with_capacity(128);
+        encode_chunk_into(b"hello", &mut buf);
+        assert_eq!(buf, b"5\r\nhello\r\n");
     }
 
     #[test]
@@ -417,5 +487,14 @@ mod tests {
         let data = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
         let result = decode_chunked_with_limit(data, None).unwrap().unwrap();
         assert_eq!(result.0.as_ref(), b"hello world");
+    }
+
+    #[test]
+    fn find_crlf_basic() {
+        assert_eq!(find_crlf(b"hello\r\nworld"), Some(5));
+        assert_eq!(find_crlf(b"\r\n"), Some(0));
+        assert_eq!(find_crlf(b"no crlf here"), None);
+        assert_eq!(find_crlf(b"just\r no lf"), None);
+        assert_eq!(find_crlf(b""), None);
     }
 }
