@@ -1025,3 +1025,223 @@ mod tests {
         assert_eq!(find_crlf(b""), None);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // --- Chunked encode/decode roundtrip ---
+
+    proptest! {
+        #[test]
+        fn chunked_roundtrip(body in proptest::collection::vec(any::<u8>(), 1..4096)) {
+            let mut encoded = encode_chunk(&body);
+            encoded.extend_from_slice(CHUNK_TERMINATOR);
+
+            let result = decode_chunked_with_limit(&encoded, None).unwrap().unwrap();
+            prop_assert_eq!(result.0.as_ref(), body.as_slice());
+            prop_assert_eq!(result.1, encoded.len());
+        }
+
+        #[test]
+        fn chunked_roundtrip_stateful(body in proptest::collection::vec(any::<u8>(), 1..4096)) {
+            let mut encoded = encode_chunk(&body);
+            encoded.extend_from_slice(CHUNK_TERMINATOR);
+
+            // Decode with stateful PayloadDecoder.
+            let mut dec = PayloadDecoder::chunked();
+            let mut buf = BytesMut::from(encoded.as_slice());
+            let mut decoded = Vec::new();
+
+            loop {
+                match dec.decode(&mut buf, None).unwrap() {
+                    Some(PayloadItem::Chunk(c)) => decoded.extend_from_slice(&c),
+                    Some(PayloadItem::Eof) => break,
+                    None => prop_assert!(false, "unexpected incomplete"),
+                }
+            }
+            prop_assert_eq!(decoded.as_slice(), body.as_slice());
+        }
+
+        #[test]
+        fn chunked_multi_chunk_roundtrip(
+            chunks in proptest::collection::vec(
+                proptest::collection::vec(any::<u8>(), 1..512),
+                1..8
+            )
+        ) {
+            // Encode multiple chunks.
+            let mut encoded = Vec::new();
+            let mut expected_body = Vec::new();
+            for chunk in &chunks {
+                encode_chunk_into(chunk, &mut encoded);
+                expected_body.extend_from_slice(chunk);
+            }
+            encoded.extend_from_slice(CHUNK_TERMINATOR);
+
+            // Decode with stateful decoder.
+            let mut dec = PayloadDecoder::chunked();
+            let mut buf = BytesMut::from(encoded.as_slice());
+            let mut decoded = Vec::new();
+
+            loop {
+                match dec.decode(&mut buf, None).unwrap() {
+                    Some(PayloadItem::Chunk(c)) => decoded.extend_from_slice(&c),
+                    Some(PayloadItem::Eof) => break,
+                    None => prop_assert!(false, "unexpected incomplete"),
+                }
+            }
+            prop_assert_eq!(decoded.as_slice(), expected_body.as_slice());
+        }
+
+        #[test]
+        fn chunked_incremental_roundtrip(
+            body in proptest::collection::vec(any::<u8>(), 1..2048),
+            split in 1usize..100
+        ) {
+            // Encode as a single chunk + terminator.
+            let mut encoded = encode_chunk(&body);
+            encoded.extend_from_slice(CHUNK_TERMINATOR);
+
+            // Feed in increments of `split` bytes.
+            let mut dec = PayloadDecoder::chunked();
+            let mut decoded = Vec::new();
+            let mut pos = 0;
+            let mut buf = BytesMut::new();
+
+            loop {
+                // Feed next chunk of bytes.
+                let end = (pos + split).min(encoded.len());
+                if end > pos {
+                    buf.extend_from_slice(&encoded[pos..end]);
+                    pos = end;
+                }
+
+                match dec.decode(&mut buf, None).unwrap() {
+                    Some(PayloadItem::Chunk(c)) => decoded.extend_from_slice(&c),
+                    Some(PayloadItem::Eof) => break,
+                    None => {
+                        if pos >= encoded.len() {
+                            prop_assert!(false, "all data fed but decoder still incomplete");
+                        }
+                    }
+                }
+            }
+            prop_assert_eq!(decoded.as_slice(), body.as_slice());
+        }
+    }
+
+    // --- Content-Length decoder roundtrip ---
+
+    proptest! {
+        #[test]
+        fn content_length_roundtrip(body in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let mut dec = PayloadDecoder::length(body.len() as u64);
+            let mut buf = BytesMut::from(body.as_slice());
+            let mut decoded = Vec::new();
+
+            loop {
+                match dec.decode(&mut buf, None).unwrap() {
+                    Some(PayloadItem::Chunk(c)) => decoded.extend_from_slice(&c),
+                    Some(PayloadItem::Eof) => break,
+                    None => prop_assert!(false, "unexpected incomplete"),
+                }
+            }
+            prop_assert_eq!(decoded.as_slice(), body.as_slice());
+            prop_assert!(buf.is_empty());
+        }
+
+        #[test]
+        fn content_length_preserves_trailing(
+            body in proptest::collection::vec(any::<u8>(), 1..256),
+            trailing in proptest::collection::vec(any::<u8>(), 1..256),
+        ) {
+            let mut full = Vec::new();
+            full.extend_from_slice(&body);
+            full.extend_from_slice(&trailing);
+
+            let mut dec = PayloadDecoder::length(body.len() as u64);
+            let mut buf = BytesMut::from(full.as_slice());
+            let mut decoded = Vec::new();
+
+            loop {
+                match dec.decode(&mut buf, None).unwrap() {
+                    Some(PayloadItem::Chunk(c)) => decoded.extend_from_slice(&c),
+                    Some(PayloadItem::Eof) => break,
+                    None => prop_assert!(false, "unexpected incomplete"),
+                }
+            }
+            prop_assert_eq!(decoded.as_slice(), body.as_slice());
+            prop_assert_eq!(buf.as_ref(), trailing.as_slice());
+        }
+    }
+
+    // --- Keep-alive logic (RFC 7230 §6.1) ---
+
+    proptest! {
+        #[test]
+        fn keep_alive_http11_default(
+            path in "/[a-z]{1,20}",
+        ) {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            let parsed = try_parse_request(req.as_bytes()).unwrap();
+            prop_assert!(parsed.keep_alive, "HTTP/1.1 defaults to keep-alive");
+        }
+
+        #[test]
+        fn keep_alive_http10_default(
+            path in "/[a-z]{1,20}",
+        ) {
+            let req = format!("GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n");
+            let parsed = try_parse_request(req.as_bytes()).unwrap();
+            prop_assert!(!parsed.keep_alive, "HTTP/1.0 defaults to close");
+        }
+    }
+
+    // --- Valid request parse never panics ---
+
+    fn valid_method() -> impl Strategy<Value = &'static str> {
+        prop_oneof![
+            Just("GET"),
+            Just("POST"),
+            Just("PUT"),
+            Just("DELETE"),
+            Just("PATCH"),
+            Just("HEAD"),
+            Just("OPTIONS"),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn valid_request_parses(
+            method in valid_method(),
+            path in "/[a-z0-9/_-]{1,50}",
+            host in "[a-z]{3,15}\\.[a-z]{2,5}",
+        ) {
+            let req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n\r\n");
+            let parsed = try_parse_request(req.as_bytes()).unwrap();
+            prop_assert_eq!(parsed.method.as_str(), method);
+            prop_assert_eq!(parsed.uri.path(), path.as_str());
+            prop_assert_eq!(parsed.version, Version::HTTP_11);
+        }
+
+        #[test]
+        fn valid_post_with_content_length(
+            path in "/[a-z]{1,20}",
+            body in proptest::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let req = format!(
+                "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let mut full = req.into_bytes();
+            full.extend_from_slice(&body);
+
+            let parsed = try_parse_request(&full).unwrap();
+            prop_assert_eq!(parsed.method, Method::POST);
+            prop_assert_eq!(parsed.content_length, Some(body.len() as u64));
+        }
+    }
+}
