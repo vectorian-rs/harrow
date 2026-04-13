@@ -5,9 +5,9 @@ AWS_PROFILE = "datadeft-dev"
 ECR = "529001354082.dkr.ecr.eu-west-1.amazonaws.com"
 SPINR_VERSION = "0.5.1"
 WRK3_VERSION = "0.2.0"
-BENCH_SERVER_IP = "46.137.7.233"
-BENCH_CLIENT_IP = "34.241.249.214"
-BENCH_SERVER_PRIVATE_IP = "172.31.14.13"
+BENCH_SERVER_IP = "54.195.57.93"
+BENCH_CLIENT_IP = "108.131.38.135"
+BENCH_SERVER_PRIVATE_IP = "172.31.13.46"
 
 [settings]
 experimental = true
@@ -212,6 +212,46 @@ run = """
 cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "harrow_version=$HARROW_VERSION spinr_version=$SPINR_VERSION"
 """
 
+
+[tasks."bench:baseline:harrow"]
+description = "Run harrow baseline (spinr only, no profiling)"
+run = """
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework harrow --backend tokio --allocator mimalloc \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+"""
+
+[tasks."bench:baseline:ntex"]
+description = "Run ntex baseline (spinr only, no profiling)"
+run = """
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework ntex --backend tokio --allocator mimalloc \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+"""
+
+[tasks."bench:baseline:all"]
+description = "Run baseline for both harrow and ntex (no profiling)"
+run = """
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework harrow --backend tokio --allocator mimalloc \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
+  --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
+  --framework ntex --backend tokio --allocator mimalloc \
+  --duration 30 --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+"""
 
 [tasks."bench:perf:harrow"]
 description = "Run perf capture for harrow (spinr + perf record + strace)"

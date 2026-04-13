@@ -1319,6 +1319,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "harrow-codec"
+version = "0.9.6"
+dependencies = [
+ "bytes",
+ "http",
+ "httparse",
+ "proptest",
+]
+
+[[package]]
 name = "harrow-core"
 version = "0.9.6"
 dependencies = [
@@ -1388,12 +1398,12 @@ name = "harrow-server-meguri"
 version = "0.9.6"
 dependencies = [
  "bytes",
+ "harrow-codec",
  "harrow-core",
  "harrow-middleware",
  "harrow-o11y",
  "http",
  "http-body-util",
- "httparse",
  "libc",
  "meguri",
  "proptest",

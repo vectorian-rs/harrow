@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" font-family="Inter, -apple-system, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#ef4444"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#22c55e"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="900" fill="#0f172a" rx="8"/>
+
+  <!-- Title -->
+  <text x="600" y="40" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="700">Harrow-Tokio vs Ntex: Architectural Differences</text>
+  <text x="600" y="62" text-anchor="middle" fill="#94a3b8" font-size="13">Same httparse parser, same request/response semantics — different runtime, buffering, and I/O model</text>
+
+  <!-- ============ HARROW SIDE ============ -->
+  <rect x="30" y="85" width="555" height="790" fill="#1e293b" rx="6" stroke="#334155" stroke-width="1"/>
+  <text x="307" y="112" text-anchor="middle" fill="#f87171" font-size="16" font-weight="700">HARROW-TOKIO</text>
+  <text x="307" y="130" text-anchor="middle" fill="#94a3b8" font-size="11">47K RPS · 33.8s CPU · 602s futex</text>
+
+  <!-- Harrow: Runtime -->
+  <rect x="55" y="148" width="505" height="68" fill="#2d1b1b" rx="4" stroke="#ef4444" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="70" y="168" fill="#fca5a5" font-size="12" font-weight="600">Runtime: tokio multi_thread (work-stealing)</text>
+  <text x="70" y="186" fill="#f87171" font-size="11">48 worker threads share a global task queue</text>
+  <text x="70" y="202" fill="#f87171" font-size="11">Every task completion → futex_wake to steal work → 602s contention</text>
+
+  <!-- Harrow: Accept -->
+  <rect x="55" y="228" width="505" height="48" fill="#1a2332" rx="4" stroke="#475569" stroke-width="1"/>
+  <text x="70" y="248" fill="#cbd5e1" font-size="12" font-weight="600">Accept: TcpListener::accept() in async task</text>
+  <text x="70" y="264" fill="#94a3b8" font-size="11">Semaphore::try_acquire_owned() per connection → futex on contention</text>
+
+  <!-- Harrow: HTTP Layer -->
+  <rect x="55" y="288" width="505" height="88" fill="#2d1b1b" rx="4" stroke="#ef4444" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="70" y="308" fill="#fca5a5" font-size="12" font-weight="600">HTTP: hyper 1.0</text>
+  <text x="70" y="326" fill="#f87171" font-size="11">Per-connection: hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())</text>
+  <text x="70" y="342" fill="#f87171" font-size="11">Per-connection: TokioTimer::new() → timer wheel registration (futex)</text>
+  <text x="70" y="358" fill="#f87171" font-size="11">Per-frame: TimeoutBody polls body + deadline Sleep future</text>
+  <text x="70" y="370" fill="#64748b" font-size="10">httparse inside hyper, but wrapped in layers of trait objects + Arc</text>
+
+  <!-- Harrow: Buffers -->
+  <rect x="55" y="388" width="505" height="68" fill="#2d1b1b" rx="4" stroke="#ef4444" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="70" y="408" fill="#fca5a5" font-size="12" font-weight="600">Buffers: per-request allocation (no pooling)</text>
+  <text x="70" y="426" fill="#f87171" font-size="11">hyper allocates internal buffers per connection (hidden, not configurable)</text>
+  <text x="70" y="442" fill="#f87171" font-size="11">142K page faults · 14K madvise calls (mimalloc returning freed pages to OS)</text>
+
+  <!-- Harrow: I/O -->
+  <rect x="55" y="468" width="505" height="48" fill="#1a2332" rx="4" stroke="#475569" stroke-width="1"/>
+  <text x="70" y="488" fill="#cbd5e1" font-size="12" font-weight="600">I/O: writev (scatter-gather)</text>
+  <text x="70" y="504" fill="#94a3b8" font-size="11">Headers + body as separate iovecs → 1.65M writev calls</text>
+
+  <!-- Harrow: Dispatch -->
+  <rect x="55" y="528" width="505" height="48" fill="#1a2332" rx="4" stroke="#475569" stroke-width="1"/>
+  <text x="70" y="548" fill="#cbd5e1" font-size="12" font-weight="600">Dispatch: service_fn closure → async spawn per request</text>
+  <text x="70" y="564" fill="#94a3b8" font-size="11">Arc&lt;SharedState&gt; cloned per request · BoxBody trait object for response</text>
+
+  <!-- Harrow: Sync -->
+  <rect x="55" y="588" width="505" height="68" fill="#2d1b1b" rx="4" stroke="#ef4444" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="70" y="608" fill="#fca5a5" font-size="12" font-weight="600">Synchronization: heavy</text>
+  <text x="70" y="626" fill="#f87171" font-size="11">Work-stealing queue: atomic CAS + futex wake on every task transition</text>
+  <text x="70" y="642" fill="#f87171" font-size="11">parking_lot::Condvar for worker parking · Semaphore for connection limits</text>
+
+  <!-- Harrow: Data flow -->
+  <rect x="55" y="670" width="505" height="110" fill="#1a2332" rx="4" stroke="#475569" stroke-width="1"/>
+  <text x="70" y="690" fill="#cbd5e1" font-size="12" font-weight="600">Hot path data flow</text>
+  <text x="70" y="710" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">epoll_pwait → TcpStream::poll_read → hyper::Conn::poll</text>
+  <text x="70" y="726" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">  → httparse (inside hyper) → Incoming body frames</text>
+  <text x="70" y="742" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">  → service_fn → dispatch() → BoxBody response</text>
+  <text x="70" y="758" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">  → hyper encoder → TokioIo::poll_write → writev</text>
+  <text x="70" y="774" fill="#f87171" font-size="10" font-family="JetBrains Mono, monospace">  → futex_wake (notify work-stealing scheduler)</text>
+
+  <!-- ============ NTEX SIDE ============ -->
+  <rect x="615" y="85" width="555" height="790" fill="#1e293b" rx="6" stroke="#334155" stroke-width="1"/>
+  <text x="892" y="112" text-anchor="middle" fill="#4ade80" font-size="16" font-weight="700">NTEX</text>
+  <text x="892" y="130" text-anchor="middle" fill="#94a3b8" font-size="11">~70K+ RPS · 28.3s CPU · 25s futex</text>
+
+  <!-- Ntex: Runtime -->
+  <rect x="640" y="148" width="505" height="68" fill="#1b2d1b" rx="4" stroke="#22c55e" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="655" y="168" fill="#86efac" font-size="12" font-weight="600">Runtime: tokio current_thread + LocalSet (per worker)</text>
+  <text x="655" y="186" fill="#4ade80" font-size="11">N OS threads, each with own single-threaded runtime</text>
+  <text x="655" y="202" fill="#4ade80" font-size="11">No work-stealing, no cross-thread wakeups → 25s futex (96% less)</text>
+
+  <!-- Ntex: Accept -->
+  <rect x="640" y="228" width="505" height="48" fill="#1b2d1b" rx="4" stroke="#22c55e" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="655" y="248" fill="#86efac" font-size="12" font-weight="600">Accept: dedicated OS thread (non-async)</text>
+  <text x="655" y="264" fill="#4ade80" font-size="11">Distributes to workers via channel · backpressure when workers full</text>
+
+  <!-- Ntex: HTTP Layer -->
+  <rect x="640" y="288" width="505" height="88" fill="#1b2d1b" rx="4" stroke="#22c55e" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="655" y="308" fill="#86efac" font-size="12" font-weight="600">HTTP: custom codec (no hyper)</text>
+  <text x="655" y="326" fill="#4ade80" font-size="11">httparse for parsing (same crate as harrow)</text>
+  <text x="655" y="342" fill="#4ade80" font-size="11">Stateless decoder operates directly on BytesMut — no trait objects</text>
+  <text x="655" y="358" fill="#4ade80" font-size="11">Timers: futures-timer on separate thread, not per-connection tokio Sleep</text>
+  <text x="655" y="370" fill="#64748b" font-size="10">Response encoded with copy_nonoverlapping into contiguous buffer</text>
+
+  <!-- Ntex: Buffers -->
+  <rect x="640" y="388" width="505" height="68" fill="#1b2d1b" rx="4" stroke="#22c55e" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="655" y="408" fill="#86efac" font-size="12" font-weight="600">Buffers: thread-local pool (reused across requests)</text>
+  <text x="655" y="426" fill="#4ade80" font-size="11">128 read + 128 write buffers per worker · 512B–16KB range</text>
+  <text x="655" y="442" fill="#4ade80" font-size="11">94 page faults · 0 madvise calls (stable memory footprint)</text>
+
+  <!-- Ntex: I/O -->
+  <rect x="640" y="468" width="505" height="48" fill="#1b2d1b" rx="4" stroke="#22c55e" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="655" y="488" fill="#86efac" font-size="12" font-weight="600">I/O: sendto (single contiguous buffer)</text>
+  <text x="655" y="504" fill="#4ade80" font-size="11">Headers + body serialized into one buffer → 1.43M sendto calls</text>
+
+  <!-- Ntex: Dispatch -->
+  <rect x="640" y="528" width="505" height="48" fill="#1a2332" rx="4" stroke="#475569" stroke-width="1"/>
+  <text x="655" y="548" fill="#cbd5e1" font-size="12" font-weight="600">Dispatch: Service trait → call_nowait (no spawn)</text>
+  <text x="655" y="564" fill="#94a3b8" font-size="11">Pipeline binding drives handler inline · no task allocation per request</text>
+
+  <!-- Ntex: Sync -->
+  <rect x="640" y="588" width="505" height="68" fill="#1b2d1b" rx="4" stroke="#22c55e" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="655" y="608" fill="#86efac" font-size="12" font-weight="600">Synchronization: minimal</text>
+  <text x="655" y="626" fill="#4ade80" font-size="11">Cell&lt;T&gt; for per-connection state (single-threaded, zero cost)</text>
+  <text x="655" y="642" fill="#4ade80" font-size="11">AtomicWaker for cross-thread accept notifications only</text>
+
+  <!-- Ntex: Data flow -->
+  <rect x="640" y="670" width="505" height="110" fill="#1a2332" rx="4" stroke="#475569" stroke-width="1"/>
+  <text x="655" y="690" fill="#cbd5e1" font-size="12" font-weight="600">Hot path data flow</text>
+  <text x="655" y="710" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">epoll_pwait → libc::read → buf pool → advance_mut</text>
+  <text x="655" y="726" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">  → httparse (direct on BytesMut) → Request</text>
+  <text x="655" y="742" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">  → Service::call (inline) → Response</text>
+  <text x="655" y="758" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">  → encoder (copy_nonoverlapping) → libc::write</text>
+  <text x="655" y="774" fill="#4ade80" font-size="10" font-family="JetBrains Mono, monospace">  → (no cross-thread notification needed)</text>
+
+  <!-- Bottom summary -->
+  <text x="600" y="855" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="600">Key insight: same parser, same semantics — the performance gap is runtime model + buffer management + synchronization</text>
+  <text x="600" y="875" text-anchor="middle" fill="#94a3b8" font-size="12">Fix: replace hyper with custom codec, switch to current_thread + LocalSet, add thread-local buffer pool</text>
+</svg>

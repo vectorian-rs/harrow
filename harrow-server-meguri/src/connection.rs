@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use bytes::{Buf, BytesMut};
 use http_body_util::BodyExt;
 
-use crate::codec::{self, CodecError, ParsedRequest};
+use harrow_codec::{self as codec, CodecError, ParsedRequest};
 
 /// Connection states in the lifecycle.
 #[derive(Debug)]

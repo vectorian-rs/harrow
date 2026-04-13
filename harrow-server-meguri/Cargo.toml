@@ -21,12 +21,12 @@ io-uring = ["meguri/io-uring"]
 profiling = ["meguri/profiling"]
 
 [dependencies]
+harrow-codec = { workspace = true }
 harrow-core = { workspace = true }
 meguri = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
-httparse = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }

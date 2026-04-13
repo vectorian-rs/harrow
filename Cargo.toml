@@ -9,6 +9,7 @@ members = [
     "harrow-serde",
     "harrow-server-tokio",
     "harrow-server-monoio",
+    "harrow-codec",
     "harrow-server-meguri",
     "harrow-bench",
     "meguri",
@@ -22,6 +23,7 @@ repository = "https://github.com/vectorian-rs/harrow"
 readme = "README.md"
 
 [workspace.dependencies]
+harrow-codec = { path = "harrow-codec", version = "0.9.6" }
 harrow-core = { path = "harrow-core", version = "0.9.6" }
 harrow-o11y = { path = "harrow-o11y", version = "0.9.6" }
 harrow-middleware = { path = "harrow-middleware", version = "0.9.6" }
