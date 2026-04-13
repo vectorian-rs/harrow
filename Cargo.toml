@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["harrow-core/fuzz"]
+exclude = ["harrow-core/fuzz", "harrow-codec/fuzz"]
 members = [
     "harrow",
     "harrow-core",

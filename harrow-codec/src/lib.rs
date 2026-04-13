@@ -536,9 +536,10 @@ pub fn decode_chunked_with_limit(
         let size_str = std::str::from_utf8(&remaining[..crlf_pos])
             .map_err(|_| CodecError::Invalid("invalid chunk size".into()))?;
         let size_str = size_str.trim();
-        let chunk_size = u64::from_str_radix(size_str, 16)
-            .map_err(|_| CodecError::Invalid(format!("invalid chunk size: {size_str}")))?
-            as usize;
+        let chunk_size_u64 = u64::from_str_radix(size_str, 16)
+            .map_err(|_| CodecError::Invalid(format!("invalid chunk size: {size_str}")))?;
+        let chunk_size = usize::try_from(chunk_size_u64)
+            .map_err(|_| CodecError::Invalid("chunk size too large".into()))?;
 
         pos += crlf_pos + 2;
 
@@ -550,11 +551,12 @@ pub fn decode_chunked_with_limit(
             return Ok(Some((decoded.freeze(), pos)));
         }
 
-        if buf.len() < pos + chunk_size + 2 {
+        let needed = pos.saturating_add(chunk_size).saturating_add(2);
+        if buf.len() < needed {
             return Ok(None);
         }
 
-        if max_body.is_some_and(|limit| decoded.len() + chunk_size > limit) {
+        if max_body.is_some_and(|limit| decoded.len().saturating_add(chunk_size) > limit) {
             return Err(CodecError::BodyTooLarge);
         }
 
