@@ -3146,9 +3146,9 @@ dependencies = [
 
 [[package]]
 name = "rolly"
-version = "0.14.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f721b893a5f1bda795df545a4970cf324b5f0d626f95b84e65121aaf626f3c"
+checksum = "0f5e92cbf1b7bcd36d13aba4ed5c55f2895cb6ee1d699c7c418aa557638387da"
 dependencies = [
  "blake3",
  "libc",
@@ -3160,9 +3160,9 @@ dependencies = [
 
 [[package]]
 name = "rolly-tokio"
-version = "0.14.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a062131cb9805e4287b6c29bcbc5bbe6c1a7b7c20fbdf74fa69a81edb5ec5c5"
+checksum = "8e86b1df92215576ee732ebdc2ab74b510be680e6b9d0e270cb221681f2389d3"
 dependencies = [
  "bytes",
  "reqwest",

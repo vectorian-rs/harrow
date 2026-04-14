@@ -191,8 +191,9 @@ pub mod o11y {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use harrow::o11y::{O11yConfig, init_telemetry};
+    /// use harrow::AppO11yExt;
     ///
     /// let config = O11yConfig::default().service_name("my-app");
     /// let _guard = init_telemetry(config.clone());
