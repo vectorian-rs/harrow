@@ -1295,6 +1295,7 @@ dependencies = [
  "harrow",
  "harrow-core",
  "harrow-o11y",
+ "harrow-server-meguri",
  "http",
  "http-body-util",
  "hyper",
