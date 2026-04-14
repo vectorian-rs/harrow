@@ -99,7 +99,12 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
     let version = match parsed.version {
         Some(1) => Version::HTTP_11,
         Some(0) => Version::HTTP_10,
-        _ => Version::HTTP_11,
+        Some(v) => {
+            return Err(CodecError::Invalid(format!(
+                "unsupported HTTP version: 1.{v}"
+            )));
+        }
+        None => return Err(CodecError::Invalid("missing HTTP version".into())),
     };
 
     let mut headers = HeaderMap::with_capacity(parsed.headers.len());
@@ -312,6 +317,11 @@ impl PayloadDecoder {
                 if *remaining == 0 {
                     return Ok(Some(PayloadItem::Eof));
                 }
+                // Check max_body against the total Content-Length.
+                if let Some(limit) = max_body
+                    && *remaining > limit as u64 {
+                        return Err(CodecError::BodyTooLarge);
+                    }
                 if src.is_empty() {
                     return Ok(None);
                 }
@@ -416,9 +426,12 @@ impl ChunkedState {
             _ => return Poll::Ready(Err("invalid chunk size character")),
         };
 
-        match size.checked_mul(16) {
+        match size
+            .checked_mul(16)
+            .and_then(|n| n.checked_add(u64::from(rem)))
+        {
             Some(n) => {
-                *size = n + u64::from(rem);
+                *size = n;
                 Poll::Ready(Ok(ChunkedState::Size))
             }
             None => Poll::Ready(Err("chunk size overflow")),

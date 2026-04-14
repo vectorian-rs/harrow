@@ -1,8 +1,8 @@
 //! Tokio-based HTTP server for Harrow.
 //!
 //! Uses harrow-codec for HTTP parsing (no hyper), tokio `current_thread`
-//! with `LocalSet` per worker (no work-stealing), and thread-local buffer
-//! pooling (no per-request allocation).
+//! per worker (no work-stealing), and thread-local buffer pooling
+//! (no per-request allocation).
 
 #[cfg(feature = "ws")]
 pub mod ws;
@@ -220,14 +220,14 @@ async fn worker_loop(
     let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     loop {
-        if shutdown.load(Ordering::Relaxed) {
+        if shutdown.load(Ordering::Acquire) {
             break;
         }
 
         let result = tokio::select! {
             r = listener.accept() => r,
             () = tokio::time::sleep(Duration::from_millis(100)) => {
-                if shutdown.load(Ordering::Relaxed) { break; }
+                if shutdown.load(Ordering::Acquire) { break; }
                 continue;
             }
         };
@@ -361,13 +361,25 @@ where
 
             loop {
                 // Feed buffered data to the decoder.
-                match decoder.decode(&mut buf, Some(config.max_body_size))? {
-                    Some(PayloadItem::Chunk(chunk)) => {
+                match decoder.decode(&mut buf, Some(config.max_body_size)) {
+                    Err(CodecError::BodyTooLarge) => {
+                        write_error(&mut stream, 413, "payload too large").await;
+                        break 'connection;
+                    }
+                    Err(CodecError::Invalid(_)) => {
+                        write_error(&mut stream, 400, "bad request").await;
+                        break 'connection;
+                    }
+                    Err(CodecError::Incomplete) => {
+                        // Should not happen from PayloadDecoder, but handle gracefully.
+                        break 'connection;
+                    }
+                    Ok(Some(PayloadItem::Chunk(chunk))) => {
                         body.extend_from_slice(&chunk);
                         continue;
                     }
-                    Some(PayloadItem::Eof) => break,
-                    None => {}
+                    Ok(Some(PayloadItem::Eof)) => break,
+                    Ok(None) => {}
                 }
 
                 // Need more data — read from socket.
@@ -422,20 +434,17 @@ where
         let response = dispatch::dispatch(Arc::clone(&shared), request).await;
 
         // --- Serialize and write response ---
-        let (parts, response_body) = response.into_parts();
+        let (mut parts, response_body) = response.into_parts();
         let has_content_length = parts.headers.contains_key(http::header::CONTENT_LENGTH);
 
-        // Serialize head.
+        if !keep_alive && !parts.headers.contains_key(http::header::CONNECTION) {
+            parts
+                .headers
+                .insert(http::header::CONNECTION, "close".parse().unwrap());
+        }
+
         let chunked = !has_content_length;
         let mut head = write_response_head(parts.status, &parts.headers, chunked);
-
-        if !keep_alive && !parts.headers.contains_key(http::header::CONNECTION) {
-            let insert_pos = head.len() - 2; // before final \r\n
-            head.splice(
-                insert_pos..insert_pos,
-                b"connection: close\r\n".iter().copied(),
-            );
-        }
 
         // Collect body.
         let body_result = response_body.collect().await;
