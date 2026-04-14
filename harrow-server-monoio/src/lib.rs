@@ -82,7 +82,7 @@
 
 mod buffer;
 mod cancel;
-mod codec;
+use harrow_codec_h1 as codec;
 mod connection;
 mod h1;
 mod h2;

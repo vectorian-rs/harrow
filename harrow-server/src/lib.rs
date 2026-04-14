@@ -142,16 +142,17 @@ pub fn join_workers(handles: Vec<std::thread::JoinHandle<()>>) -> Result<(), Str
     let mut first_error = None;
     for handle in handles {
         if let Err(panic) = handle.join()
-            && first_error.is_none() {
-                let msg = if let Some(s) = panic.downcast_ref::<&str>() {
-                    format!("worker panicked: {s}")
-                } else if let Some(s) = panic.downcast_ref::<String>() {
-                    format!("worker panicked: {s}")
-                } else {
-                    "worker panicked".to_string()
-                };
-                first_error = Some(msg);
-            }
+            && first_error.is_none()
+        {
+            let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                format!("worker panicked: {s}")
+            } else if let Some(s) = panic.downcast_ref::<String>() {
+                format!("worker panicked: {s}")
+            } else {
+                "worker panicked".to_string()
+            };
+            first_error = Some(msg);
+        }
     }
     match first_error {
         Some(e) => Err(e),
