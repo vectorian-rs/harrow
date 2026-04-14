@@ -2,6 +2,11 @@
 //!
 //! Each connection tracks its own read buffer, parse state, and response
 //! serialization. The main loop drives transitions via CQE completions.
+//!
+//! This module is platform-independent (no io_uring dependency) so the
+//! FSM can be unit-tested on macOS.
+
+#![allow(dead_code)] // FSM types are only used by the Linux event loop
 
 use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
@@ -114,64 +119,19 @@ impl Conn {
     }
 
     fn process_headers(&mut self, max_body: usize) -> ProcessResult {
-        loop {
-            match codec::try_parse_request(&self.buf) {
-                Ok(parsed) => {
-                    let header_len = parsed.header_len;
-                    let keep_alive = parsed.keep_alive;
-                    let content_length = parsed.content_length;
-                    let chunked = parsed.chunked;
+        match codec::try_parse_request(&self.buf) {
+            Ok(parsed) => {
+                let header_len = parsed.header_len;
+                let keep_alive = parsed.keep_alive;
+                let content_length = parsed.content_length;
+                let chunked = parsed.chunked;
 
-                    // Remove consumed header bytes.
-                    self.buf.advance(header_len);
-                    // Any leftover bytes in buf are body data.
+                self.buf.advance(header_len);
 
-                    // Early reject: Content-Length exceeds limit.
-                    if max_body > 0
-                        && let Some(cl) = content_length
-                        && cl as usize > max_body
-                    {
-                        let resp = error_response(
-                            http::StatusCode::PAYLOAD_TOO_LARGE,
-                            "payload too large",
-                            false,
-                        );
-                        return ProcessResult::WriteError(resp);
-                    }
-
-                    // Check if there is a body to read.
-                    let has_body = content_length.is_some_and(|cl| cl > 0) || chunked;
-                    if has_body {
-                        self.parsed = Some(parsed);
-                        self.state = ConnState::Body {
-                            content_length,
-                            chunked,
-                        };
-                        return self.process_body(content_length, chunked, max_body);
-                    } else {
-                        // No body — ready to dispatch.
-                        self.parsed = Some(parsed);
-                        self.keep_alive = keep_alive;
-                        self.state = ConnState::Dispatching;
-                        return ProcessResult::Dispatch;
-                    }
-                }
-                Err(CodecError::Incomplete) => {
-                    if self.buf.len() >= codec::MAX_HEADER_BUF {
-                        let resp = error_response(
-                            http::StatusCode::BAD_REQUEST,
-                            "request headers too large",
-                            false,
-                        );
-                        return ProcessResult::WriteError(resp);
-                    }
-                    return ProcessResult::NeedRecv;
-                }
-                Err(CodecError::Invalid(_)) => {
-                    let resp = error_response(http::StatusCode::BAD_REQUEST, "bad request", false);
-                    return ProcessResult::WriteError(resp);
-                }
-                Err(CodecError::BodyTooLarge) => {
+                if max_body > 0
+                    && let Some(cl) = content_length
+                    && cl as usize > max_body
+                {
                     let resp = error_response(
                         http::StatusCode::PAYLOAD_TOO_LARGE,
                         "payload too large",
@@ -179,6 +139,44 @@ impl Conn {
                     );
                     return ProcessResult::WriteError(resp);
                 }
+
+                let has_body = content_length.is_some_and(|cl| cl > 0) || chunked;
+                if has_body {
+                    self.parsed = Some(parsed);
+                    self.state = ConnState::Body {
+                        content_length,
+                        chunked,
+                    };
+                    self.process_body(content_length, chunked, max_body)
+                } else {
+                    self.parsed = Some(parsed);
+                    self.keep_alive = keep_alive;
+                    self.state = ConnState::Dispatching;
+                    ProcessResult::Dispatch
+                }
+            }
+            Err(CodecError::Incomplete) => {
+                if self.buf.len() >= codec::MAX_HEADER_BUF {
+                    let resp = error_response(
+                        http::StatusCode::BAD_REQUEST,
+                        "request headers too large",
+                        false,
+                    );
+                    return ProcessResult::WriteError(resp);
+                }
+                ProcessResult::NeedRecv
+            }
+            Err(CodecError::Invalid(_)) => {
+                let resp = error_response(http::StatusCode::BAD_REQUEST, "bad request", false);
+                ProcessResult::WriteError(resp)
+            }
+            Err(CodecError::BodyTooLarge) => {
+                let resp = error_response(
+                    http::StatusCode::PAYLOAD_TOO_LARGE,
+                    "payload too large",
+                    false,
+                );
+                ProcessResult::WriteError(resp)
             }
         }
     }
@@ -390,4 +388,173 @@ fn error_response(status: http::StatusCode, body: &'static str, keep_alive: bool
     let mut resp = codec::write_response_head(status, &headers, false);
     resp.extend_from_slice(body.as_bytes());
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_conn() -> Conn {
+        Conn::new(0)
+    }
+
+    // --- Header parsing ---
+
+    #[test]
+    fn headers_simple_get() {
+        let mut conn = new_conn();
+        conn.buf
+            .extend_from_slice(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::Dispatch));
+        assert!(matches!(conn.state, ConnState::Dispatching));
+        assert!(conn.keep_alive);
+    }
+
+    #[test]
+    fn headers_incomplete() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(b"GET / HTTP/1.1\r\nHost: loc");
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::NeedRecv));
+        assert!(matches!(conn.state, ConnState::Headers));
+    }
+
+    #[test]
+    fn headers_invalid() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(b"INVALID\r\n\r\n");
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::WriteError(_)));
+    }
+
+    #[test]
+    fn headers_connection_close() {
+        let mut conn = new_conn();
+        conn.buf
+            .extend_from_slice(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::Dispatch));
+        assert!(!conn.keep_alive);
+    }
+
+    // --- Content-Length body ---
+
+    #[test]
+    fn content_length_body_complete() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+        );
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::Dispatch));
+        assert_eq!(conn.body_bytes.as_ref(), b"hello");
+    }
+
+    #[test]
+    fn content_length_body_needs_more() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhello",
+        );
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::NeedRecv));
+        assert!(matches!(conn.state, ConnState::Body { .. }));
+    }
+
+    #[test]
+    fn content_length_body_preserves_pipelined_data() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhelloGET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::Dispatch));
+        assert_eq!(conn.body_bytes.as_ref(), b"hello");
+        // Pipelined request preserved in buf.
+        assert_eq!(
+            conn.buf.as_ref(),
+            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn content_length_too_large() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9999\r\n\r\n",
+        );
+        let result = conn.on_recv(conn.buf.len(), 100);
+        assert!(matches!(result, ProcessResult::WriteError(_)));
+    }
+
+    // --- Chunked body ---
+
+    #[test]
+    fn chunked_body_complete() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        );
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::Dispatch));
+        assert_eq!(conn.body_bytes.as_ref(), b"hello");
+    }
+
+    #[test]
+    fn chunked_body_preserves_pipelined_data() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nGET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        let result = conn.on_recv(conn.buf.len(), 1024);
+        assert!(matches!(result, ProcessResult::Dispatch));
+        assert_eq!(conn.body_bytes.as_ref(), b"hello");
+        assert_eq!(
+            conn.buf.as_ref(),
+            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        );
+    }
+
+    // --- Write completion ---
+
+    #[test]
+    fn write_complete_close() {
+        let mut conn = new_conn();
+        conn.response_buf = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        conn.state = ConnState::Writing;
+        conn.keep_alive = false;
+        let result = conn.on_write(conn.response_buf.len());
+        assert!(matches!(result, WriteResult::Close));
+    }
+
+    #[test]
+    fn write_complete_keep_alive() {
+        let mut conn = new_conn();
+        conn.response_buf = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        conn.state = ConnState::Writing;
+        conn.keep_alive = true;
+        let result = conn.on_write(conn.response_buf.len());
+        assert!(matches!(result, WriteResult::RecvNext));
+        assert!(matches!(conn.state, ConnState::Headers));
+    }
+
+    #[test]
+    fn write_partial() {
+        let mut conn = new_conn();
+        conn.response_buf = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        conn.state = ConnState::Writing;
+        let result = conn.on_write(5);
+        assert!(matches!(result, WriteResult::WriteMore));
+        assert_eq!(conn.response_written, 5);
+    }
+
+    // --- EOF ---
+
+    #[test]
+    fn eof_closes() {
+        let mut conn = new_conn();
+        let result = conn.on_recv(0, 1024);
+        assert!(matches!(result, ProcessResult::Close));
+    }
 }

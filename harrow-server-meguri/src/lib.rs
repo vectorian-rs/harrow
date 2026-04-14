@@ -31,10 +31,11 @@
 #[cfg(all(feature = "io-uring", not(target_os = "linux")))]
 compile_error!("harrow-server-meguri requires Linux. io_uring is not available on this platform.");
 
-#[cfg(target_os = "linux")]
+#[allow(unused_imports)]
 use harrow_codec_h1 as codec;
-#[cfg(target_os = "linux")]
-mod connection;
+// Connection FSM is platform-independent (bytes + http types only).
+// The io_uring event loop below is Linux-only.
+pub(crate) mod connection;
 
 #[cfg(target_os = "linux")]
 use std::error::Error;
