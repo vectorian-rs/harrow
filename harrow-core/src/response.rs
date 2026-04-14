@@ -36,9 +36,8 @@ impl Response {
     /// Create a streaming response from a `Stream` of `Frame<Bytes>`.
     pub fn streaming<S>(status: StatusCode, stream: S) -> Self
     where
-        S: Stream<
-                Item = Result<hyper::body::Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>,
-            > + Send
+        S: Stream<Item = Result<http_body::Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>
+            + Send
             + Sync
             + 'static,
     {
@@ -422,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_response_collects_frames() {
-        use hyper::body::Frame;
+        use http_body::Frame;
         let chunks = vec![
             Ok(Frame::data(Bytes::from("hello "))),
             Ok(Frame::data(Bytes::from("world"))),

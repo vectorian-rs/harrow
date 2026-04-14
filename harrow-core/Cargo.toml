@@ -13,14 +13,16 @@ json = ["dep:serde", "dep:harrow-serde", "harrow-serde/json"]
 msgpack = ["dep:serde", "dep:harrow-serde", "harrow-serde/msgpack"]
 openapi = ["dep:serde", "dep:serde_json"]
 ws = ["dep:sha1", "dep:base64"]
+hyper-compat = ["dep:hyper"]
 profiling = []
 
 [dependencies]
 bytes = { workspace = true }
 futures-util = { workspace = true }
 http = { workspace = true }
+http-body = "1"
 http-body-util = { workspace = true }
-hyper = { workspace = true }
+hyper = { workspace = true, optional = true }
 pin-project-lite = { workspace = true }
 matchit = { workspace = true }
 percent-encoding = { workspace = true }

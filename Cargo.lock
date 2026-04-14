@@ -1340,6 +1340,7 @@ dependencies = [
  "futures-util",
  "harrow-serde",
  "http",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",

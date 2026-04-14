@@ -289,6 +289,7 @@ impl From<BodyError> for Response {
 
 /// Convert a `hyper::body::Incoming` into a harrow `Body`.
 /// Called at the server boundary to box the hyper-specific body type.
+#[cfg(feature = "hyper-compat")]
 pub fn box_incoming(incoming: hyper::body::Incoming) -> Body {
     use http_body_util::BodyExt;
     incoming
