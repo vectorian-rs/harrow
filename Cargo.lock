@@ -1451,6 +1451,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "pin-project-lite",
+ "proptest",
  "rustls 0.23.37",
  "socket2 0.5.10",
  "tokio",

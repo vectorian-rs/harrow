@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bytes::{Buf, BytesMut};
+use bytes::Buf;
 use http_body_util::BodyExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -199,12 +199,13 @@ fn reuseport_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct WorkerConfig {
-    max_connections: usize,
-    header_read_timeout: Option<Duration>,
-    connection_timeout: Option<Duration>,
-    body_read_timeout: Option<Duration>,
-    max_body_size: usize,
+#[doc(hidden)]
+pub struct WorkerConfig {
+    pub max_connections: usize,
+    pub header_read_timeout: Option<Duration>,
+    pub connection_timeout: Option<Duration>,
+    pub body_read_timeout: Option<Duration>,
+    pub max_body_size: usize,
 }
 
 async fn worker_loop(
@@ -216,7 +217,7 @@ async fn worker_loop(
 ) {
     use std::sync::atomic::Ordering;
 
-    let mut active: usize = 0;
+    let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -239,39 +240,45 @@ async fn worker_loop(
             }
         };
 
-        if active >= config.max_connections {
+        if active.load(Ordering::Relaxed) >= config.max_connections {
             drop(stream);
             continue;
         }
 
-        active += 1;
+        active.fetch_add(1, Ordering::Relaxed);
         let shared = Arc::clone(&shared);
-        let config = config.clone();
-
         let config2 = config.clone();
+        let active2 = Arc::clone(&active);
+
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, shared, &config2).await {
+            if let Err(e) = handle_tcp_connection(stream, shared, &config2).await {
                 tracing::debug!("connection error: {e}");
             }
+            active2.fetch_sub(1, Ordering::Relaxed);
         });
-
-        // Note: `active` is decremented implicitly when the task completes
-        // and the LocalSet reaps it. For exact tracking we'd need a shared
-        // counter, but for connection limiting the accept-side check is
-        // sufficient (tasks complete and free capacity naturally).
     }
 }
 
-async fn handle_connection(
-    mut stream: TcpStream,
+async fn handle_tcp_connection(
+    stream: TcpStream,
     shared: Arc<SharedState>,
     config: &WorkerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    stream.set_nodelay(true)?;
+    handle_connection(stream, shared, config).await
+}
+
+#[doc(hidden)]
+pub async fn handle_connection<S>(
+    mut stream: S,
+    shared: Arc<SharedState>,
+    config: &WorkerConfig,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let accepted_at = Instant::now();
     let mut buf = BufPool::acquire_read();
-
-    // Disable Nagle's algorithm.
-    stream.set_nodelay(true)?;
 
     'connection: loop {
         // Check connection lifetime.
@@ -284,37 +291,8 @@ async fn handle_connection(
         let request_started = Instant::now();
 
         // --- Read headers ---
+        // Try buffered data first (handles pipelined keep-alive requests).
         let parsed = loop {
-            // Check header read timeout.
-            if let Some(timeout) = config.header_read_timeout
-                && request_started.elapsed() >= timeout
-            {
-                break 'connection;
-            }
-
-            // Read more data.
-            let remaining_timeout = config
-                .header_read_timeout
-                .map(|t| t.saturating_sub(request_started.elapsed()));
-
-            let n = if let Some(timeout) = remaining_timeout {
-                match tokio::time::timeout(timeout, stream.read_buf(&mut buf)).await {
-                    Ok(Ok(0)) => break 'connection, // EOF
-                    Ok(Ok(n)) => n,
-                    Ok(Err(_)) => break 'connection,
-                    Err(_) => break 'connection, // timeout
-                }
-            } else {
-                match stream.read_buf(&mut buf).await {
-                    Ok(0) => break 'connection,
-                    Ok(n) => n,
-                    Err(_) => break 'connection,
-                }
-            };
-
-            let _ = n;
-
-            // Try to parse headers.
             match try_parse_request(&buf) {
                 Ok(parsed) => break parsed,
                 Err(CodecError::Incomplete) => {
@@ -322,7 +300,6 @@ async fn handle_connection(
                         write_error(&mut stream, 400, "request headers too large").await;
                         break 'connection;
                     }
-                    continue;
                 }
                 Err(CodecError::Invalid(_)) => {
                     write_error(&mut stream, 400, "bad request").await;
@@ -331,6 +308,26 @@ async fn handle_connection(
                 Err(CodecError::BodyTooLarge) => {
                     write_error(&mut stream, 413, "payload too large").await;
                     break 'connection;
+                }
+            }
+
+            // Need more data — read from socket.
+            if let Some(timeout) = config.header_read_timeout {
+                let remaining = timeout.saturating_sub(request_started.elapsed());
+                if remaining.is_zero() {
+                    break 'connection;
+                }
+                match tokio::time::timeout(remaining, stream.read_buf(&mut buf)).await {
+                    Ok(Ok(0)) => break 'connection,
+                    Ok(Ok(_)) => {}
+                    Ok(Err(_)) => break 'connection,
+                    Err(_) => break 'connection,
+                }
+            } else {
+                match stream.read_buf(&mut buf).await {
+                    Ok(0) => break 'connection,
+                    Ok(_) => {}
+                    Err(_) => break 'connection,
                 }
             }
         };
@@ -428,8 +425,6 @@ async fn handle_connection(
         let (parts, response_body) = response.into_parts();
         let has_content_length = parts.headers.contains_key(http::header::CONTENT_LENGTH);
 
-        let resp_buf = BufPool::acquire_write();
-
         // Serialize head.
         let chunked = !has_content_length;
         let mut head = write_response_head(parts.status, &parts.headers, chunked);
@@ -469,9 +464,6 @@ async fn handle_connection(
             break;
         }
 
-        BufPool::release_write(BytesMut::from(resp_buf.as_ref()));
-        drop(resp_buf);
-
         if !keep_alive {
             break;
         }
@@ -484,19 +476,22 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn write_error(stream: &mut TcpStream, status: u16, body: &str) {
-    let resp = format!(
-        "HTTP/1.1 {status} {reason}\r\n\
-         content-type: text/plain\r\n\
-         content-length: {len}\r\n\
-         connection: close\r\n\
-         \r\n\
-         {body}",
-        reason = http::StatusCode::from_u16(status)
-            .ok()
-            .and_then(|s| s.canonical_reason())
-            .unwrap_or("Error"),
-        len = body.len(),
-    );
-    let _ = stream.write_all(resp.as_bytes()).await;
+async fn write_error<S: tokio::io::AsyncWrite + Unpin>(stream: &mut S, status: u16, body: &str) {
+    let resp = match (status, body) {
+        (400, "bad request") => &b"HTTP/1.1 400 Bad Request\r\ncontent-type: text/plain\r\ncontent-length: 11\r\nconnection: close\r\n\r\nbad request"[..],
+        (400, "request headers too large") => &b"HTTP/1.1 400 Bad Request\r\ncontent-type: text/plain\r\ncontent-length: 26\r\nconnection: close\r\n\r\nrequest headers too large"[..],
+        (408, "request timeout") => &b"HTTP/1.1 408 Request Timeout\r\ncontent-type: text/plain\r\ncontent-length: 15\r\nconnection: close\r\n\r\nrequest timeout"[..],
+        (413, "payload too large") => &b"HTTP/1.1 413 Payload Too Large\r\ncontent-type: text/plain\r\ncontent-length: 17\r\nconnection: close\r\n\r\npayload too large"[..],
+        _ => {
+            // Fallback for unknown status/body combinations.
+            let formatted = format!(
+                "HTTP/1.1 {status} {reason}\r\ncontent-type: text/plain\r\ncontent-length: {len}\r\nconnection: close\r\n\r\n{body}",
+                reason = http::StatusCode::from_u16(status).ok().and_then(|s| s.canonical_reason()).unwrap_or("Error"),
+                len = body.len(),
+            );
+            let _ = stream.write_all(formatted.as_bytes()).await;
+            return;
+        }
+    };
+    let _ = stream.write_all(resp).await;
 }

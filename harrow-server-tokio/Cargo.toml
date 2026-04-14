@@ -47,6 +47,7 @@ futures-util = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client"] }
 hyper-util = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = "0.29"
 tracing-subscriber = { workspace = true }
+proptest = { workspace = true }
