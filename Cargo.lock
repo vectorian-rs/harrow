@@ -1323,6 +1323,7 @@ name = "harrow-codec-h1"
 version = "0.9.6"
 dependencies = [
  "bytes",
+ "harrow-io",
  "http",
  "httparse",
  "memchr",
@@ -1351,6 +1352,13 @@ dependencies = [
  "sha1",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "harrow-io"
+version = "0.9.6"
+dependencies = [
+ "bytes",
 ]
 
 [[package]]
@@ -1442,6 +1450,7 @@ dependencies = [
  "futures-util",
  "harrow-codec-h1",
  "harrow-core",
+ "harrow-io",
  "harrow-middleware",
  "harrow-o11y",
  "http",

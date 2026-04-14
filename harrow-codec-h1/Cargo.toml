@@ -8,6 +8,7 @@ readme.workspace = true
 description = "HTTP/1.1 codec for Harrow: request parsing, response serialization, chunked encoding"
 
 [dependencies]
+harrow-io = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 httparse = { workspace = true }

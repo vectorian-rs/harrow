@@ -18,11 +18,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use harrow_codec_h1::{
-    BufPool, CONTINUE_100, CodecError, MAX_HEADER_BUF, PayloadDecoder, PayloadItem,
-    try_parse_request, write_response_head,
+    CONTINUE_100, CodecError, MAX_HEADER_BUF, PayloadDecoder, PayloadItem, try_parse_request,
+    write_response_head,
 };
 use harrow_core::dispatch::{self, SharedState};
 use harrow_core::route::App;
+use harrow_io::BufPool;
 
 /// Configuration for server connection handling.
 pub struct ServerConfig {

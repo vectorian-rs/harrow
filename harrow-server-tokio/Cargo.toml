@@ -16,6 +16,7 @@ profiling = []
 [dependencies]
 harrow-codec-h1 = { workspace = true }
 harrow-core = { workspace = true }
+harrow-io = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }

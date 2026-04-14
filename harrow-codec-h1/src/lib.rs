@@ -11,13 +11,8 @@
 //! [`PayloadDecoder`] tracks its position across calls, so incremental
 //! recv completions are O(n) total — no re-scanning from the start.
 //!
-//! # Buffer pool
-//!
-//! [`BufPool`] provides thread-local buffer reuse to eliminate
-//! per-request allocations.
-
-pub mod buf_pool;
-pub use buf_pool::BufPool;
+// Re-export BufPool from harrow-io for backward compatibility.
+pub use harrow_io::BufPool;
 
 use std::io::Write as _;
 use std::task::Poll;

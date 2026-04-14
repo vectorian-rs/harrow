@@ -1,0 +1,11 @@
+[package]
+name = "harrow-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Runtime-agnostic I/O primitives for Harrow: buffer pool and I/O traits"
+
+[dependencies]
+bytes = { workspace = true }
