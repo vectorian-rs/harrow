@@ -1,0 +1,12 @@
+[package]
+name = "harrow-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Shared server primitives for Harrow: listener, workers, shutdown, config"
+
+[dependencies]
+socket2 = { version = "0.5", features = ["all"] }
+tracing = { workspace = true }

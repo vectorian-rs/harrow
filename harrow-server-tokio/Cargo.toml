@@ -17,12 +17,12 @@ profiling = []
 harrow-codec-h1 = { workspace = true }
 harrow-core = { workspace = true }
 harrow-io = { workspace = true }
+harrow-server = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 futures-util = { workspace = true }
 tokio = { workspace = true }
-socket2 = { version = "0.5", features = ["all"] }
 tracing = { workspace = true }
 
 # WebSocket support pulls in hyper (needed for upgrade handshake)

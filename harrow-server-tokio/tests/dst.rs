@@ -9,16 +9,17 @@ use std::time::Duration;
 use harrow_core::request::Request;
 use harrow_core::response::Response;
 use harrow_core::route::App;
-use harrow_server_tokio::{WorkerConfig, handle_connection};
+use harrow_server_tokio::{ServerConfig, handle_connection};
 use tokio::io::AsyncWriteExt;
 
-fn test_config() -> WorkerConfig {
-    WorkerConfig {
+fn test_config() -> ServerConfig {
+    ServerConfig {
         max_connections: 128,
         header_read_timeout: Some(Duration::from_secs(5)),
         connection_timeout: Some(Duration::from_secs(60)),
         body_read_timeout: Some(Duration::from_secs(10)),
         max_body_size: 1024 * 1024,
+        ..ServerConfig::default()
     }
 }
 
@@ -40,7 +41,7 @@ fn shared_state() -> Arc<harrow_core::dispatch::SharedState> {
 
 /// Run handle_connection against a duplex stream, write `request_bytes`
 /// to the client side, return whatever the server writes back.
-async fn run_connection(request_bytes: &[u8], config: &WorkerConfig) -> Vec<u8> {
+async fn run_connection(request_bytes: &[u8], config: &ServerConfig) -> Vec<u8> {
     let shared = shared_state();
     let (client, server) = tokio::io::duplex(64 * 1024);
     let (mut client_read, mut client_write) = tokio::io::split(client);
@@ -71,7 +72,7 @@ async fn run_connection(request_bytes: &[u8], config: &WorkerConfig) -> Vec<u8> 
 async fn run_connection_incremental(
     chunks: &[&[u8]],
     delays: &[Duration],
-    config: &WorkerConfig,
+    config: &ServerConfig,
 ) -> Vec<u8> {
     let shared = shared_state();
     let (client, server) = tokio::io::duplex(64 * 1024);
@@ -231,7 +232,7 @@ async fn dst_chunked_multi_chunk() {
 
 #[tokio::test(start_paused = true)]
 async fn dst_slowloris_header_timeout() {
-    let config = WorkerConfig {
+    let config = ServerConfig {
         header_read_timeout: Some(Duration::from_millis(500)),
         ..test_config()
     };
@@ -274,7 +275,7 @@ async fn dst_slowloris_header_timeout() {
 async fn dst_slowloris_body_timeout() {
     // Send headers quickly, then drip-feed body with 3-second gaps.
     // Body timeout is 10s.
-    let config = WorkerConfig {
+    let config = ServerConfig {
         body_read_timeout: Some(Duration::from_secs(3)),
         ..test_config()
     };
@@ -329,7 +330,7 @@ async fn dst_oversized_headers() {
 
 #[tokio::test(start_paused = true)]
 async fn dst_connection_lifetime_timeout() {
-    let config = WorkerConfig {
+    let config = ServerConfig {
         connection_timeout: Some(Duration::from_millis(500)),
         ..test_config()
     };

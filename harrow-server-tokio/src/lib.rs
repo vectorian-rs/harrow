@@ -25,34 +25,7 @@ use harrow_core::dispatch::{self, SharedState};
 use harrow_core::route::App;
 use harrow_io::BufPool;
 
-/// Configuration for server connection handling.
-pub struct ServerConfig {
-    /// Maximum number of concurrent connections per worker. Default: 8192.
-    pub max_connections: usize,
-    /// Timeout for reading HTTP headers. Default: Some(5s).
-    pub header_read_timeout: Option<Duration>,
-    /// Maximum connection lifetime. Default: Some(5 min).
-    pub connection_timeout: Option<Duration>,
-    /// Timeout for reading request body. Default: Some(30s).
-    pub body_read_timeout: Option<Duration>,
-    /// Drain timeout during shutdown. Default: 30s.
-    pub drain_timeout: Duration,
-    /// Maximum request body size. Default: 2 MiB.
-    pub max_body_size: usize,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            max_connections: 8192,
-            header_read_timeout: Some(Duration::from_secs(5)),
-            connection_timeout: Some(Duration::from_secs(300)),
-            body_read_timeout: Some(Duration::from_secs(30)),
-            drain_timeout: Duration::from_secs(30),
-            max_body_size: 2 * 1024 * 1024,
-        }
-    }
-}
+pub use harrow_server::ServerConfig;
 
 /// Serve the application on the given address (single-runtime mode).
 pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
@@ -68,64 +41,46 @@ pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error:
 /// Serve with one tokio `current_thread` runtime per CPU core.
 ///
 /// Each worker binds to the same address via `SO_REUSEPORT` and runs an
-/// independent accept loop with `LocalSet`. No work-stealing, no
-/// cross-thread wakeups.
+/// independent accept loop. No work-stealing, no cross-thread wakeups.
 pub fn serve_multi_worker(
     app: App,
     addr: SocketAddr,
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::atomic::AtomicBool;
-
     let shared = app.into_shared_state();
     shared.route_table.print_routes();
 
-    let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let workers = config.worker_count();
+    let shutdown = harrow_server::ShutdownSignal::new();
 
     tracing::info!("harrow listening on {addr} [{workers} workers, SO_REUSEPORT, harrow-codec-h1]");
 
-    let per_worker_max = config.max_connections / workers.max(1);
-    let mut handles = Vec::with_capacity(workers);
-
-    for worker_id in 0..workers {
+    let handles = harrow_server::spawn_workers(workers, "harrow-w", {
         let shared = Arc::clone(&shared);
-        let shutdown = Arc::clone(&shutdown);
-        let worker_config = WorkerConfig {
-            max_connections: per_worker_max,
-            header_read_timeout: config.header_read_timeout,
-            connection_timeout: config.connection_timeout,
-            body_read_timeout: config.body_read_timeout,
-            max_body_size: config.max_body_size,
-        };
+        let shutdown = shutdown.clone();
+        let config = config.clone();
+        move |worker_id| {
+            let shared = Arc::clone(&shared);
+            let shutdown = shutdown.clone();
+            let config = config.clone();
 
-        let handle = std::thread::Builder::new()
-            .name(format!("harrow-w{worker_id}"))
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime");
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build tokio runtime");
 
-                rt.block_on(async move {
-                    let listener =
-                        reuseport_listener(addr).expect("failed to bind SO_REUSEPORT listener");
+            rt.block_on(async move {
+                let std_listener = harrow_server::reuseport_listener(addr)
+                    .expect("failed to bind SO_REUSEPORT listener");
+                let listener =
+                    TcpListener::from_std(std_listener).expect("failed to convert listener");
 
-                    worker_loop(shared, listener, worker_config, shutdown, worker_id).await;
-                });
-            })?;
+                worker_loop(shared, listener, &config, shutdown, worker_id).await;
+            });
+        }
+    });
 
-        handles.push(handle);
-    }
-
-    for handle in handles {
-        handle.join().expect("worker thread panicked");
-    }
-
-    Ok(())
+    harrow_server::join_workers(handles).map_err(|e| -> Box<dyn std::error::Error> { e.into() })
 }
 
 /// Serve with a graceful shutdown signal.
@@ -150,85 +105,45 @@ pub async fn serve_with_config(
     let listener = TcpListener::bind(addr).await?;
     tracing::info!("harrow listening on {addr} [harrow-codec-h1]");
 
-    let worker_config = WorkerConfig {
-        max_connections: config.max_connections,
-        header_read_timeout: config.header_read_timeout,
-        connection_timeout: config.connection_timeout,
-        body_read_timeout: config.body_read_timeout,
-        max_body_size: config.max_body_size,
-    };
-
-    let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let shutdown_flag2 = Arc::clone(&shutdown_flag);
+    let shutdown_signal = harrow_server::ShutdownSignal::new();
+    let shutdown_signal2 = shutdown_signal.clone();
 
     tokio::pin!(shutdown);
 
     tokio::select! {
-        () = worker_loop(shared, listener, worker_config, shutdown_flag, 0) => {}
+        () = worker_loop(shared, listener, &config, shutdown_signal, 0) => {}
         () = &mut shutdown => {
             tracing::info!("harrow shutting down");
-            shutdown_flag2.store(true, std::sync::atomic::Ordering::Release);
+            shutdown_signal2.shutdown();
         }
     }
 
     Ok(())
 }
 
-/// Create a `TcpListener` with `SO_REUSEPORT` set before binding.
-fn reuseport_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
-    use socket2::{Domain, Protocol, Socket, Type};
-
-    let domain = if addr.is_ipv6() {
-        Domain::IPV6
-    } else {
-        Domain::IPV4
-    };
-    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-    #[cfg(unix)]
-    socket.set_reuse_port(true)?;
-    socket.set_reuse_address(true)?;
-    socket.set_nonblocking(true)?;
-    socket.bind(&addr.into())?;
-    socket.listen(65535)?;
-
-    let std_listener: std::net::TcpListener = socket.into();
-    TcpListener::from_std(std_listener)
-}
-
 // ---------------------------------------------------------------------------
 // Worker internals
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
-#[doc(hidden)]
-pub struct WorkerConfig {
-    pub max_connections: usize,
-    pub header_read_timeout: Option<Duration>,
-    pub connection_timeout: Option<Duration>,
-    pub body_read_timeout: Option<Duration>,
-    pub max_body_size: usize,
-}
-
 async fn worker_loop(
     shared: Arc<SharedState>,
     listener: TcpListener,
-    config: WorkerConfig,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    config: &ServerConfig,
+    shutdown: harrow_server::ShutdownSignal,
     worker_id: usize,
 ) {
-    use std::sync::atomic::Ordering;
-
     let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let per_worker_max = config.per_worker_max_connections();
 
     loop {
-        if shutdown.load(Ordering::Acquire) {
+        if shutdown.is_shutdown() {
             break;
         }
 
         let result = tokio::select! {
             r = listener.accept() => r,
             () = tokio::time::sleep(Duration::from_millis(100)) => {
-                if shutdown.load(Ordering::Acquire) { break; }
+                if shutdown.is_shutdown() { break; }
                 continue;
             }
         };
@@ -241,12 +156,12 @@ async fn worker_loop(
             }
         };
 
-        if active.load(Ordering::Relaxed) >= config.max_connections {
+        if active.load(std::sync::atomic::Ordering::Relaxed) >= per_worker_max {
             drop(stream);
             continue;
         }
 
-        active.fetch_add(1, Ordering::Relaxed);
+        active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let shared = Arc::clone(&shared);
         let config2 = config.clone();
         let active2 = Arc::clone(&active);
@@ -255,7 +170,7 @@ async fn worker_loop(
             if let Err(e) = handle_tcp_connection(stream, shared, &config2).await {
                 tracing::debug!("connection error: {e}");
             }
-            active2.fetch_sub(1, Ordering::Relaxed);
+            active2.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         });
     }
 }
@@ -263,7 +178,7 @@ async fn worker_loop(
 async fn handle_tcp_connection(
     stream: TcpStream,
     shared: Arc<SharedState>,
-    config: &WorkerConfig,
+    config: &ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_nodelay(true)?;
     handle_connection(stream, shared, config).await
@@ -273,7 +188,7 @@ async fn handle_tcp_connection(
 pub async fn handle_connection<S>(
     mut stream: S,
     shared: Arc<SharedState>,
-    config: &WorkerConfig,
+    config: &ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,

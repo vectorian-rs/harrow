@@ -7,6 +7,7 @@ members = [
     "harrow-middleware",
     "harrow-o11y",
     "harrow-serde",
+    "harrow-server",
     "harrow-server-tokio",
     "harrow-server-monoio",
     "harrow-codec-h1",
@@ -26,6 +27,7 @@ readme = "README.md"
 [workspace.dependencies]
 harrow-codec-h1 = { path = "harrow-codec-h1", version = "0.9.6" }
 harrow-io = { path = "harrow-io", version = "0.9.6" }
+harrow-server = { path = "harrow-server", version = "0.9.6" }
 harrow-core = { path = "harrow-core", version = "0.9.6" }
 harrow-o11y = { path = "harrow-o11y", version = "0.9.6" }
 harrow-middleware = { path = "harrow-middleware", version = "0.9.6" }
