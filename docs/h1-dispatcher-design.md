@@ -21,6 +21,12 @@ The main goal is to move Harrow's server backends closer to the split that makes
 This is a protocol-boundary design, not a proposal to copy `ntex`'s full
 `Service`/`Control`/`Filter` stack.
 
+It is also only half of the architecture decision. The runtime side of that
+decision now lives in
+[`docs/strategy-local-workers.md`](./strategy-local-workers.md): Harrow is
+moving toward a local-worker model in the nginx/ntex sense, and this dispatcher
+split is the protocol shape that makes that model practical.
+
 ---
 
 ## 2. Problem
@@ -59,8 +65,10 @@ That difference matters for:
 |----------|------|
 | P0 | Introduce a real HTTP/1 connection dispatcher layer between codec and app dispatch. |
 | P0 | Allow request bodies to stream into handlers without full pre-buffering. |
+| P0 | Make request-body backpressure explicit and bounded at the dispatcher layer. |
 | P0 | Keep `harrow-core` as the application dispatcher, not the transport dispatcher. |
 | P0 | Make Tokio and Monoio converge on the same HTTP/1 structure and invariants. |
+| P1 | Keep the dispatcher friendly to local-worker runtimes and worker-local state. |
 | P1 | Extract shared protocol logic only after Tokio and Monoio have proven-compatible shapes. |
 | P1 | Preserve the simple `async fn handler(req: Request) -> Response` model. |
 | P2 | Leave room for future HTTP/2 reintroduction without polluting the HTTP/1 path. |
@@ -202,6 +210,8 @@ Owns:
 - request-body stream construction
 - channel or adapter used to expose a live `Body`
 - backpressure policy for request-body feeding
+- byte-bounded payload buffering for local-worker backends or an equivalent
+  backend-specific bounded queue
 - request-body timeout and limit handling during streaming
 
 ### `h1/response.rs`
@@ -303,6 +313,24 @@ The first implementation should keep the policy simple:
 
 This is the safest first step and is enough to remove full pre-buffering.
 
+### Backpressure Target
+
+The longer-term target should match `ntex` semantically:
+
+- request-body buffering is bounded by bytes, not just message count
+- the dispatcher stops reading more body bytes when that buffer is full
+- reading resumes when the handler drains enough buffered data
+
+The exact queue implementation can differ by backend:
+
+- Tokio should move toward a local-worker/runtime-friendly queue
+- Monoio should use a worker-local byte-bounded queue
+- Meguri should adopt the same contract only after it has streaming request
+  bodies
+
+The important part is the protocol contract, not forcing one identical queue
+type across all backends.
+
 ### Harrow Core API Impact
 
 No immediate public API break is required.
@@ -332,6 +360,13 @@ Those should be additive.
 We should adopt `ntex`'s split in spirit, not in exact generic shape.
 
 The likely mistake would be extracting a large shared IO trait too early.
+
+We should also avoid treating this as only a protocol refactor. The dispatcher
+shape is intended to support Harrow's local-worker runtime direction:
+
+- connection state stays on one worker
+- payload queues stay local to that worker
+- hot-path protocol coordination avoids cross-worker scheduling where possible
 
 Recommended sequence:
 
@@ -375,6 +410,7 @@ What Harrow should copy:
 - protocol-boundary split
 - explicit connection dispatcher
 - streaming request/response body handling
+- bounded request-body backpressure
 - thin runtime integration layer
 
 What Harrow should not copy blindly:

@@ -4,6 +4,11 @@
 
 This document covers what io_uring means for Harrow, how to adopt it, and the operational constraints.
 
+Read this alongside [`docs/strategy-local-workers.md`](./strategy-local-workers.md).
+For Harrow, the primary architectural win is local worker ownership; `io_uring`
+is a secondary transport mechanism that only pays off when the runtime and
+dispatcher actually exploit it.
+
 ---
 
 ## 1. Why io_uring

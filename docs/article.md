@@ -21,6 +21,10 @@ reconstructing it from commit history and half-remembered flamegraphs.
 - Making those timers optional and disabling them in the benchmark servers
   moved Harrow from **501,742 -> 1,041,052 RPS** on `/text` and
   **589,757 -> 967,501 RPS** on `/json/1kb` on `c8g.12xlarge`.
+- After the custom HTTP/1 backend work and the Monoio results, the larger
+  architectural direction became clear: Harrow should move toward
+  **local-worker runtimes, explicit dispatchers, and bounded payload
+  backpressure** in the nginx/ntex sense.
 - We also benchmarked the middleware architecture directly instead of arguing in
   the abstract. Pure Tower-style static layers are effectively allocation-flat.
   Harrow's dynamic middleware costs about **+728 bytes and +2 allocs per noop
@@ -31,8 +35,9 @@ reconstructing it from commit history and half-remembered flamegraphs.
 
 ## What Harrow Is Optimizing For
 
-Harrow is trying to be a thin, macro-free HTTP framework on top of Hyper.
-There are three design constraints:
+Harrow is trying to be a thin, macro-free HTTP framework with explicit
+application APIs and backend-owned transport/runtime control. There are three
+design constraints:
 
 1. Framework overhead should stay below transport and application noise.
 2. The fast path should be understandable without Tower-level type archaeology.
@@ -820,8 +825,9 @@ batching is a future optimization when the ecosystem catches up.
 ## 2026-03-31: body_read_timeout for Tokio Backend
 
 Added `body_read_timeout` to `harrow-server-tokio`'s `ServerConfig`.
-When configured, wraps the hyper `Incoming` body in a `TimeoutBody`
-that enforces a per-frame read deadline. A slow body sender (e.g.,
+At that point the Tokio backend was still Hyper-based, so the implementation
+wrapped Hyper's `Incoming` body in a `TimeoutBody` that enforced a per-frame
+read deadline. A slow body sender (e.g.,
 sending 1 byte/sec within the size limit) is terminated with a 400
 error after the timeout expires.
 
@@ -1262,6 +1268,47 @@ No `.unwrap()`, no `.map_err()`. Missing state returns 500, bad body returns
 - **0.9.3**: `From<ProblemDetail> for Response`, consistent import style,
   removed unused test imports, added README to crate packages.
 - **0.9.4**: MIT license file, CHANGELOG.md, README version updates.
+
+## 2026-04-15: Chosen Runtime Direction — Local Workers
+
+The Monoio numbers were already pointing in one direction: the gain was coming
+from local ownership and the thread-per-core execution model, not from
+`io_uring` by itself.
+
+The custom HTTP/1 backend work made that direction actionable for Tokio too.
+Once Harrow owned the connection loop, request-body pump, and response write
+path, the remaining question was what runtime shape best fits that transport
+design.
+
+Reading `ntex` made the answer obvious. Its Tokio path still uses `LocalSet`,
+`spawn_local`, the same HTTP/1 dispatcher, and the same local payload queue.
+Tokio is not locked to a generic work-stealing server model. The useful pattern
+is:
+
+- keep connection ownership local to one worker
+- keep parser state, payload state, and response state local to that worker
+- stop reading request-body bytes when the handler-side buffer is full
+- resume only when the handler drains enough buffered data
+
+That is the part of the nginx/ntex design space Harrow should copy.
+
+So the direction is now explicit:
+
+- Tokio should move toward per-worker `current_thread` runtimes plus
+  `LocalSet` and local tasks
+- Monoio should keep the same local-worker structure and finish the
+  byte-bounded request-body queue
+- Meguri should not be forced into this shape until it has streaming request
+  bodies
+
+This also changes how to read the earlier benchmark sections. The old Tokio
+numbers are still useful, but they are now baseline material for the
+pre-custom-backend, work-stealing implementation rather than the end state
+Harrow is aiming for.
+
+The gain we are chasing is broader than "Tokio timers were expensive." The real
+target is local ownership, explicit transport state machines, and bounded
+payload backpressure.
 
 ## What This Document Should Become
 

@@ -26,7 +26,7 @@ Harrow aims to be the framework you reach for when you want top-tier Rust HTTP p
 | P0 | Zero proc-macros. All routing and handler wiring is plain Rust function calls. |
 | P0 | Route table is a concrete, inspectable data structure available at runtime. |
 | P0 | Opt-in structured observability via first-party middleware and extension traits: tracing spans per request, latency histograms, error counters. |
-| P0 | Minimal overhead over raw Hyper. Target < 1 us added latency per request on the hot path. |
+| P0 | Minimal framework overhead over the backend/runtime baseline. Target < 1 us added latency per request on the hot path. |
 | P0 | Targeted benchmark runs capture perf records and supporting visualizations so regressions are visible before releases and major changes. |
 | P1 | Compile times competitive with or better than Axum for equivalent service definitions. |
 | P1 | Clear, human-readable compiler errors. No deeply nested generic bounds. |
@@ -63,8 +63,8 @@ Harrow aims to be the framework you reach for when you want top-tier Rust HTTP p
   HTTP request          │  │  - method           │   │
   ──────────────►       │  │  - path pattern     │   │
   server backend        │  │  - handler fn       │   │
-  (tokio / monoio /     │  │  - metadata         │   │
-   future shared H1)    │  └────────┬───────────┘   │
+  (tokio local workers  │  │  - metadata         │   │
+   / monoio / meguri)   │  └────────┬───────────┘   │
                         │           │               │
                         │  ┌────────▼───────────┐   │
                         │  │   MiddlewareChain   │   │
@@ -81,7 +81,9 @@ Harrow aims to be the framework you reach for when you want top-tier Rust HTTP p
 ```
 
 Detailed transport/backend architecture is documented separately in
-[`docs/h1-dispatcher-design.md`](../h1-dispatcher-design.md).
+[`docs/h1-dispatcher-design.md`](../h1-dispatcher-design.md). The runtime
+direction is documented in
+[`docs/strategy-local-workers.md`](../strategy-local-workers.md).
 
 ### 4.1 Core Types
 
@@ -311,11 +313,15 @@ Current v0.1 behavior terminates in-flight requests immediately.
 
 ```
 harrow/
-  harrow-core/       # Route table, Request/Response wrappers, middleware trait
-  harrow-o11y/       # Tracing + metrics integration (optional feature)
-  harrow-server-tokio/     # Tokio backend, HTTP/1 connection handling, graceful shutdown
-  harrow-bench/      # Criterion benches, remote perf capture, summary rendering
-  harrow/            # Facade crate re-exporting everything
+  harrow-core/              # Route table, Request/Response wrappers, middleware trait
+  harrow-codec-h1/          # Shared HTTP/1 parsing and serialization helpers
+  harrow-server/            # Shared server bootstrap/config helpers
+  harrow-o11y/              # Tracing + metrics integration (optional feature)
+  harrow-server-tokio/      # Tokio backend, custom HTTP/1 handling, graceful shutdown
+  harrow-server-monoio/     # Monoio backend, local-worker HTTP/1 handling
+  harrow-server-meguri/     # Meguri backend, io_uring-focused path
+  harrow-bench/             # Criterion benches, remote perf capture, summary rendering
+  harrow/                   # Facade crate re-exporting everything
 ```
 
 Feature flags on the facade crate:
@@ -336,8 +342,8 @@ Measured on a simple JSON echo handler (`/echo` — parse JSON body, return it):
 
 | Metric | Target |
 |--------|--------|
-| Added latency over raw Hyper | < 1 us p99 |
-| Requests/sec (single core, 64 connections) | > 95% of raw Hyper throughput |
+| Added latency over backend baseline | < 1 us p99 |
+| Requests/sec (single core, 64 connections) | > 95% of matched backend baseline throughput |
 | Binary size (release, stripped, minimal features) | < 2 MB |
 | Compile time (clean build) | < 30s on M-series Apple Silicon |
 

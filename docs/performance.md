@@ -6,6 +6,11 @@
 **Rust:** edition 2024, release profile (`opt-level = 3`, `lto = "thin"`, `debug = true`)
 **Benchmark tools:** criterion 0.5; `spinr` + `harrow-bench` for remote perf runs
 
+This document is a historical baseline from Harrow's earlier Hyper/Tokio phase.
+Current runtime-direction decisions live in
+[`docs/strategy-local-workers.md`](./strategy-local-workers.md) and
+[`docs/article.md`](./article.md).
+
 ---
 
 ## How to reproduce
@@ -323,7 +328,10 @@ Based on these measurements, the per-request overhead budget for Harrow:
 | Response construction | < 100 ns | ~50 ns |
 | **Total framework overhead** | **< 3 µs** | **~2 µs typical** |
 
-The PRD target of "< 1 µs added latency over raw Hyper" is met for the echo workload (param extraction + route match). The full-stack workload with middleware and JSON is ~2 µs, which is within the spirit of the target given that middleware and serialization are user-chosen costs.
+The historical PRD target of "< 1 µs added latency over raw Hyper" was met for
+the echo workload (param extraction + route match). The full-stack workload
+with middleware and JSON is ~2 µs, which was within the spirit of that earlier
+target given that middleware and serialization are user-chosen costs.
 
 ---
 
