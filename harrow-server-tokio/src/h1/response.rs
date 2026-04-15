@@ -3,13 +3,6 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use harrow_codec_h1::write_response_head;
 
-pub(crate) fn response_body_permitted(is_head_request: bool, status: http::StatusCode) -> bool {
-    !is_head_request
-        && !status.is_informational()
-        && status != http::StatusCode::NO_CONTENT
-        && status != http::StatusCode::NOT_MODIFIED
-}
-
 pub(crate) async fn write_response<S>(
     stream: &mut S,
     response: http::Response<harrow_core::response::ResponseBody>,
@@ -21,7 +14,7 @@ where
 {
     let (mut parts, mut body) = response.into_parts();
     let has_content_length = parts.headers.contains_key(http::header::CONTENT_LENGTH);
-    let body_permitted = response_body_permitted(is_head_request, parts.status);
+    let body_permitted = harrow_server::h1::response_body_permitted(is_head_request, parts.status);
 
     if !keep_alive && !parts.headers.contains_key(http::header::CONNECTION) {
         parts

@@ -307,6 +307,19 @@ async fn connection_close_header() {
 }
 
 #[tokio::test]
+async fn head_response_has_no_body_or_chunked_framing() {
+    let app = || App::new().get("/hello", hello);
+    let (addr, _server) = start_monoio_server(app);
+
+    let req = "HEAD /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    let (status, headers, body) = http_request(addr, req).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(body, "");
+    assert_eq!(get_header(&headers, "transfer-encoding"), None);
+}
+
+#[tokio::test]
 async fn application_state() {
     let counter = Arc::new(HitCounter(AtomicUsize::new(0)));
     let app = move || {

@@ -109,12 +109,10 @@ impl H1Connection {
                 }
             };
             let keep_alive = parsed.keep_alive;
+            let is_head_request = parsed.method == http::Method::HEAD;
 
             // Early reject: Content-Length exceeds limit
-            if max_body > 0
-                && let Some(cl) = parsed.content_length
-                && cl as usize > max_body
-            {
+            if harrow_server::h1::request_exceeds_body_limit(parsed.content_length, max_body) {
                 self.write_status(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
                     .await?;
                 break;
@@ -171,7 +169,8 @@ impl H1Connection {
             };
 
             // Write response
-            self.write_response(response, connection_reusable).await?;
+            self.write_response(response, connection_reusable, is_head_request)
+                .await?;
 
             if !connection_reusable {
                 break;

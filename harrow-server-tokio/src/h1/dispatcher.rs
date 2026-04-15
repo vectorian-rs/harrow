@@ -5,7 +5,6 @@ use bytes::Buf;
 use tokio::io::AsyncWriteExt;
 
 use harrow_core::dispatch::{self, SharedState};
-use harrow_core::request::Body;
 use harrow_io::BufPool;
 
 use crate::ServerConfig;
@@ -42,10 +41,7 @@ where
         let keep_alive = parsed.keep_alive;
         let content_length = parsed.content_length;
 
-        if config.max_body_size > 0
-            && let Some(cl) = content_length
-            && cl as usize > config.max_body_size
-        {
+        if harrow_server::h1::request_exceeds_body_limit(content_length, config.max_body_size) {
             error::write_error(&mut stream, 413, "payload too large").await;
             break;
         }
@@ -58,7 +54,7 @@ where
                 Ok(state) => state,
                 Err(_) => break 'connection,
             };
-        let request = build_request(parsed, body)?;
+        let request = harrow_server::h1::build_request(&parsed, body)?;
         let mut response_fut = std::pin::pin!(dispatch::dispatch(Arc::clone(&shared), request));
 
         let mut request_body_complete = request_body_state.is_complete();
@@ -121,20 +117,4 @@ where
 
     BufPool::release_read(buf);
     Ok(())
-}
-
-fn build_request(
-    parsed: harrow_codec_h1::ParsedRequest,
-    body: Body,
-) -> Result<http::Request<harrow_core::request::Body>, http::Error> {
-    let mut builder = http::Request::builder()
-        .method(parsed.method)
-        .uri(parsed.uri)
-        .version(parsed.version);
-
-    for (name, value) in parsed.headers.iter() {
-        builder = builder.header(name, value);
-    }
-
-    builder.body(body)
 }

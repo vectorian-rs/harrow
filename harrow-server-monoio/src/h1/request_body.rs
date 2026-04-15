@@ -11,7 +11,7 @@ use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 
 use harrow_codec_h1::{CONTINUE_100, CodecError, ParsedRequest, PayloadDecoder, PayloadItem};
-use harrow_core::dispatch::{SharedState, dispatch};
+use harrow_core::dispatch::SharedState;
 use harrow_core::request::Body;
 
 use crate::buffer::DEFAULT_BUFFER_SIZE;
@@ -243,27 +243,7 @@ pub(crate) async fn dispatch_request(
     parsed: &ParsedRequest,
     body: Body,
 ) -> http::Response<harrow_core::response::ResponseBody> {
-    let mut builder = http::Request::builder()
-        .method(&parsed.method)
-        .uri(&parsed.uri)
-        .version(parsed.version);
-
-    for (name, value) in parsed.headers.iter() {
-        builder = builder.header(name, value);
-    }
-
-    let req = match builder.body(body) {
-        Ok(req) => req,
-        Err(e) => {
-            return harrow_core::response::Response::new(
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("request build error: {e}"),
-            )
-            .into_inner();
-        }
-    };
-
-    dispatch(shared, req).await
+    harrow_server::h1::dispatch_parsed_request(shared, parsed, body).await
 }
 
 fn payload_channel(max_buffered_bytes: usize) -> (PayloadSender, Body) {

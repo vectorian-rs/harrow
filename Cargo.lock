@@ -1408,6 +1408,11 @@ dependencies = [
 name = "harrow-server"
 version = "0.9.6"
 dependencies = [
+ "bytes",
+ "harrow-codec-h1",
+ "harrow-core",
+ "http",
+ "http-body-util",
  "socket2 0.5.10",
 ]
 
@@ -1439,6 +1444,7 @@ dependencies = [
  "futures-util",
  "harrow-codec-h1",
  "harrow-core",
+ "harrow-server",
  "http",
  "http-body",
  "http-body-util",

@@ -4,6 +4,8 @@
 //! (tokio, monoio, meguri): listener creation, worker spawning,
 //! shutdown coordination, and configuration.
 
+pub mod h1;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

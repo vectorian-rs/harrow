@@ -11,6 +11,7 @@ impl H1Connection {
         &mut self,
         response: http::Response<harrow_core::response::ResponseBody>,
         keep_alive: bool,
+        is_head_request: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (mut parts, body) = response.into_parts();
 
@@ -21,10 +22,20 @@ impl H1Connection {
         }
 
         let has_content_length = parts.headers.contains_key(http::header::CONTENT_LENGTH);
+        let body_permitted =
+            harrow_server::h1::response_body_permitted(is_head_request, parts.status);
 
-        let head = codec::write_response_head(parts.status, &parts.headers, !has_content_length);
+        let head = codec::write_response_head(
+            parts.status,
+            &parts.headers,
+            body_permitted && !has_content_length,
+        );
         let (result, _) = self.stream.write_all(head).await;
         result?;
+
+        if !body_permitted {
+            return Ok(());
+        }
 
         if has_content_length {
             self.write_body_direct(body).await?;
@@ -78,6 +89,7 @@ impl H1Connection {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.write_response(
             harrow_core::response::Response::new(status, body).into_inner(),
+            false,
             false,
         )
         .await
