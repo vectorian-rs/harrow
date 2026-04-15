@@ -46,20 +46,22 @@ mod server {
         let (bind, port) = parse_args();
         let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
-        let app = App::new()
-            .get("/text", text_handler)
-            .get("/text/128kb", harrow_bench::text_128kb_handler)
-            .get("/text/256kb", harrow_bench::text_256kb_handler)
-            .get("/text/512kb", harrow_bench::text_512kb_handler)
-            .get("/text/1mb", harrow_bench::text_1mb_handler)
-            .post("/echo", harrow_bench::echo_body_handler)
-            .get("/json/small", json_small_handler)
-            .get("/json/1kb", json_1kb_typed_handler)
-            .get("/json/10kb", json_10kb_typed_handler)
-            .get("/msgpack/small", msgpack_small_handler)
-            .get("/msgpack/1kb", msgpack_1kb_handler)
-            .get("/msgpack/10kb", msgpack_10kb_handler)
-            .get("/health", health);
+        let app = || {
+            App::new()
+                .get("/text", text_handler)
+                .get("/text/128kb", harrow_bench::text_128kb_handler)
+                .get("/text/256kb", harrow_bench::text_256kb_handler)
+                .get("/text/512kb", harrow_bench::text_512kb_handler)
+                .get("/text/1mb", harrow_bench::text_1mb_handler)
+                .post("/echo", harrow_bench::echo_body_handler)
+                .get("/json/small", json_small_handler)
+                .get("/json/1kb", json_1kb_typed_handler)
+                .get("/json/10kb", json_10kb_typed_handler)
+                .get("/msgpack/small", msgpack_small_handler)
+                .get("/msgpack/1kb", msgpack_1kb_handler)
+                .get("/msgpack/10kb", msgpack_10kb_handler)
+                .get("/health", health)
+        };
 
         eprintln!("harrow-meguri-perf-server listening on {addr} [allocator: {ALLOCATOR_NAME}]");
         harrow_server_meguri::run_with_config(

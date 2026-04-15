@@ -215,13 +215,17 @@ impl Drop for TestServer {
 
 static TEST_SERVERS: LazyLock<Mutex<Vec<TestServer>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
-fn spawn_server_thread(
-    app: App,
+fn spawn_server_thread<F>(
+    make_app: F,
     addr: SocketAddr,
     shutdown: tokio::sync::oneshot::Receiver<()>,
     config: harrow_server_tokio::ServerConfig,
-) -> std::thread::JoinHandle<()> {
+) -> std::thread::JoinHandle<()>
+where
+    F: Fn() -> App + Send + 'static,
+{
     std::thread::spawn(move || {
+        let app = make_app();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -244,20 +248,26 @@ fn spawn_server_thread(
 }
 
 /// Spin up the server on a random port, return the bound address.
-async fn start_server(app: App) -> SocketAddr {
-    start_server_with_config(app, harrow_server_tokio::ServerConfig::default()).await
+async fn start_server<F>(make_app: F) -> SocketAddr
+where
+    F: Fn() -> App + Send + 'static,
+{
+    start_server_with_config(make_app, harrow_server_tokio::ServerConfig::default()).await
 }
 
-async fn start_server_with_config(
-    app: App,
+async fn start_server_with_config<F>(
+    make_app: F,
     config: harrow_server_tokio::ServerConfig,
-) -> SocketAddr {
+) -> SocketAddr
+where
+    F: Fn() -> App + Send + 'static,
+{
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    let thread = spawn_server_thread(app, addr, rx, config);
+    let thread = spawn_server_thread(make_app, addr, rx, config);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     TEST_SERVERS.lock().unwrap().push(TestServer {
@@ -849,7 +859,7 @@ async fn client_body_limit_passes_without_content_length() {
 
 #[tokio::test]
 async fn tcp_basic_routing() {
-    let app = App::new().get("/hello", hello).get("/greet/:name", greet);
+    let app = || App::new().get("/hello", hello).get("/greet/:name", greet);
     let addr = start_server(app).await;
 
     let (status, _, body) = http_get(addr, "/hello").await;
@@ -863,14 +873,16 @@ async fn tcp_basic_routing() {
 
 #[tokio::test]
 async fn tcp_probe_helpers_register_endpoints() {
-    let app = App::new()
-        .state(Arc::new(String::from("primary-db")))
-        .health("/health")
-        .liveness("/live")
-        .readiness_handler("/ready", |req| async move {
-            let db = req.require_state::<Arc<String>>().unwrap();
-            Response::text(format!("ready {}", db.as_str()))
-        });
+    let app = || {
+        App::new()
+            .state(Arc::new(String::from("primary-db")))
+            .health("/health")
+            .liveness("/live")
+            .readiness_handler("/ready", |req| async move {
+                let db = req.require_state::<Arc<String>>().unwrap();
+                Response::text(format!("ready {}", db.as_str()))
+            })
+    };
     let addr = start_server(app).await;
 
     let (status, _, body) = http_get(addr, "/health").await;
@@ -892,7 +904,7 @@ async fn panicking_handler(_req: Request) -> Response {
 
 #[tokio::test]
 async fn tcp_panic_in_handler_closes_connection_without_catch_panic() {
-    let app = App::new().get("/boom", panicking_handler);
+    let app = || App::new().get("/boom", panicking_handler);
     let addr = start_server(app).await;
 
     let (status, _, body) = http_get(addr, "/boom").await;
@@ -902,9 +914,11 @@ async fn tcp_panic_in_handler_closes_connection_without_catch_panic() {
 
 #[tokio::test]
 async fn tcp_catch_panic_middleware_returns_500() {
-    let app = App::new()
-        .middleware(catch_panic_middleware)
-        .get("/boom", panicking_handler);
+    let app = || {
+        App::new()
+            .middleware(catch_panic_middleware)
+            .get("/boom", panicking_handler)
+    };
     let addr = start_server(app).await;
 
     let (status, _, body) = http_get(addr, "/boom").await;
@@ -914,10 +928,12 @@ async fn tcp_catch_panic_middleware_returns_500() {
 
 #[tokio::test]
 async fn tcp_o11y_middleware_adds_request_id_header() {
-    let app = App::new()
-        .state(Arc::new(O11yConfig::default()))
-        .middleware(o11y_middleware)
-        .get("/hello", hello);
+    let app = || {
+        App::new()
+            .state(Arc::new(O11yConfig::default()))
+            .middleware(o11y_middleware)
+            .get("/hello", hello)
+    };
 
     let addr = start_server(app).await;
 
@@ -932,10 +948,12 @@ async fn tcp_o11y_middleware_adds_request_id_header() {
 
 #[tokio::test]
 async fn tcp_o11y_middleware_echoes_incoming_request_id() {
-    let app = App::new()
-        .state(Arc::new(O11yConfig::default()))
-        .middleware(o11y_middleware)
-        .get("/hello", hello);
+    let app = || {
+        App::new()
+            .state(Arc::new(O11yConfig::default()))
+            .middleware(o11y_middleware)
+            .get("/hello", hello)
+    };
 
     let addr = start_server(app).await;
 
@@ -999,7 +1017,7 @@ async fn http_request(
 
 #[tokio::test]
 async fn tcp_graceful_drain_completes_inflight_request() {
-    let app = App::new().get("/slow", slow_handler);
+    let app = || App::new().get("/slow", slow_handler);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
@@ -1033,7 +1051,7 @@ async fn tcp_graceful_drain_completes_inflight_request() {
 
 #[tokio::test]
 async fn tcp_graceful_shutdown_waits_for_drain_before_returning() {
-    let app = App::new().get("/slow", slow_handler);
+    let app = || App::new().get("/slow", slow_handler);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
@@ -1079,12 +1097,14 @@ async fn tcp_graceful_shutdown_waits_for_drain_before_returning() {
 
 #[tokio::test]
 async fn tcp_body_read_timeout_returns_400() {
-    let app = App::new().post("/echo", |req: Request| async move {
-        match req.body_bytes().await {
-            Ok(bytes) => Response::text(format!("got {} bytes", bytes.len())),
-            Err(e) => Response::text(format!("error: {e}")).status(400),
-        }
-    });
+    let app = || {
+        App::new().post("/echo", |req: Request| async move {
+            match req.body_bytes().await {
+                Ok(bytes) => Response::text(format!("got {} bytes", bytes.len())),
+                Err(e) => Response::text(format!("error: {e}")).status(400),
+            }
+        })
+    };
 
     let addr = start_server_with_config(
         app,
@@ -1119,7 +1139,7 @@ async fn tcp_body_read_timeout_returns_400() {
 
 #[tokio::test]
 async fn tcp_head_returns_get_headers_without_body() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let addr = start_server(app).await;
 
     let (status, headers, body) = http_request(addr, "HEAD", "/hello").await;
@@ -1133,7 +1153,7 @@ async fn tcp_head_returns_get_headers_without_body() {
 
 #[tokio::test]
 async fn tcp_head_response_is_not_chunked_on_wire() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let addr = start_server(app).await;
 
     let (status, headers, body) = raw_http_request(addr, "HEAD", "/hello").await;
@@ -1144,13 +1164,15 @@ async fn tcp_head_response_is_not_chunked_on_wire() {
 
 #[tokio::test]
 async fn tcp_204_and_304_responses_are_bodyless_on_wire() {
-    let app = App::new()
-        .get("/no-content", |_req: Request| async move {
-            Response::text("hidden").status(StatusCode::NO_CONTENT.as_u16())
-        })
-        .get("/not-modified", |_req: Request| async move {
-            Response::text("hidden").status(StatusCode::NOT_MODIFIED.as_u16())
-        });
+    let app = || {
+        App::new()
+            .get("/no-content", |_req: Request| async move {
+                Response::text("hidden").status(StatusCode::NO_CONTENT.as_u16())
+            })
+            .get("/not-modified", |_req: Request| async move {
+                Response::text("hidden").status(StatusCode::NOT_MODIFIED.as_u16())
+            })
+    };
     let addr = start_server(app).await;
 
     for (path, expected_status) in [
@@ -1170,25 +1192,27 @@ async fn tcp_204_and_304_responses_are_bodyless_on_wire() {
 
 #[tokio::test]
 async fn tcp_streaming_response_flushes_before_eof() {
-    let app = App::new().get("/stream", |_req: Request| async move {
-        let stream = futures_util::stream::unfold(0u8, |state| async move {
-            match state {
-                0 => Some((
-                    Ok(http_body::Frame::data(bytes::Bytes::from_static(b"first"))),
-                    1,
-                )),
-                1 => {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    Some((
-                        Ok(http_body::Frame::data(bytes::Bytes::from_static(b"second"))),
-                        2,
-                    ))
+    let app = || {
+        App::new().get("/stream", |_req: Request| async move {
+            let stream = futures_util::stream::unfold(0u8, |state| async move {
+                match state {
+                    0 => Some((
+                        Ok(http_body::Frame::data(bytes::Bytes::from_static(b"first"))),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((
+                            Ok(http_body::Frame::data(bytes::Bytes::from_static(b"second"))),
+                            2,
+                        ))
+                    }
+                    _ => None,
                 }
-                _ => None,
-            }
-        });
-        Response::streaming(StatusCode::OK, stream)
-    });
+            });
+            Response::streaming(StatusCode::OK, stream)
+        })
+    };
     let addr = start_server(app).await;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1233,19 +1257,21 @@ async fn tcp_streaming_response_flushes_before_eof() {
 
 #[tokio::test]
 async fn tcp_request_body_streams_before_request_eof() {
-    let app = App::new().post("/first-chunk", |mut req: Request| async move {
-        use http_body_util::BodyExt;
+    let app = || {
+        App::new().post("/first-chunk", |mut req: Request| async move {
+            use http_body_util::BodyExt;
 
-        let frame = req
-            .inner_mut()
-            .body_mut()
-            .frame()
-            .await
-            .expect("body should yield first chunk")
-            .expect("chunk should not error");
-        let data = frame.into_data().expect("expected data frame");
-        Response::text(String::from_utf8_lossy(&data).to_string())
-    });
+            let frame = req
+                .inner_mut()
+                .body_mut()
+                .frame()
+                .await
+                .expect("body should yield first chunk")
+                .expect("chunk should not error");
+            let data = frame.into_data().expect("expected data frame");
+            Response::text(String::from_utf8_lossy(&data).to_string())
+        })
+    };
     let addr = start_server(app).await;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1275,7 +1301,7 @@ async fn tcp_request_body_streams_before_request_eof() {
 
 #[tokio::test]
 async fn tcp_default_problem_details_formats_404_and_405() {
-    let app = App::new().default_problem_details().get("/users", hello);
+    let app = || App::new().default_problem_details().get("/users", hello);
     let addr = start_server(app).await;
 
     let (status, headers, body) = http_get(addr, "/missing").await;
@@ -1300,27 +1326,29 @@ async fn tcp_default_problem_details_formats_404_and_405() {
 
 #[tokio::test]
 async fn tcp_custom_fallback_handlers_can_access_state() {
-    let app = App::new()
-        .state(Arc::new(String::from("tcp-state")))
-        .get("/users", hello)
-        .not_found_handler(|req| async move {
-            let state = req.require_state::<Arc<String>>().unwrap();
-            Response::text(format!("{} missing {}", state.as_str(), req.path()))
-        })
-        .method_not_allowed_handler(|req, methods| async move {
-            let state = req.require_state::<Arc<String>>().unwrap();
-            let allow = methods
-                .iter()
-                .map(|method| method.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            Response::text(format!(
-                "{} allow {} on {}",
-                state.as_str(),
-                allow,
-                req.path()
-            ))
-        });
+    let app = || {
+        App::new()
+            .state(Arc::new(String::from("tcp-state")))
+            .get("/users", hello)
+            .not_found_handler(|req| async move {
+                let state = req.require_state::<Arc<String>>().unwrap();
+                Response::text(format!("{} missing {}", state.as_str(), req.path()))
+            })
+            .method_not_allowed_handler(|req, methods| async move {
+                let state = req.require_state::<Arc<String>>().unwrap();
+                let allow = methods
+                    .iter()
+                    .map(|method| method.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Response::text(format!(
+                    "{} allow {} on {}",
+                    state.as_str(),
+                    allow,
+                    req.path()
+                ))
+            })
+    };
     let addr = start_server(app).await;
 
     let (status, _, body) = http_get(addr, "/missing").await;
@@ -1335,7 +1363,7 @@ async fn tcp_custom_fallback_handlers_can_access_state() {
 
 #[tokio::test]
 async fn tcp_head_generated_404_and_405_strip_body() {
-    let app = App::new().default_problem_details().post("/submit", hello);
+    let app = || App::new().default_problem_details().post("/submit", hello);
     let addr = start_server(app).await;
 
     let (status, headers, body) = http_request(addr, "HEAD", "/missing").await;
@@ -1414,9 +1442,11 @@ async fn http_post(
 
 #[tokio::test]
 async fn tcp_body_limit_rejects_oversized() {
-    let app = App::new()
-        .middleware(body_limit_middleware(50))
-        .post("/upload", echo_body);
+    let app = || {
+        App::new()
+            .middleware(body_limit_middleware(50))
+            .post("/upload", echo_body)
+    };
     let addr = start_server(app).await;
 
     let body = vec![b'x'; 200];
@@ -1426,9 +1456,11 @@ async fn tcp_body_limit_rejects_oversized() {
 
 #[tokio::test]
 async fn tcp_body_limit_allows_small() {
-    let app = App::new()
-        .middleware(body_limit_middleware(1024))
-        .post("/upload", echo_body);
+    let app = || {
+        App::new()
+            .middleware(body_limit_middleware(1024))
+            .post("/upload", echo_body)
+    };
     let addr = start_server(app).await;
 
     let (status, _, body) = http_post(addr, "/upload", b"hello").await;

@@ -115,32 +115,45 @@ const TIMEOUT_SWEEP_SECS: i64 = 1;
 ///
 /// Blocks until shutdown.
 #[cfg(target_os = "linux")]
-pub fn run(app: App, addr: SocketAddr) -> Result<(), BoxError> {
-    run_with_config(app, addr, ServerConfig::default())
+pub fn run<F>(make_app: F, addr: SocketAddr) -> Result<(), BoxError>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
+    run_with_config(make_app, addr, ServerConfig::default())
 }
 
 /// Start with custom config and block until shutdown.
 #[cfg(target_os = "linux")]
-pub fn run_with_config(app: App, addr: SocketAddr, config: ServerConfig) -> Result<(), BoxError> {
-    start_with_config(app, addr, config)?.wait()
+pub fn run_with_config<F>(
+    make_app: F,
+    addr: SocketAddr,
+    config: ServerConfig,
+) -> Result<(), BoxError>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
+    start_with_config(make_app, addr, config)?.wait()
 }
 
 /// Start the server and return a handle for graceful shutdown control.
 #[cfg(target_os = "linux")]
-pub fn start(app: App, addr: SocketAddr) -> Result<ServerHandle, BoxError> {
-    start_with_config(app, addr, ServerConfig::default())
+pub fn start<F>(make_app: F, addr: SocketAddr) -> Result<ServerHandle, BoxError>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
+    start_with_config(make_app, addr, ServerConfig::default())
 }
 
 /// Start with custom config and return a handle.
 #[cfg(target_os = "linux")]
-pub fn start_with_config(
-    app: App,
+pub fn start_with_config<F>(
+    make_app: F,
     addr: SocketAddr,
     config: ServerConfig,
-) -> Result<ServerHandle, BoxError> {
-    let shared = app.into_shared_state();
-    shared.route_table.print_routes();
-
+) -> Result<ServerHandle, BoxError>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
     let worker_count = resolve_worker_count(config.workers)?;
     let per_worker_config = per_worker_config(config, worker_count);
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -150,11 +163,12 @@ pub fn start_with_config(
 
     // Spawn first worker, wait for it to report the bound address.
     let first_worker = spawn_worker(
-        Arc::clone(&shared),
+        make_app.clone(),
         addr,
         per_worker_config.clone(),
         Arc::clone(&shutdown),
         completion_tx.clone(),
+        true,
     );
     let bound_addr = match first_worker.startup.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(a)) => a,
@@ -189,11 +203,12 @@ pub fn start_with_config(
     // Spawn remaining workers, all binding to the same address (SO_REUSEPORT).
     for _ in 1..worker_count {
         let worker = spawn_worker(
-            Arc::clone(&shared),
+            make_app.clone(),
             bound_addr,
             per_worker_config.clone(),
             Arc::clone(&shutdown),
             completion_tx.clone(),
+            false,
         );
         // Wait for each worker to start before spawning the next.
         match worker.startup.recv_timeout(Duration::from_secs(5)) {
@@ -361,16 +376,26 @@ struct WorkerThread {
 }
 
 #[cfg(target_os = "linux")]
-fn spawn_worker(
-    shared: Arc<SharedState>,
+fn spawn_worker<F>(
+    make_app: F,
     addr: SocketAddr,
     config: ServerConfig,
     shutdown: Arc<AtomicBool>,
     completion: mpsc::Sender<Result<(), String>>,
-) -> WorkerThread {
+    print_routes: bool,
+) -> WorkerThread
+where
+    F: Fn() -> App + Send + 'static,
+{
     let (startup_tx, startup_rx) = mpsc::channel::<Result<SocketAddr, BoxError>>();
 
     let handle = thread::spawn(move || {
+        let app = make_app();
+        let shared = app.into_shared_state();
+        if print_routes {
+            shared.route_table.print_routes();
+        }
+
         let listener = match create_listener(addr, true) {
             Ok(l) => l,
             Err(e) => {

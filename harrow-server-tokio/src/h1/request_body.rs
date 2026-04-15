@@ -84,6 +84,10 @@ impl RequestBodyState {
         self.sender = None;
     }
 
+    pub(crate) fn detach_receiver(&mut self) {
+        self.sender = None;
+    }
+
     pub(crate) async fn pump_once<S>(&mut self, stream: &mut S, buf: &mut BytesMut) -> PumpStatus
     where
         S: AsyncRead + Unpin,
@@ -140,16 +144,62 @@ impl RequestBodyState {
         }
     }
 
+    pub(crate) async fn drain_to_eof<S>(&mut self, stream: &mut S, buf: &mut BytesMut)
+    where
+        S: AsyncRead + Unpin,
+    {
+        let Some(decoder) = self.decoder.as_mut() else {
+            return;
+        };
+
+        loop {
+            match decoder.decode(buf, Some(self.max_body_size)) {
+                Err(_) => {
+                    self.abort();
+                    return;
+                }
+                Ok(Some(PayloadItem::Chunk(_))) => continue,
+                Ok(Some(PayloadItem::Eof)) => {
+                    self.finish_eof();
+                    return;
+                }
+                Ok(None) => {}
+            }
+
+            if let Some(deadline) = self.body_deadline {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    self.abort();
+                    return;
+                }
+                match tokio::time::timeout(remaining, stream.read_buf(buf)).await {
+                    Ok(Ok(0)) | Ok(Err(_)) | Err(_) => {
+                        self.abort();
+                        return;
+                    }
+                    Ok(Ok(_)) => {}
+                }
+            } else {
+                match stream.read_buf(buf).await {
+                    Ok(0) | Err(_) => {
+                        self.abort();
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            }
+        }
+    }
+
     async fn send_chunk(&mut self, chunk: Bytes) -> PumpStatus {
         let Some(sender) = self.sender.as_mut() else {
-            self.decoder = None;
             return PumpStatus::ReceiverClosed;
         };
 
         match sender.send(Ok(Frame::data(chunk))).await {
             Ok(()) => PumpStatus::Progress,
             Err(_) => {
-                self.abort();
+                self.sender = None;
                 PumpStatus::ReceiverClosed
             }
         }

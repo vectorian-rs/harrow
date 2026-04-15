@@ -108,12 +108,16 @@ impl Drop for TestServer {
 
 static TEST_SERVERS: LazyLock<Mutex<Vec<TestServer>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
-fn spawn_server_thread(
-    app: App,
+fn spawn_server_thread<F>(
+    make_app: F,
     addr: SocketAddr,
     shutdown: tokio::sync::oneshot::Receiver<()>,
-) -> std::thread::JoinHandle<()> {
+) -> std::thread::JoinHandle<()>
+where
+    F: FnOnce() -> App + Send + 'static,
+{
     std::thread::spawn(move || {
+        let app = make_app();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -132,13 +136,16 @@ fn spawn_server_thread(
 
 /// Start a Harrow server in the background and return its address.
 /// Uses port 0 for OS-assigned ephemeral port.
-pub async fn start_server(app: App) -> SocketAddr {
+pub async fn start_server<F>(make_app: F) -> SocketAddr
+where
+    F: FnOnce() -> App + Send + 'static,
+{
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    let thread = spawn_server_thread(app, addr, rx);
+    let thread = spawn_server_thread(make_app, addr, rx);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     TEST_SERVERS.lock().unwrap().push(TestServer {
@@ -742,6 +749,7 @@ struct SessionEntry {
 
 /// Simple in-memory session store for testing and benchmarks only.
 /// Not suitable for production — no sweeper, no size limit, single-node only.
+#[derive(Clone)]
 pub struct InMemorySessionStore {
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
 }

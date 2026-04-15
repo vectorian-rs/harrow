@@ -30,7 +30,7 @@ fn bench_session(c: &mut Criterion) {
 
     // baseline: text handler, no middleware
     let baseline_addr = rt.block_on(async {
-        let app = App::new().get("/echo", text_handler);
+        let app = || App::new().get("/echo", text_handler);
         start_server(app).await
     });
 
@@ -38,9 +38,11 @@ fn bench_session(c: &mut Criterion) {
     let noop_addr = rt.block_on(async {
         let store = harrow_bench::InMemorySessionStore::new();
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .get("/echo", session_noop_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .get("/echo", session_noop_handler)
+        };
         start_server(app).await
     });
 
@@ -48,9 +50,11 @@ fn bench_session(c: &mut Criterion) {
     let new_addr = rt.block_on(async {
         let store = harrow_bench::InMemorySessionStore::new();
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .get("/echo", session_set_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .get("/echo", session_set_handler)
+        };
         start_server(app).await
     });
 
@@ -59,9 +63,11 @@ fn bench_session(c: &mut Criterion) {
         let store = harrow_bench::InMemorySessionStore::new();
         seed_bench_session(&store).await;
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .get("/echo", session_get_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .get("/echo", session_get_handler)
+        };
         start_server(app).await
     });
 
@@ -70,9 +76,11 @@ fn bench_session(c: &mut Criterion) {
         let store = harrow_bench::InMemorySessionStore::new();
         seed_bench_session(&store).await;
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .get("/echo", session_write_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .get("/echo", session_write_handler)
+        };
         start_server(app).await
     });
 
@@ -81,16 +89,18 @@ fn bench_session(c: &mut Criterion) {
         let store = harrow_bench::InMemorySessionStore::new();
         seed_bench_session(&store).await;
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .middleware(noop_middleware)
-            .get("/echo", session_get_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .middleware(noop_middleware)
+                .get("/echo", session_get_handler)
+        };
         start_server(app).await
     });
 
     // realistic stack baseline: larger body and realistic headers, but no middleware
     let realistic_baseline_addr = rt.block_on(async {
-        let app = App::new().get("/echo", large_text_handler);
+        let app = || App::new().get("/echo", large_text_handler);
         start_server(app).await
     });
 
@@ -99,11 +109,13 @@ fn bench_session(c: &mut Criterion) {
         let store = harrow_bench::InMemorySessionStore::new();
         seed_bench_session(&store).await;
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-            .middleware(harrow::compression_middleware)
-            .get("/echo", session_large_get_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                .middleware(harrow::compression_middleware)
+                .get("/echo", session_large_get_handler)
+        };
         start_server(app).await
     });
 
@@ -112,11 +124,13 @@ fn bench_session(c: &mut Criterion) {
         let store = harrow_bench::InMemorySessionStore::new();
         seed_bench_session(&store).await;
         let config = bench_session_config();
-        let app = App::new()
-            .middleware(harrow::session_middleware(store, config))
-            .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-            .middleware(harrow::compression_middleware)
-            .get("/echo", session_large_write_handler);
+        let app = move || {
+            App::new()
+                .middleware(harrow::session_middleware(store, config))
+                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                .middleware(harrow::compression_middleware)
+                .get("/echo", session_large_write_handler)
+        };
         start_server(app).await
     });
 

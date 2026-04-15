@@ -21,13 +21,15 @@ fn bench_full_stack(c: &mut Criterion) {
     // Full stack: state + path param + JSON response + 3 middleware
     let addr = rt.block_on(async {
         let counter = Arc::new(HitCounter(AtomicUsize::new(0)));
-        let app = App::new()
-            .state(counter)
-            .middleware(timing_middleware)
-            .middleware(header_middleware)
-            .middleware(noop_middleware)
-            .get("/users/:id", param_state_handler)
-            .get("/health", text_handler);
+        let app = move || {
+            App::new()
+                .state(counter)
+                .middleware(timing_middleware)
+                .middleware(header_middleware)
+                .middleware(noop_middleware)
+                .get("/users/:id", param_state_handler)
+                .get("/health", text_handler)
+        };
         start_server(app).await
     });
 
@@ -70,16 +72,18 @@ fn bench_route_table_scaling(c: &mut Criterion) {
     for n in [1usize, 10, 50, 100, 200] {
         let client = {
             let addr = rt.block_on(async {
-                let mut app = App::new()
-                    .middleware(timing_middleware)
-                    .middleware(header_middleware);
+                let app = move || {
+                    let mut app = App::new()
+                        .middleware(timing_middleware)
+                        .middleware(header_middleware);
 
-                // Add n-1 decoy routes, then the target last (worst case).
-                for i in 0..n.saturating_sub(1) {
-                    let pattern: &'static str = Box::leak(format!("/decoy-{i}").into_boxed_str());
-                    app = app.get(pattern, text_handler);
-                }
-                app = app.get("/target/:id", text_handler);
+                    for i in 0..n.saturating_sub(1) {
+                        let pattern: &'static str =
+                            Box::leak(format!("/decoy-{i}").into_boxed_str());
+                        app = app.get(pattern, text_handler);
+                    }
+                    app.get("/target/:id", text_handler)
+                };
                 start_server(app).await
             });
             Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))

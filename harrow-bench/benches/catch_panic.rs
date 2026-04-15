@@ -12,25 +12,29 @@ fn bench_catch_panic(c: &mut Criterion) {
 
     // baseline: text handler, no middleware
     let baseline_addr = rt.block_on(async {
-        let app = App::new().get("/echo", text_handler);
+        let app = || App::new().get("/echo", text_handler);
         start_server(app).await
     });
 
     // catch_panic only
     let catch_panic_addr = rt.block_on(async {
-        let app = App::new()
-            .middleware(harrow::catch_panic_middleware)
-            .get("/echo", text_handler);
+        let app = || {
+            App::new()
+                .middleware(harrow::catch_panic_middleware)
+                .get("/echo", text_handler)
+        };
         start_server(app).await
     });
 
     // catch_panic + noop + header
     let stack_addr = rt.block_on(async {
-        let app = App::new()
-            .middleware(harrow::catch_panic_middleware)
-            .middleware(noop_middleware)
-            .middleware(header_middleware)
-            .get("/echo", text_handler);
+        let app = || {
+            App::new()
+                .middleware(harrow::catch_panic_middleware)
+                .middleware(noop_middleware)
+                .middleware(header_middleware)
+                .get("/echo", text_handler)
+        };
         start_server(app).await
     });
 

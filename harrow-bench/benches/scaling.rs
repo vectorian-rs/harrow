@@ -58,7 +58,7 @@ fn bench_scaling_text(c: &mut Criterion) {
             .unwrap();
 
         let harrow_addr = server_rt.block_on(async {
-            let app = App::new().get("/text", text_handler);
+            let app = || App::new().get("/text", text_handler);
             start_server(app).await
         });
 
@@ -113,7 +113,7 @@ fn bench_scaling_json_1kb(c: &mut Criterion) {
             .unwrap();
 
         let harrow_addr = server_rt.block_on(async {
-            let app = App::new().get("/json/1kb", json_1kb_handler);
+            let app = || App::new().get("/json/1kb", json_1kb_handler);
             start_server(app).await
         });
 

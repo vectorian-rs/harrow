@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Buf;
+use tokio::io::AsyncWriteExt;
 
 use harrow_core::dispatch::{self, SharedState};
 use harrow_core::request::Body;
@@ -62,6 +63,7 @@ where
 
         let mut request_body_complete = request_body_state.is_complete();
         let mut connection_reusable = keep_alive && !shutdown.is_shutdown();
+        let mut drain_request_body = false;
         let response = loop {
             if request_body_complete {
                 break response_fut.await;
@@ -71,7 +73,8 @@ where
                 biased;
                 response = &mut response_fut => {
                     connection_reusable = false;
-                    request_body_state.abort();
+                    request_body_state.detach_receiver();
+                    drain_request_body = true;
                     break response;
                 }
                 pump = request_body_state.pump_once(&mut stream, &mut buf) => {
@@ -90,6 +93,7 @@ where
                         request_body::PumpStatus::ReceiverClosed => {
                             request_body_complete = true;
                             connection_reusable = false;
+                            drain_request_body = true;
                         }
                     }
                 }
@@ -101,6 +105,13 @@ where
             .is_err()
         {
             break;
+        }
+
+        if drain_request_body {
+            if stream.shutdown().await.is_err() {
+                break;
+            }
+            request_body_state.drain_to_eof(&mut stream, &mut buf).await;
         }
 
         if !connection_reusable {

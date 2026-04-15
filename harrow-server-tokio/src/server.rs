@@ -27,25 +27,29 @@ pub async fn serve(app: App, addr: SocketAddr) -> Result<(), Box<dyn std::error:
 ///
 /// Each worker binds to the same address via `SO_REUSEPORT` and runs an
 /// independent accept loop. No work-stealing, no cross-thread wakeups.
-pub fn serve_multi_worker(
-    app: App,
+pub fn serve_multi_worker<F>(
+    make_app: F,
     addr: SocketAddr,
     config: ServerConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let shared = app.into_shared_state();
-    shared.route_table.print_routes();
-
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
     let workers = config.worker_count();
     let shutdown = harrow_server::ShutdownSignal::new();
 
     tracing::info!("harrow listening on {addr} [{workers} workers, SO_REUSEPORT, harrow-codec-h1]");
 
     let handles = harrow_server::spawn_workers(workers, "harrow-w", {
-        let shared = Arc::clone(&shared);
+        let make_app = make_app.clone();
         let shutdown = shutdown.clone();
         let config = config.clone();
         move |worker_id| {
-            let shared = Arc::clone(&shared);
+            let app = make_app();
+            let shared = app.into_shared_state();
+            if worker_id == 0 {
+                shared.route_table.print_routes();
+            }
             let shutdown = shutdown.clone();
             let config = config.clone();
 

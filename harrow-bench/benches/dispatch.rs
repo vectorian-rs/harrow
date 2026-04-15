@@ -7,7 +7,7 @@ use http_body_util::Full;
 use serde_json::Value;
 
 use harrow::App;
-use harrow_core::dispatch::{SharedState, dispatch};
+use harrow_core::dispatch::dispatch;
 use harrow_core::request::full_body;
 
 use harrow_bench::{JSON_1KB, json_1kb_handler, text_handler};

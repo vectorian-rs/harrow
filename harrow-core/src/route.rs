@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use http::{Method, StatusCode};
@@ -11,18 +12,26 @@ use crate::problem::ProblemDetail;
 use crate::request::Request;
 use crate::response::{IntoResponse, Response};
 
-pub(crate) type NotFoundHandlerFn = Box<dyn Fn(Request) -> HandlerFuture + Send + Sync>;
+pub(crate) type NotFoundHandlerFn = Box<dyn Fn(Request) -> HandlerFuture>;
 
-pub(crate) type MethodNotAllowedHandlerFn =
-    Box<dyn Fn(Request, Vec<Method>) -> HandlerFuture + Send + Sync>;
+pub(crate) type MethodNotAllowedHandlerFn = Box<dyn Fn(Request, Vec<Method>) -> HandlerFuture>;
 
 pub(crate) struct NotFoundHandler(pub NotFoundHandlerFn);
 
 pub(crate) struct MethodNotAllowedHandler(pub MethodNotAllowedHandlerFn);
 
+type AppParts = (
+    RouteTable,
+    Vec<Box<dyn Middleware>>,
+    crate::state::TypeMap,
+    usize,
+    Option<NotFoundHandler>,
+    Option<MethodNotAllowedHandler>,
+);
+
 fn wrap_not_found_handler<F, Fut, T>(f: F) -> NotFoundHandlerFn
 where
-    F: Fn(Request) -> Fut + Send + Sync + 'static,
+    F: Fn(Request) -> Fut + 'static,
     Fut: Future<Output = T> + 'static,
     T: IntoResponse + 'static,
 {
@@ -31,7 +40,7 @@ where
 
 fn wrap_method_not_allowed_handler<F, Fut, T>(f: F) -> MethodNotAllowedHandlerFn
 where
-    F: Fn(Request, Vec<Method>) -> Fut + Send + Sync + 'static,
+    F: Fn(Request, Vec<Method>) -> Fut + 'static,
     Fut: Future<Output = T> + 'static,
     T: IntoResponse + 'static,
 {
@@ -114,8 +123,8 @@ pub struct Route {
     pub metadata: RouteMetadata,
     /// Middleware scoped to this route (from route groups).
     /// Runs after global middleware, before the handler.
-    /// Stored as `Arc` so group middleware can be shared across routes cheaply.
-    pub middleware: Vec<Arc<dyn Middleware>>,
+    /// Stored as `Rc` so group middleware can be shared across routes cheaply.
+    pub middleware: Vec<Rc<dyn Middleware>>,
 }
 
 /// The route table. A `Vec` you can iterate, filter, print, serialize.
@@ -298,7 +307,7 @@ impl App {
     /// Register a route (no route-level middleware).
     fn route<F, Fut, T>(mut self, method: Method, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -314,7 +323,7 @@ impl App {
 
     pub fn get<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -323,7 +332,7 @@ impl App {
 
     pub fn post<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -332,7 +341,7 @@ impl App {
 
     pub fn put<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -341,7 +350,7 @@ impl App {
 
     pub fn delete<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -350,7 +359,7 @@ impl App {
 
     pub fn patch<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -359,7 +368,7 @@ impl App {
 
     fn probe<F, Fut, T>(self, kind: &'static str, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -379,7 +388,7 @@ impl App {
     /// Register a custom health endpoint.
     pub fn health_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -394,7 +403,7 @@ impl App {
     /// Register a custom liveness endpoint.
     pub fn liveness_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -409,7 +418,7 @@ impl App {
     /// Register a custom readiness endpoint.
     pub fn readiness_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -419,7 +428,7 @@ impl App {
     /// Customize the framework-generated 404 response.
     pub fn not_found_handler<F, Fut, T>(mut self, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -430,7 +439,7 @@ impl App {
     /// Customize the framework-generated 405 response.
     pub fn method_not_allowed_handler<F, Fut, T>(mut self, handler: F) -> Self
     where
-        F: Fn(Request, Vec<Method>) -> Fut + Send + Sync + 'static,
+        F: Fn(Request, Vec<Method>) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -531,37 +540,35 @@ impl App {
 
     /// Consume the builder and return a shared state suitable for dispatching
     /// requests.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn into_shared_state(self) -> Arc<crate::dispatch::SharedState> {
-        let (route_table, middleware, state, max_body_size) = self.into_parts();
+        let (
+            route_table,
+            middleware,
+            state,
+            max_body_size,
+            not_found_handler,
+            method_not_allowed_handler,
+        ) = self.into_parts();
         Arc::new(crate::dispatch::SharedState {
             route_table,
             middleware,
             state: Arc::new(state),
             max_body_size,
+            not_found_handler,
+            method_not_allowed_handler,
         })
     }
 
     /// Consume the builder, returning the parts needed by the server.
-    pub fn into_parts(
-        mut self,
-    ) -> (
-        RouteTable,
-        Vec<Box<dyn Middleware>>,
-        crate::state::TypeMap,
-        usize,
-    ) {
-        if let Some(handler) = self.not_found_handler.take() {
-            self.state.insert(NotFoundHandler(handler));
-        }
-        if let Some(handler) = self.method_not_allowed_handler.take() {
-            self.state.insert(MethodNotAllowedHandler(handler));
-        }
-
+    pub(crate) fn into_parts(self) -> AppParts {
         (
             self.route_table,
             self.middleware,
             self.state,
             self.max_body_size,
+            self.not_found_handler.map(NotFoundHandler),
+            self.method_not_allowed_handler.map(MethodNotAllowedHandler),
         )
     }
 }
@@ -581,7 +588,7 @@ impl Default for App {
 /// Created via `App::group()` or `Group::group()` for nesting.
 pub struct Group {
     prefix: String,
-    middleware: Vec<Arc<dyn Middleware>>,
+    middleware: Vec<Rc<dyn Middleware>>,
     routes: Vec<Route>,
 }
 
@@ -597,7 +604,7 @@ impl Group {
     /// Add middleware scoped to this group. Runs after global middleware,
     /// before the handler, only for routes in this group.
     pub fn middleware<M: Middleware + 'static>(mut self, m: M) -> Self {
-        self.middleware.push(Arc::new(m));
+        self.middleware.push(Rc::new(m));
         self
     }
 
@@ -605,7 +612,7 @@ impl Group {
     /// Group middleware is attached later in `into_routes()`.
     fn route<F, Fut, T>(mut self, method: Method, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -622,7 +629,7 @@ impl Group {
 
     pub fn get<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -631,7 +638,7 @@ impl Group {
 
     pub fn post<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -640,7 +647,7 @@ impl Group {
 
     pub fn put<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -649,7 +656,7 @@ impl Group {
 
     pub fn delete<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -658,7 +665,7 @@ impl Group {
 
     pub fn patch<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
-        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Request) -> Fut + 'static,
         Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
@@ -684,9 +691,9 @@ impl Group {
         let sub = f(sub);
         for mut route in sub.into_routes() {
             // Prepend this group's middleware before the sub-group's middleware.
-            let mut combined: Vec<Arc<dyn Middleware>> = Vec::new();
+            let mut combined: Vec<Rc<dyn Middleware>> = Vec::new();
             for mw in &self.middleware {
-                combined.push(Arc::clone(mw));
+                combined.push(Rc::clone(mw));
             }
             combined.append(&mut route.middleware);
             route.middleware = combined;
@@ -701,9 +708,9 @@ impl Group {
         for route in &mut routes {
             // Prepend group middleware before any existing per-route middleware
             // (which may come from nested sub-groups).
-            let mut combined: Vec<Arc<dyn Middleware>> = Vec::new();
+            let mut combined: Vec<Rc<dyn Middleware>> = Vec::new();
             for mw in &self.middleware {
-                combined.push(Arc::clone(mw));
+                combined.push(Rc::clone(mw));
             }
             combined.append(&mut route.middleware);
             route.middleware = combined;

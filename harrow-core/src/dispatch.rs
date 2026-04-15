@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -18,10 +19,12 @@ pub struct SharedState {
     pub middleware: Vec<Box<dyn Middleware>>,
     pub state: Arc<TypeMap>,
     pub max_body_size: usize,
+    pub(crate) not_found_handler: Option<NotFoundHandler>,
+    pub(crate) method_not_allowed_handler: Option<MethodNotAllowedHandler>,
 }
 
 /// Terminal closure type for the global middleware chain (404/405 handlers).
-type TerminalFn = Arc<dyn Fn(Request) -> HandlerFuture + Send + Sync>;
+type TerminalFn = Rc<dyn Fn(Request) -> HandlerFuture>;
 
 /// Dispatch a request through the routing and middleware pipeline.
 #[cfg_attr(feature = "profiling", inline(never))]
@@ -59,14 +62,14 @@ pub async fn dispatch(
                 let req = unmatched_request(&shared, hyper_req, route_pattern);
 
                 let terminal: TerminalFn = {
-                    let shared_state = Arc::clone(&shared.state);
+                    let shared_state = Arc::clone(&shared);
                     let allow = allow_value.clone();
-                    Arc::new(move |req| {
-                        let state = Arc::clone(&shared_state);
+                    Rc::new(move |req| {
+                        let shared = Arc::clone(&shared_state);
                         let methods = methods.clone();
                         let allow = allow.clone();
                         Box::pin(async move {
-                            if let Some(handler) = state.try_get::<MethodNotAllowedHandler>() {
+                            if let Some(handler) = shared.method_not_allowed_handler.as_ref() {
                                 let fut = (handler.0)(req, methods);
                                 fut.await
                                     .status(StatusCode::METHOD_NOT_ALLOWED.as_u16())
@@ -91,11 +94,11 @@ pub async fn dispatch(
                 let req = unmatched_request(&shared, hyper_req, None);
 
                 let terminal: TerminalFn = {
-                    let shared_state = Arc::clone(&shared.state);
-                    Arc::new(move |req| {
-                        let state = Arc::clone(&shared_state);
+                    let shared_state = Arc::clone(&shared);
+                    Rc::new(move |req| {
+                        let shared = Arc::clone(&shared_state);
                         Box::pin(async move {
-                            if let Some(handler) = state.try_get::<NotFoundHandler>() {
+                            if let Some(handler) = shared.not_found_handler.as_ref() {
                                 let fut = (handler.0)(req);
                                 fut.await.status(StatusCode::NOT_FOUND.as_u16())
                             } else {
@@ -205,7 +208,7 @@ fn run_global_middleware_chain(
         (terminal)(req)
     } else {
         let shared_next = Arc::clone(&shared);
-        let terminal_next = Arc::clone(&terminal);
+        let terminal_next = Rc::clone(&terminal);
         let next = Next::new(move |req| {
             run_global_middleware_chain(shared_next, mw_idx + 1, req, terminal_next)
         });
