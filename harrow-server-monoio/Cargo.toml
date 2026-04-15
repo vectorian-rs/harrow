@@ -9,10 +9,12 @@ readme.workspace = true
 
 [dependencies]
 bytes = { workspace = true }
+futures-channel = "0.3"
 futures-util = { workspace = true }
 harrow-codec-h1 = { workspace = true }
 harrow-core = { workspace = true }
 http = { workspace = true }
+http-body = "1"
 http-body-util = { workspace = true }
 libc = "0.2"
 monoio = { workspace = true }

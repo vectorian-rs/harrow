@@ -175,6 +175,48 @@ async fn post_with_body() {
 }
 
 #[tokio::test]
+async fn request_body_streams_before_request_eof() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let app = App::new().post("/first-chunk", |mut req: Request| async move {
+        use http_body_util::BodyExt;
+
+        let frame = req
+            .inner_mut()
+            .body_mut()
+            .frame()
+            .await
+            .expect("body should yield first chunk")
+            .expect("chunk should not error");
+        let data = frame.into_data().expect("expected data frame");
+        Response::text(String::from_utf8_lossy(&data).to_string())
+    });
+    let (addr, _server) = start_monoio_server(app);
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(
+            b"POST /first-chunk HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n",
+        )
+        .await
+        .unwrap();
+
+    let mut buf = Vec::new();
+    tokio::time::timeout(Duration::from_millis(250), stream.read_to_end(&mut buf))
+        .await
+        .expect("expected response before request EOF")
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&buf);
+    assert!(raw.contains("HTTP/1.1 200"), "unexpected response: {raw}");
+    assert!(
+        raw.contains("hello"),
+        "expected first chunk in response: {raw}"
+    );
+    assert!(raw.to_lowercase().contains("connection: close"));
+}
+
+#[tokio::test]
 async fn path_params() {
     let app = App::new().get("/greet/:name", greet);
     let (addr, _server) = start_monoio_server(app);

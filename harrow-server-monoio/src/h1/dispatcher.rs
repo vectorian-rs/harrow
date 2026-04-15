@@ -16,12 +16,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
-use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 
 use harrow_core::dispatch::SharedState;
 
-use crate::codec;
+use crate::h1::request_body;
 use crate::o11y::ConnectionMetrics;
 use crate::protocol::ProtocolError;
 
@@ -89,7 +88,7 @@ impl H1Connection {
     async fn run_inner(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let max_body = self.config.shared.max_body_size;
 
-        loop {
+        'connection: loop {
             self.check_connection_deadline()?;
 
             // Read headers
@@ -116,51 +115,71 @@ impl H1Connection {
                 && let Some(cl) = parsed.content_length
                 && cl as usize > max_body
             {
-                let response = harrow_core::response::Response::new(
-                    http::StatusCode::PAYLOAD_TOO_LARGE,
-                    "payload too large",
-                );
-                self.write_response(response.into_inner(), false).await?;
+                self.write_status(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
+                    .await?;
                 break;
             }
 
-            // Send 100 Continue if requested
-            if parsed.expect_continue {
-                let (result, _) = self.stream.write_all(codec::CONTINUE_100.to_vec()).await;
-                result?;
+            let (mut request_body_state, body) =
+                match request_body::RequestBodyState::start(&mut self.stream, &parsed, max_body)
+                    .await
+                {
+                    Ok(state) => state,
+                    Err(err) => return Err(Box::new(err)),
+                };
+
+            let mut response_fut = std::pin::pin!(request_body::dispatch_request(
+                Arc::clone(&self.config.shared),
+                &parsed,
+                body,
+            ));
+
+            let mut body_complete = request_body_state.is_complete();
+            let mut connection_reusable = keep_alive;
+
+            enum Step<T> {
+                Response(T),
+                Pump(request_body::PumpStatus),
             }
 
-            // Read body
-            let body_bytes = match self
-                .read_body(parsed.content_length, parsed.chunked, max_body)
-                .await
-            {
-                Ok(body) => body,
-                Err(ProtocolError::BodyTooLarge) => {
-                    self.write_status(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
-                        .await?;
-                    break;
+            let response = loop {
+                if body_complete {
+                    break response_fut.await;
                 }
-                Err(ProtocolError::Timeout) => {
-                    self.write_status(http::StatusCode::REQUEST_TIMEOUT, "request timeout")
-                        .await?;
-                    break;
+
+                match monoio::select! {
+                    response = &mut response_fut => Step::Response(response),
+                    pump = request_body_state.pump_once(self) => Step::Pump(pump),
+                } {
+                    Step::Response(response) => {
+                        connection_reusable = false;
+                        request_body_state.abort();
+                        break response;
+                    }
+                    Step::Pump(request_body::PumpStatus::Progress) => {}
+                    Step::Pump(request_body::PumpStatus::Eof) => {
+                        body_complete = true;
+                    }
+                    Step::Pump(request_body::PumpStatus::ResponseError { status, body }) => {
+                        let status = http::StatusCode::from_u16(status)
+                            .unwrap_or(http::StatusCode::BAD_REQUEST);
+                        self.write_status(status, body).await?;
+                        break 'connection;
+                    }
+                    Step::Pump(request_body::PumpStatus::ConnectionClosed) => {
+                        break 'connection;
+                    }
+                    Step::Pump(request_body::PumpStatus::ReceiverClosed) => {
+                        body_complete = true;
+                        connection_reusable = false;
+                    }
                 }
-                Err(ProtocolError::Parse(_)) | Err(ProtocolError::ProtocolViolation(_)) => {
-                    self.write_status(http::StatusCode::BAD_REQUEST, "bad request")
-                        .await?;
-                    break;
-                }
-                Err(e) => return Err(Box::new(e)),
             };
 
-            // Build and dispatch request
-            let response = self.dispatch_request(&parsed, body_bytes).await;
-
             // Write response
-            self.write_response(response, keep_alive).await?;
+            self.write_response(response, connection_reusable).await?;
 
-            if !keep_alive {
+            if !connection_reusable {
                 break;
             }
         }
