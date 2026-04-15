@@ -137,41 +137,35 @@ impl H1Connection {
             let mut body_complete = request_body_state.is_complete();
             let mut connection_reusable = keep_alive;
 
-            enum Step<T> {
-                Response(T),
-                Pump(request_body::PumpStatus),
-            }
-
             let response = loop {
                 if body_complete {
                     break response_fut.await;
                 }
 
-                match monoio::select! {
-                    response = &mut response_fut => Step::Response(response),
-                    pump = request_body_state.pump_once(self) => Step::Pump(pump),
-                } {
-                    Step::Response(response) => {
+                monoio::select! {
+                    response = &mut response_fut => {
                         connection_reusable = false;
                         request_body_state.abort();
                         break response;
                     }
-                    Step::Pump(request_body::PumpStatus::Progress) => {}
-                    Step::Pump(request_body::PumpStatus::Eof) => {
-                        body_complete = true;
-                    }
-                    Step::Pump(request_body::PumpStatus::ResponseError { status, body }) => {
-                        let status = http::StatusCode::from_u16(status)
-                            .unwrap_or(http::StatusCode::BAD_REQUEST);
-                        self.write_status(status, body).await?;
-                        break 'connection;
-                    }
-                    Step::Pump(request_body::PumpStatus::ConnectionClosed) => {
-                        break 'connection;
-                    }
-                    Step::Pump(request_body::PumpStatus::ReceiverClosed) => {
-                        body_complete = true;
-                        connection_reusable = false;
+                    pump = request_body_state.pump_once(self) => {
+                        match pump {
+                            request_body::PumpStatus::Progress => {}
+                            request_body::PumpStatus::Eof => {
+                                body_complete = true;
+                            }
+                            request_body::PumpStatus::ResponseError { status, body } => {
+                                self.write_status(status, body).await?;
+                                break 'connection;
+                            }
+                            request_body::PumpStatus::ConnectionClosed => {
+                                break 'connection;
+                            }
+                            request_body::PumpStatus::ReceiverClosed => {
+                                body_complete = true;
+                                connection_reusable = false;
+                            }
+                        }
                     }
                 }
             };
