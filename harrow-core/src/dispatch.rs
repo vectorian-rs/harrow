@@ -1,11 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{Method, StatusCode};
 use http_body_util::{BodyExt, Full};
 
+use crate::handler::HandlerFuture;
 use crate::middleware::{Middleware, Next};
 use crate::path::PathMatch;
 use crate::request::{Body, Request};
@@ -22,8 +21,7 @@ pub struct SharedState {
 }
 
 /// Terminal closure type for the global middleware chain (404/405 handlers).
-type TerminalFn =
-    Arc<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+type TerminalFn = Arc<dyn Fn(Request) -> HandlerFuture + Send + Sync>;
 
 /// Dispatch a request through the routing and middleware pipeline.
 #[cfg_attr(feature = "profiling", inline(never))]
@@ -157,7 +155,7 @@ pub async fn dispatch(
         let (parts, _body) = response.into_parts();
         let empty = Full::new(Bytes::new())
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-            .boxed();
+            .boxed_unsync();
         http::Response::from_parts(parts, empty)
     } else {
         response
@@ -187,7 +185,7 @@ fn finalize_unmatched_response(
         let (parts, _body) = response.into_parts();
         let empty = Full::new(Bytes::new())
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-            .boxed();
+            .boxed_unsync();
         http::Response::from_parts(parts, empty)
     } else {
         response
@@ -201,7 +199,7 @@ fn run_global_middleware_chain(
     mw_idx: usize,
     req: Request,
     terminal: TerminalFn,
-) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+) -> HandlerFuture {
     let global_len = shared.middleware.len();
     if mw_idx >= global_len {
         (terminal)(req)
@@ -230,7 +228,7 @@ fn run_middleware_chain(
     route_idx: usize,
     mw_idx: usize,
     req: Request,
-) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+) -> HandlerFuture {
     let global_len = shared.middleware.len();
     let route = shared
         .route_table
@@ -272,7 +270,7 @@ mod tests {
     }
 
     impl Middleware for IndexMiddleware {
-        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, req: Request, next: Next) -> HandlerFuture {
             self.log.lock().unwrap().push(self.index);
             Box::pin(async move { next.run(req).await })
         }
@@ -285,11 +283,7 @@ mod tests {
     }
 
     impl Middleware for ShortCircuitMiddleware {
-        fn call(
-            &self,
-            _req: Request,
-            _next: Next,
-        ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, _req: Request, _next: Next) -> HandlerFuture {
             self.log.lock().unwrap().push(self.index);
             Box::pin(async { Response::new(http::StatusCode::FORBIDDEN, "blocked") })
         }
@@ -299,7 +293,7 @@ mod tests {
     struct HeaderMiddleware;
 
     impl Middleware for HeaderMiddleware {
-        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, req: Request, next: Next) -> HandlerFuture {
             Box::pin(async move { next.run(req).await.header("x-mw", "applied") })
         }
     }
@@ -310,7 +304,7 @@ mod tests {
     }
 
     impl Middleware for RouteCapture {
-        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, req: Request, next: Next) -> HandlerFuture {
             let pattern = req.route_pattern().map(|s| s.to_string());
             *self.captured.lock().unwrap() = Some(pattern);
             Box::pin(async move { next.run(req).await })

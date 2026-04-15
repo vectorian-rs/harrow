@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http::Method;
 use http_body_util::Full;
-use http_body_util::combinators::BoxBody;
+use http_body_util::combinators::UnsyncBoxBody;
 use percent_encoding::percent_decode_str;
 
 use crate::path::PathMatch;
@@ -13,7 +13,7 @@ use crate::state::{MissingExtError, TypeMap};
 
 /// Type-erased request body. Allows constructing requests from any body type
 /// (hyper `Incoming`, `Full<Bytes>`, etc.) without coupling to a specific impl.
-pub type Body = BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+pub type Body = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Maximum number of query pairs parsed to prevent OOM.
 const MAX_QUERY_PAIRS: usize = 100;
@@ -294,7 +294,7 @@ pub fn box_incoming(incoming: hyper::body::Incoming) -> Body {
     use http_body_util::BodyExt;
     incoming
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .boxed()
+        .boxed_unsync()
 }
 
 /// Create a `Body` from a `Full<Bytes>`. Useful for constructing test requests
@@ -302,7 +302,7 @@ pub fn box_incoming(incoming: hyper::body::Incoming) -> Body {
 pub fn full_body(body: Full<Bytes>) -> Body {
     use http_body_util::BodyExt;
     body.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-        .boxed()
+        .boxed_unsync()
 }
 
 /// Test utilities for creating `Request` instances.

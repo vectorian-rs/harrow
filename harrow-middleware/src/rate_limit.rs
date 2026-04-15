@@ -1,7 +1,7 @@
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use harrow_core::handler::HandlerFuture;
 use harrow_core::middleware::{Middleware, Next};
 use harrow_core::request::Request;
 use harrow_core::response::Response;
@@ -113,7 +113,7 @@ impl<K: KeyExtractor, B: RateLimitBackend> RateLimitMiddleware<K, B> {
 }
 
 impl<K: KeyExtractor, B: RateLimitBackend> Middleware for RateLimitMiddleware<K, B> {
-    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> HandlerFuture {
         let key = self.key_extractor.extract(&req);
 
         match key {

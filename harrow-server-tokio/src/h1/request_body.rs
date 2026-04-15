@@ -62,7 +62,7 @@ impl RequestBodyState {
         let stream = stream::unfold(receiver, |mut receiver| async move {
             receiver.recv().await.map(|item| (item, receiver))
         });
-        let body = StreamBody::new(stream).boxed();
+        let body = StreamBody::new(stream).boxed_unsync();
 
         Ok((
             Self {
@@ -174,5 +174,5 @@ impl RequestBodyState {
 fn empty_body() -> Body {
     Full::new(Bytes::new())
         .map_err(|e| -> BoxError { match e {} })
-        .boxed()
+        .boxed_unsync()
 }

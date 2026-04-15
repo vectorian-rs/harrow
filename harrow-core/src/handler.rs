@@ -4,10 +4,11 @@ use std::pin::Pin;
 use crate::request::Request;
 use crate::response::Response;
 
+pub type HandlerFuture = Pin<Box<dyn Future<Output = Response>>>;
+
 /// The concrete handler function type. A boxed async function from Request to Response.
 /// No traits to implement, no generics to satisfy.
-pub type HandlerFn =
-    Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+pub type HandlerFn = Box<dyn Fn(Request) -> HandlerFuture + Send + Sync>;
 
 /// Wrap a plain async function into a boxed `HandlerFn`.
 ///
@@ -20,7 +21,7 @@ pub type HandlerFn =
 pub fn wrap<F, Fut, T>(f: F) -> HandlerFn
 where
     F: Fn(Request) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = T> + Send + 'static,
+    Fut: Future<Output = T> + 'static,
     T: crate::response::IntoResponse + 'static,
 {
     Box::new(move |req| {

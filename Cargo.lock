@@ -1436,7 +1436,6 @@ version = "0.9.6"
 dependencies = [
  "bolero",
  "bytes",
- "futures-channel",
  "futures-util",
  "harrow-codec-h1",
  "harrow-core",

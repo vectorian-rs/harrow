@@ -11,6 +11,7 @@ use harrow_core::response::Response;
 use harrow_core::route::App;
 use harrow_server_tokio::{ServerConfig, handle_connection};
 use tokio::io::AsyncWriteExt;
+use tokio::task::LocalSet;
 
 fn test_config() -> ServerConfig {
     ServerConfig {
@@ -43,29 +44,35 @@ fn shared_state() -> Arc<harrow_core::dispatch::SharedState> {
 /// to the client side, return whatever the server writes back.
 async fn run_connection(request_bytes: &[u8], config: &ServerConfig) -> Vec<u8> {
     let shared = shared_state();
-    let (client, server) = tokio::io::duplex(64 * 1024);
-    let (mut client_read, mut client_write) = tokio::io::split(client);
-
     let owned = request_bytes.to_vec();
-    let write_task = tokio::spawn(async move {
-        client_write.write_all(&owned).await.unwrap();
-        client_write.shutdown().await.unwrap();
-    });
-
     let cfg = config.clone();
-    let handle_task = tokio::spawn(async move {
-        let _ = handle_connection(server, shared, &cfg).await;
-    });
+    let local = LocalSet::new();
 
-    // Read server response from client side.
-    let mut response = Vec::new();
-    use tokio::io::AsyncReadExt;
-    let _ = client_read.read_to_end(&mut response).await;
+    local
+        .run_until(async move {
+            let (client, server) = tokio::io::duplex(64 * 1024);
+            let (mut client_read, mut client_write) = tokio::io::split(client);
 
-    let _ = write_task.await;
-    let _ = handle_task.await;
+            let write_task = tokio::spawn(async move {
+                client_write.write_all(&owned).await.unwrap();
+                client_write.shutdown().await.unwrap();
+            });
 
-    response
+            let handle_task = tokio::task::spawn_local(async move {
+                let _ = handle_connection(server, shared, &cfg).await;
+            });
+
+            // Read server response from client side.
+            let mut response = Vec::new();
+            use tokio::io::AsyncReadExt;
+            let _ = client_read.read_to_end(&mut response).await;
+
+            let _ = write_task.await;
+            let _ = handle_task.await;
+
+            response
+        })
+        .await
 }
 
 /// Run handle_connection with incremental writes (simulates slow client).
@@ -75,37 +82,42 @@ async fn run_connection_incremental(
     config: &ServerConfig,
 ) -> Vec<u8> {
     let shared = shared_state();
-    let (client, server) = tokio::io::duplex(64 * 1024);
-    let (mut client_read, mut client_write) = tokio::io::split(client);
-
     let chunks: Vec<Vec<u8>> = chunks.iter().map(|c| c.to_vec()).collect();
     let delays: Vec<Duration> = delays.to_vec();
-
-    let write_task = tokio::spawn(async move {
-        for (i, chunk) in chunks.iter().enumerate() {
-            if i < delays.len() {
-                tokio::time::sleep(delays[i]).await;
-            }
-            if client_write.write_all(chunk).await.is_err() {
-                break;
-            }
-        }
-        let _ = client_write.shutdown().await;
-    });
-
     let config = config.clone();
-    let handle_task = tokio::spawn(async move {
-        let _ = handle_connection(server, shared, &config).await;
-    });
+    let local = LocalSet::new();
 
-    let mut response = Vec::new();
-    use tokio::io::AsyncReadExt;
-    let _ = client_read.read_to_end(&mut response).await;
+    local
+        .run_until(async move {
+            let (client, server) = tokio::io::duplex(64 * 1024);
+            let (mut client_read, mut client_write) = tokio::io::split(client);
 
-    let _ = write_task.await;
-    let _ = handle_task.await;
+            let write_task = tokio::spawn(async move {
+                for (i, chunk) in chunks.iter().enumerate() {
+                    if i < delays.len() {
+                        tokio::time::sleep(delays[i]).await;
+                    }
+                    if client_write.write_all(chunk).await.is_err() {
+                        break;
+                    }
+                }
+                let _ = client_write.shutdown().await;
+            });
 
-    response
+            let handle_task = tokio::task::spawn_local(async move {
+                let _ = handle_connection(server, shared, &config).await;
+            });
+
+            let mut response = Vec::new();
+            use tokio::io::AsyncReadExt;
+            let _ = client_read.read_to_end(&mut response).await;
+
+            let _ = write_task.await;
+            let _ = handle_task.await;
+
+            response
+        })
+        .await
 }
 
 fn assert_http_response(data: &[u8], expected_status: u16) {
@@ -237,31 +249,39 @@ async fn dst_slowloris_header_timeout() {
         ..test_config()
     };
 
-    let shared = shared_state();
-    let (client, server) = tokio::io::duplex(64 * 1024);
-    let (mut client_read, mut client_write) = tokio::io::split(client);
-
     let cfg = config.clone();
-    let handle_task = tokio::spawn(async move {
-        let _ = handle_connection(server, shared, &cfg).await;
-    });
+    let shared = shared_state();
+    let local = LocalSet::new();
 
-    // Send partial headers, wait longer than header timeout, send more.
-    let write_task = tokio::spawn(async move {
-        client_write.write_all(b"GET / HTTP/1.1\r\n").await.unwrap();
-        // Wait longer than header_read_timeout (500ms).
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        // Try to send more — server should have already closed.
-        let _ = client_write.write_all(b"Host: localhost\r\n\r\n").await;
-        let _ = client_write.shutdown().await;
-    });
+    let response = local
+        .run_until(async move {
+            let (client, server) = tokio::io::duplex(64 * 1024);
+            let (mut client_read, mut client_write) = tokio::io::split(client);
 
-    let mut response = Vec::new();
-    use tokio::io::AsyncReadExt;
-    let _ = client_read.read_to_end(&mut response).await;
+            let handle_task = tokio::task::spawn_local(async move {
+                let _ = handle_connection(server, shared, &cfg).await;
+            });
 
-    let _ = write_task.await;
-    let _ = handle_task.await;
+            // Send partial headers, wait longer than header timeout, send more.
+            let write_task = tokio::spawn(async move {
+                client_write.write_all(b"GET / HTTP/1.1\r\n").await.unwrap();
+                // Wait longer than header_read_timeout (500ms).
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                // Try to send more — server should have already closed.
+                let _ = client_write.write_all(b"Host: localhost\r\n\r\n").await;
+                let _ = client_write.shutdown().await;
+            });
+
+            let mut response = Vec::new();
+            use tokio::io::AsyncReadExt;
+            let _ = client_read.read_to_end(&mut response).await;
+
+            let _ = write_task.await;
+            let _ = handle_task.await;
+
+            response
+        })
+        .await;
 
     // Connection should be closed by timeout. Response is empty or error.
     assert!(
@@ -335,38 +355,46 @@ async fn dst_connection_lifetime_timeout() {
         ..test_config()
     };
 
-    let shared = shared_state();
-    let (client, server) = tokio::io::duplex(64 * 1024);
-    let (mut client_read, mut client_write) = tokio::io::split(client);
-
     let cfg = config.clone();
-    let handle_task = tokio::spawn(async move {
-        let _ = handle_connection(server, shared, &cfg).await;
-    });
+    let shared = shared_state();
+    let local = LocalSet::new();
 
-    let write_task = tokio::spawn(async move {
-        // First request — should succeed.
-        client_write
-            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .await
-            .unwrap();
-        // Wait past connection timeout before sending second request.
-        // The server should close the connection during the wait,
-        // so the second request is never processed.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        // Server should have already closed — this write may fail.
-        let _ = client_write
-            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            .await;
-        let _ = client_write.shutdown().await;
-    });
+    let response = local
+        .run_until(async move {
+            let (client, server) = tokio::io::duplex(64 * 1024);
+            let (mut client_read, mut client_write) = tokio::io::split(client);
 
-    let mut response = Vec::new();
-    use tokio::io::AsyncReadExt;
-    let _ = client_read.read_to_end(&mut response).await;
+            let handle_task = tokio::task::spawn_local(async move {
+                let _ = handle_connection(server, shared, &cfg).await;
+            });
 
-    let _ = write_task.await;
-    let _ = handle_task.await;
+            let write_task = tokio::spawn(async move {
+                // First request — should succeed.
+                client_write
+                    .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    .await
+                    .unwrap();
+                // Wait past connection timeout before sending second request.
+                // The server should close the connection during the wait,
+                // so the second request is never processed.
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                // Server should have already closed — this write may fail.
+                let _ = client_write
+                    .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .await;
+                let _ = client_write.shutdown().await;
+            });
+
+            let mut response = Vec::new();
+            use tokio::io::AsyncReadExt;
+            let _ = client_read.read_to_end(&mut response).await;
+
+            let _ = write_task.await;
+            let _ = handle_task.await;
+
+            response
+        })
+        .await;
 
     // The connection should eventually close. With paused time, the
     // writer's sleep advances time past the connection timeout. The

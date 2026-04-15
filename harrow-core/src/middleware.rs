@@ -1,11 +1,10 @@
 use std::future::Future;
-use std::pin::Pin;
 
+use crate::handler::HandlerFuture;
 use crate::request::Request;
 use crate::response::Response;
 
-/// A boxed, `Send` future that resolves to a `Response`.
-type BoxFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+type BoxFuture = HandlerFuture;
 
 /// A middleware function. Receives the request and a `Next` handle to call
 /// the remainder of the chain (or the final handler).
@@ -17,7 +16,7 @@ pub trait Middleware: Send + Sync {
 impl<F, Fut> Middleware for F
 where
     F: Fn(Request, Next) -> Fut + Send + Sync,
-    Fut: Future<Output = Response> + Send + 'static,
+    Fut: Future<Output = Response> + 'static,
 {
     fn call(&self, req: Request, next: Next) -> BoxFuture {
         Box::pin((self)(req, next))
@@ -26,11 +25,11 @@ where
 
 /// Handle to the next middleware or the final handler.
 pub struct Next {
-    inner: Box<dyn FnOnce(Request) -> BoxFuture + Send>,
+    inner: Box<dyn FnOnce(Request) -> BoxFuture>,
 }
 
 impl Next {
-    pub fn new(f: impl FnOnce(Request) -> BoxFuture + Send + 'static) -> Self {
+    pub fn new(f: impl FnOnce(Request) -> BoxFuture + 'static) -> Self {
         Self { inner: Box::new(f) }
     }
 

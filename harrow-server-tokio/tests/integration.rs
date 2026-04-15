@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -196,24 +197,73 @@ async fn second_middleware(req: Request, next: Next) -> Response {
 
 // -- TCP Helpers (kept for true end-to-end tests) ----------------------------
 
+struct TestServer {
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+static TEST_SERVERS: LazyLock<Mutex<Vec<TestServer>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+fn spawn_server_thread(
+    app: App,
+    addr: SocketAddr,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+    config: harrow_server_tokio::ServerConfig,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+
+        rt.block_on(local.run_until(async move {
+            harrow_server_tokio::serve_with_config(
+                app,
+                addr,
+                async move {
+                    let _ = shutdown.await;
+                },
+                config,
+            )
+            .await
+            .unwrap();
+        }));
+    })
+}
+
 /// Spin up the server on a random port, return the bound address.
 async fn start_server(app: App) -> SocketAddr {
+    start_server_with_config(app, harrow_server_tokio::ServerConfig::default()).await
+}
+
+async fn start_server_with_config(
+    app: App,
+    config: harrow_server_tokio::ServerConfig,
+) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        harrow_server_tokio::serve_with_shutdown(app, addr, async {
-            let _ = rx.await;
-        })
-        .await
-        .unwrap();
-    });
+    let thread = spawn_server_thread(app, addr, rx, config);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-    std::mem::forget(tx);
+    TEST_SERVERS.lock().unwrap().push(TestServer {
+        shutdown: Some(tx),
+        thread: Some(thread),
+    });
     addr
 }
 
@@ -955,22 +1005,15 @@ async fn tcp_graceful_drain_completes_inflight_request() {
     drop(listener);
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        harrow_server_tokio::serve_with_config(
-            app,
-            addr,
-            async {
-                let _ = rx.await;
-            },
-            harrow_server_tokio::ServerConfig {
-                drain_timeout: Duration::from_secs(5),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    });
+    let server = spawn_server_thread(
+        app,
+        addr,
+        rx,
+        harrow_server_tokio::ServerConfig {
+            drain_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+    );
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -985,6 +1028,7 @@ async fn tcp_graceful_drain_completes_inflight_request() {
     let (status, _, body) = request_handle.await.unwrap();
     assert_eq!(status, 200);
     assert_eq!(body, "slow");
+    server.join().unwrap();
 }
 
 #[tokio::test]
@@ -996,21 +1040,15 @@ async fn tcp_graceful_shutdown_waits_for_drain_before_returning() {
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-    let server = tokio::spawn(async move {
-        harrow_server_tokio::serve_with_config(
-            app,
-            addr,
-            async {
-                let _ = rx.await;
-            },
-            harrow_server_tokio::ServerConfig {
-                drain_timeout: Duration::from_secs(5),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    });
+    let server = spawn_server_thread(
+        app,
+        addr,
+        rx,
+        harrow_server_tokio::ServerConfig {
+            drain_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+    );
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -1028,10 +1066,13 @@ async fn tcp_graceful_shutdown_waits_for_drain_before_returning() {
     assert_eq!(status, 200);
     assert_eq!(body, "slow");
 
-    tokio::time::timeout(Duration::from_secs(1), server)
-        .await
-        .expect("server should finish after in-flight request drains")
-        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        tokio::task::spawn_blocking(move || server.join().unwrap()),
+    )
+    .await
+    .expect("server should finish after in-flight request drains")
+    .unwrap();
 }
 
 // -- Body Read Timeout Test -------------------------------------------------
@@ -1045,25 +1086,14 @@ async fn tcp_body_read_timeout_returns_400() {
         }
     });
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-
-    tokio::spawn(async move {
-        harrow_server_tokio::serve_with_config(
-            app,
-            addr,
-            futures_util::future::pending(),
-            harrow_server_tokio::ServerConfig {
-                body_read_timeout: Some(Duration::from_millis(200)),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    });
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let addr = start_server_with_config(
+        app,
+        harrow_server_tokio::ServerConfig {
+            body_read_timeout: Some(Duration::from_millis(200)),
+            ..Default::default()
+        },
+    )
+    .await;
 
     // Send headers promising a body, then stall — never send the body.
     use tokio::io::AsyncWriteExt;

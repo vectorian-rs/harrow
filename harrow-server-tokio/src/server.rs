@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::TcpListener;
-use tokio::task::JoinSet;
+use tokio::task::{JoinSet, LocalSet};
 
 use harrow_core::dispatch::SharedState;
 use harrow_core::route::App;
@@ -59,8 +59,11 @@ pub fn serve_multi_worker(
                     .expect("failed to bind SO_REUSEPORT listener");
                 let listener =
                     TcpListener::from_std(std_listener).expect("failed to convert listener");
+                let local = LocalSet::new();
 
-                worker_loop(shared, listener, config, shutdown, worker_id).await;
+                local
+                    .run_until(worker_loop(shared, listener, config, shutdown, worker_id))
+                    .await;
             });
         }
     })?;
@@ -91,21 +94,30 @@ pub async fn serve_with_config(
     tracing::info!("harrow listening on {addr} [harrow-codec-h1]");
 
     let shutdown_signal = harrow_server::ShutdownSignal::new();
-    let shutdown_signal2 = shutdown_signal.clone();
-    let mut worker = tokio::spawn(worker_loop(shared, listener, config, shutdown_signal, 0));
+    let local = LocalSet::new();
 
     tokio::pin!(shutdown);
 
-    tokio::select! {
-        result = &mut worker => {
-            result?;
-        }
-        () = &mut shutdown => {
-            tracing::info!("harrow shutting down");
-            shutdown_signal2.shutdown();
-            worker.await?;
-        }
-    }
+    local
+        .run_until(async move {
+            let mut worker = std::pin::pin!(worker_loop(
+                shared,
+                listener,
+                config,
+                shutdown_signal.clone(),
+                0
+            ));
+
+            tokio::select! {
+                () = &mut worker => {}
+                () = &mut shutdown => {
+                    tracing::info!("harrow shutting down");
+                    shutdown_signal.shutdown();
+                    worker.await;
+                }
+            }
+        })
+        .await;
 
     Ok(())
 }
@@ -155,7 +167,7 @@ async fn worker_loop(
         let active2 = Arc::clone(&active);
         let shutdown2 = shutdown.clone();
 
-        connections.spawn(async move {
+        connections.spawn_local(async move {
             let _active = ActiveConnectionGuard::new(active2);
             if let Err(e) = handle_tcp_connection(stream, shared, &config2, shutdown2).await {
                 tracing::debug!("connection error: {e}");

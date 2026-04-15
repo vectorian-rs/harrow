@@ -15,7 +15,7 @@ use harrow_core::request::Body;
 pub(crate) fn body_from_bytes(bytes: Bytes) -> Body {
     Full::new(bytes)
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-        .boxed()
+        .boxed_unsync()
 }
 
 /// Error types that can occur at the protocol layer.

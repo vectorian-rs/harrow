@@ -284,7 +284,7 @@ impl Conn {
             use http_body_util::Full;
             Full::new(self.body_bytes.clone().freeze())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-                .boxed()
+                .boxed_unsync()
         };
 
         builder.body(body).ok()

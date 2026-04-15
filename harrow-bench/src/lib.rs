@@ -79,6 +79,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -89,6 +90,46 @@ use serde::{Deserialize, Serialize};
 // Server helpers
 // ---------------------------------------------------------------------------
 
+struct TestServer {
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+static TEST_SERVERS: LazyLock<Mutex<Vec<TestServer>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+fn spawn_server_thread(
+    app: App,
+    addr: SocketAddr,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+
+        rt.block_on(local.run_until(async move {
+            harrow::runtime::tokio::serve_with_shutdown(app, addr, async move {
+                let _ = shutdown.await;
+            })
+            .await
+            .unwrap();
+        }));
+    })
+}
+
 /// Start a Harrow server in the background and return its address.
 /// Uses port 0 for OS-assigned ephemeral port.
 pub async fn start_server(app: App) -> SocketAddr {
@@ -97,16 +138,13 @@ pub async fn start_server(app: App) -> SocketAddr {
     drop(listener);
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
-        harrow::runtime::tokio::serve_with_shutdown(app, addr, async {
-            let _ = rx.await;
-        })
-        .await
-        .unwrap();
-    });
+    let thread = spawn_server_thread(app, addr, rx);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    std::mem::forget(tx);
+    TEST_SERVERS.lock().unwrap().push(TestServer {
+        shutdown: Some(tx),
+        thread: Some(thread),
+    });
     addr
 }
 

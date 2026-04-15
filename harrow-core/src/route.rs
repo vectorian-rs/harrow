@@ -1,23 +1,20 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use http::{Method, StatusCode};
 
-use crate::handler::{self, HandlerFn};
+use crate::handler::{self, HandlerFn, HandlerFuture};
 use crate::middleware::Middleware;
 use crate::path::{PathMatch, PathPattern, to_matchit_pattern};
 use crate::problem::ProblemDetail;
 use crate::request::Request;
 use crate::response::{IntoResponse, Response};
 
-pub(crate) type NotFoundHandlerFn =
-    Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+pub(crate) type NotFoundHandlerFn = Box<dyn Fn(Request) -> HandlerFuture + Send + Sync>;
 
-pub(crate) type MethodNotAllowedHandlerFn = Box<
-    dyn Fn(Request, Vec<Method>) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync,
->;
+pub(crate) type MethodNotAllowedHandlerFn =
+    Box<dyn Fn(Request, Vec<Method>) -> HandlerFuture + Send + Sync>;
 
 pub(crate) struct NotFoundHandler(pub NotFoundHandlerFn);
 
@@ -26,7 +23,7 @@ pub(crate) struct MethodNotAllowedHandler(pub MethodNotAllowedHandlerFn);
 fn wrap_not_found_handler<F, Fut, T>(f: F) -> NotFoundHandlerFn
 where
     F: Fn(Request) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = T> + Send + 'static,
+    Fut: Future<Output = T> + 'static,
     T: IntoResponse + 'static,
 {
     handler::wrap(f)
@@ -35,7 +32,7 @@ where
 fn wrap_method_not_allowed_handler<F, Fut, T>(f: F) -> MethodNotAllowedHandlerFn
 where
     F: Fn(Request, Vec<Method>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = T> + Send + 'static,
+    Fut: Future<Output = T> + 'static,
     T: IntoResponse + 'static,
 {
     Box::new(move |req, methods| {
@@ -302,7 +299,7 @@ impl App {
     fn route<F, Fut, T>(mut self, method: Method, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route_table.push(Route {
@@ -318,7 +315,7 @@ impl App {
     pub fn get<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::GET, pattern, handler)
@@ -327,7 +324,7 @@ impl App {
     pub fn post<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::POST, pattern, handler)
@@ -336,7 +333,7 @@ impl App {
     pub fn put<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::PUT, pattern, handler)
@@ -345,7 +342,7 @@ impl App {
     pub fn delete<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::DELETE, pattern, handler)
@@ -354,7 +351,7 @@ impl App {
     pub fn patch<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::PATCH, pattern, handler)
@@ -363,7 +360,7 @@ impl App {
     fn probe<F, Fut, T>(self, kind: &'static str, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::GET, pattern, handler)
@@ -383,7 +380,7 @@ impl App {
     pub fn health_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.probe("health", pattern, handler)
@@ -398,7 +395,7 @@ impl App {
     pub fn liveness_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.probe("liveness", pattern, handler)
@@ -413,7 +410,7 @@ impl App {
     pub fn readiness_handler<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.probe("readiness", pattern, handler)
@@ -423,7 +420,7 @@ impl App {
     pub fn not_found_handler<F, Fut, T>(mut self, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.not_found_handler = Some(wrap_not_found_handler(handler));
@@ -434,7 +431,7 @@ impl App {
     pub fn method_not_allowed_handler<F, Fut, T>(mut self, handler: F) -> Self
     where
         F: Fn(Request, Vec<Method>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.method_not_allowed_handler = Some(wrap_method_not_allowed_handler(handler));
@@ -609,7 +606,7 @@ impl Group {
     fn route<F, Fut, T>(mut self, method: Method, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         let full_pattern = format!("{}{}", self.prefix, pattern);
@@ -626,7 +623,7 @@ impl Group {
     pub fn get<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::GET, pattern, handler)
@@ -635,7 +632,7 @@ impl Group {
     pub fn post<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::POST, pattern, handler)
@@ -644,7 +641,7 @@ impl Group {
     pub fn put<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::PUT, pattern, handler)
@@ -653,7 +650,7 @@ impl Group {
     pub fn delete<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::DELETE, pattern, handler)
@@ -662,7 +659,7 @@ impl Group {
     pub fn patch<F, Fut, T>(self, pattern: &str, handler: F) -> Self
     where
         F: Fn(Request) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = T> + 'static,
         T: IntoResponse + 'static,
     {
         self.route(Method::PATCH, pattern, handler)

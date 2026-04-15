@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,7 +7,6 @@ use std::time::Duration;
 
 use harrow_core::middleware::{Middleware, Next};
 use harrow_core::request::Request;
-use harrow_core::response::Response;
 
 // ---------------------------------------------------------------------------
 // SessionError
@@ -393,7 +391,7 @@ pub fn session_middleware<S: SessionStore>(
 }
 
 impl<S: SessionStore> Middleware for SessionMiddleware<S> {
-    fn call(&self, mut req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, mut req: Request, next: Next) -> harrow_core::handler::HandlerFuture {
         let store = Arc::clone(&self.store);
         let config = Arc::clone(&self.config);
 

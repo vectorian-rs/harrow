@@ -3,12 +3,13 @@ use std::borrow::Cow;
 use bytes::{Bytes, BytesMut};
 use futures_util::Stream;
 use http::StatusCode;
-use http_body_util::combinators::BoxBody;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 
-/// The response body type. Both buffered and streaming paths go through `BoxBody`
-/// so that all body types share a uniform `Body` impl for hyper's `serve_connection`.
-pub type ResponseBody = BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+/// The response body type. Both buffered and streaming paths go through
+/// `UnsyncBoxBody` so all body types share a uniform `Body` impl without
+/// requiring cross-thread sharing on the hot path.
+pub type ResponseBody = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Harrow's response wrapper. Built via chained methods, no builder traits.
 pub struct Response {
@@ -19,7 +20,7 @@ pub struct Response {
 /// mapped away at zero cost since it can never occur.
 fn full_to_body(full: Full<Bytes>) -> ResponseBody {
     full.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-        .boxed()
+        .boxed_unsync()
 }
 
 impl Response {
@@ -38,10 +39,9 @@ impl Response {
     where
         S: Stream<Item = Result<http_body::Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>
             + Send
-            + Sync
             + 'static,
     {
-        let body = StreamBody::new(stream).boxed();
+        let body = StreamBody::new(stream).boxed_unsync();
         let inner = http::Response::builder()
             .status(status)
             .body(body)
