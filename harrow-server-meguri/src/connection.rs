@@ -282,9 +282,10 @@ impl Conn {
 
         let body: harrow_core::request::Body = {
             use http_body_util::Full;
-            Full::new(self.body_bytes.clone().freeze())
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-                .boxed_unsync()
+            harrow_core::request::Body::new(
+                Full::new(self.body_bytes.clone().freeze())
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} }),
+            )
         };
 
         builder.body(body).ok()

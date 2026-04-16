@@ -194,14 +194,14 @@ article.
 Today Harrow's middleware API is intentionally dynamic:
 
 ```rust
-type BoxFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+type BoxFuture = Pin<Box<dyn Future<Output = Response>>>;
 
-pub trait Middleware: Send + Sync {
+pub trait Middleware {
     fn call(&self, req: Request, next: Next) -> BoxFuture;
 }
 
 pub struct Next {
-    inner: Box<dyn FnOnce(Request) -> BoxFuture + Send>,
+    inner: Box<dyn FnOnce(Request) -> BoxFuture>,
 }
 ```
 

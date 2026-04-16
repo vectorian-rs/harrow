@@ -1,6 +1,7 @@
 # Harrow
 
-A thin, macro-free HTTP framework over Hyper with opt-in observability.
+A thin, macro-free HTTP framework with custom HTTP/1 backends, local-worker
+runtime architecture, and opt-in observability.
 
 ## Features
 
@@ -8,8 +9,8 @@ A thin, macro-free HTTP framework over Hyper with opt-in observability.
 - **Route introspection** -- the route table is a first-class data structure you can enumerate at startup for OpenAPI generation, health checks, or monitoring config.
 - **Opt-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
 - **Feature-gated middleware** -- request-id, CORS, catch-panic, compression, session, rate-limit, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
-- **Fast** -- built directly on Hyper 1.x and matchit routing. No Tower, no `BoxCloneService`, no deep type nesting.
-- **Pluggable server backends** -- choose between Tokio/Hyper (cross-platform) or Monoio/io_uring (Linux high-performance).
+- **Fast** -- custom HTTP/1 transport with shared codec/dispatcher pieces, `matchit` routing, and no Tower or `BoxCloneService`.
+- **Pluggable server backends** -- choose between Tokio/custom HTTP/1 (cross-platform) or Monoio/io_uring (Linux high-performance).
 
 ## Server Backends (Required)
 
@@ -17,8 +18,8 @@ Harrow requires you to explicitly select an HTTP server backend. There is no def
 
 | Backend               | Feature  | Best For                                | Platform              |
 | --------------------- | -------- | --------------------------------------- | --------------------- |
-| **Tokio + Hyper**     | `tokio`  | Cross-platform, development, containers | Linux, macOS, Windows |
-| **Monoio + io_uring** | `monoio` | Maximum throughput on Linux 6.1+        | Linux 6.1+ only       |
+| **Tokio + custom HTTP/1** | `tokio`  | Cross-platform, development, containers | Linux, macOS, Windows |
+| **Monoio + io_uring**     | `monoio` | Maximum throughput on Linux 6.1+        | Linux 6.1+ only       |
 
 ### Choosing a Backend
 
@@ -27,7 +28,8 @@ Harrow requires you to explicitly select an HTTP server backend. There is no def
 - Cross-platform development (macOS, Windows)
 - Container deployments (Docker, ECS Fargate, Lambda)
 - When you need TLS support (`tls` feature)
-- General-purpose HTTP services
+- General-purpose HTTP services with the same local-worker/runtime direction as
+  Harrow's other backends
 
 **Use Monoio** for:
 
@@ -126,6 +128,8 @@ let app = App::new()
 ## Documentation
 
 - [Design rationale](docs/prds/harrow-http-framework.md) -- why Harrow exists and what it optimises for
+- [Local-worker runtime strategy](docs/strategy-local-workers.md) -- the current nginx/ntex-style runtime direction
+- [HTTP/1 dispatcher design](docs/h1-dispatcher-design.md) -- how the shared custom backend is structured
 - [Explicit extractors philosophy](docs/explicit-extractors.md) -- the design choice behind plain function signatures
 - [Performance notes](docs/performance.md) -- benchmark methodology and results
 
@@ -137,8 +141,9 @@ let app = App::new()
 | `harrow-core`          | Request, Response, routing, middleware trait, app builder        |
 | `harrow-middleware`    | Request-id, CORS, compression, session, rate-limit, o11y        |
 | `harrow-o11y`          | O11yConfig and rolly integration types                           |
-| `harrow-server-tokio`  | Tokio/Hyper server binding, TLS, graceful shutdown               |
+| `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, TLS, graceful shutdown |
 | `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux                |
+| `harrow-server-meguri` | Experimental direct io_uring backend                             |
 | `harrow-bench`         | Criterion benchmarks and load testing tools                      |
 
 ## License

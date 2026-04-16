@@ -1,19 +1,62 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use http::Method;
+use http_body::{Body as HttpBody, Frame, SizeHint};
+use http_body_util::BodyExt;
 use http_body_util::Full;
-use http_body_util::combinators::UnsyncBoxBody;
 use percent_encoding::percent_decode_str;
 
 use crate::path::PathMatch;
 use crate::response::{IntoResponse, Response};
 use crate::state::{MissingExtError, TypeMap};
 
-/// Type-erased request body. Allows constructing requests from any body type
-/// (hyper `Incoming`, `Full<Bytes>`, etc.) without coupling to a specific impl.
-pub type Body = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+pub struct Body {
+    inner: Pin<
+        Box<dyn HttpBody<Data = Bytes, Error = Box<dyn std::error::Error + Send + Sync>> + 'static>,
+    >,
+}
+
+impl Body {
+    pub fn new<B>(body: B) -> Self
+    where
+        B: HttpBody<Data = Bytes, Error = Box<dyn std::error::Error + Send + Sync>> + 'static,
+    {
+        Self {
+            inner: Box::pin(body),
+        }
+    }
+}
+
+impl fmt::Debug for Body {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Body").finish()
+    }
+}
+
+impl HttpBody for Body {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        self.inner.as_mut().poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
 
 /// Maximum number of query pairs parsed to prevent OOM.
 const MAX_QUERY_PAIRS: usize = 100;
@@ -287,22 +330,22 @@ impl From<BodyError> for Response {
     }
 }
 
-/// Convert a `hyper::body::Incoming` into a harrow `Body`.
-/// Called at the server boundary to box the hyper-specific body type.
+/// Convert a `hyper::body::Incoming` into a Harrow request body.
+///
+/// This remains behind `hyper-compat` for integration points that still need
+/// Hyper body interop, but the main server backends now use Harrow's own
+/// request-body transport path.
 #[cfg(feature = "hyper-compat")]
 pub fn box_incoming(incoming: hyper::body::Incoming) -> Body {
-    use http_body_util::BodyExt;
-    incoming
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .boxed_unsync()
+    Body::new(incoming.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
 }
 
-/// Create a `Body` from a `Full<Bytes>`. Useful for constructing test requests
-/// and for the `Client`.
+/// Create a local request `Body` from a `Full<Bytes>`.
+///
+/// Useful for constructing test requests and client-side requests without
+/// coupling the request type to a specific runtime body implementation.
 pub fn full_body(body: Full<Bytes>) -> Body {
-    use http_body_util::BodyExt;
-    body.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-        .boxed_unsync()
+    Body::new(body.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} }))
 }
 
 /// Test utilities for creating `Request` instances.

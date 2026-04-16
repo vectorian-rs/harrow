@@ -265,7 +265,7 @@ features:
 That is not a criticism of Tower. It is just a mismatch with Harrow's goal of
 supporting both:
 
-- Tokio/Hyper
+- Tokio/custom HTTP/1
 - Monoio/io_uring
 
 If Harrow made Tower the foundation, it would likely end up in one of two bad

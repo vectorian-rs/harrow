@@ -13,9 +13,9 @@ use harrow_core::request::Body;
 /// This is a helper function used by both H1 and H2 implementations
 /// to create a `Body` from raw bytes.
 pub(crate) fn body_from_bytes(bytes: Bytes) -> Body {
-    Full::new(bytes)
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-        .boxed_unsync()
+    Body::new(
+        Full::new(bytes).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} }),
+    )
 }
 
 /// Error types that can occur at the protocol layer.

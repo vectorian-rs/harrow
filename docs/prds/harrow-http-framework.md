@@ -89,7 +89,7 @@ direction is documented in
 
 ```rust
 /// A plain async function that handles a request.
-type HandlerFn = Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+type HandlerFn = Box<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response>>>>;
 
 /// The application. Owns the route table, global middleware, and state.
 /// Observability is added via middleware and extension traits.

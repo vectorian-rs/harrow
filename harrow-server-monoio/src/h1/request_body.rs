@@ -6,7 +6,6 @@ use std::task::{Context, Poll, Waker};
 
 use bytes::Bytes;
 use http_body::{Body as HttpBody, Frame, SizeHint};
-use http_body_util::BodyExt;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 
@@ -223,7 +222,7 @@ fn payload_channel(max_buffered_bytes: usize) -> (PayloadSender, Body) {
     let sender = PayloadSender {
         inner: Arc::downgrade(&inner),
     };
-    let body = PayloadBody { inner }.boxed_unsync();
+    let body = Body::new(PayloadBody { inner });
     (sender, body)
 }
 
