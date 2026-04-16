@@ -10,9 +10,10 @@ use http_body_util::BodyExt;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 
-use harrow_codec_h1::{CONTINUE_100, CodecError, ParsedRequest, PayloadDecoder, PayloadItem};
+use harrow_codec_h1::{CONTINUE_100, ParsedRequest, PayloadDecoder, PayloadItem};
 use harrow_core::dispatch::SharedState;
 use harrow_core::request::Body;
+use harrow_server::h1::ErrorResponse;
 
 use crate::buffer::DEFAULT_BUFFER_SIZE;
 use crate::h1::dispatcher::H1Connection;
@@ -31,10 +32,7 @@ enum QueueStatus {
 pub(crate) enum PumpStatus {
     Progress,
     Eof,
-    ResponseError {
-        status: http::StatusCode,
-        body: &'static str,
-    },
+    ResponseError { error: ErrorResponse },
     ConnectionClosed,
     ReceiverClosed,
 }
@@ -112,19 +110,8 @@ impl RequestBodyState {
             };
 
             match decode {
-                Err(CodecError::BodyTooLarge) => {
-                    return self.finish_response_error(
-                        http::StatusCode::PAYLOAD_TOO_LARGE,
-                        "payload too large",
-                    );
-                }
-                Err(CodecError::Invalid(_)) => {
-                    return self
-                        .finish_response_error(http::StatusCode::BAD_REQUEST, "bad request");
-                }
-                Err(CodecError::Incomplete) => {
-                    return self
-                        .finish_response_error(http::StatusCode::BAD_REQUEST, "bad request");
+                Err(err) => {
+                    return self.finish_response_error(ErrorResponse::from_codec_error(&err));
                 }
                 Ok(Some(PayloadItem::Chunk(chunk))) => {
                     return self.send_chunk(chunk).await;
@@ -139,35 +126,24 @@ impl RequestBodyState {
             let timeout = match conn.effective_read_timeout(conn.config.body_read_timeout) {
                 Ok(timeout) => timeout,
                 Err(ProtocolError::Timeout) => {
-                    return self.finish_response_error(
-                        http::StatusCode::REQUEST_TIMEOUT,
-                        "request timeout",
-                    );
+                    return self.finish_response_error(ErrorResponse::RequestTimeout);
                 }
                 Err(_) => return self.finish_connection_closed(),
             };
 
             match conn.read_more(DEFAULT_BUFFER_SIZE, timeout).await {
                 Ok(0) => {
-                    return self
-                        .finish_response_error(http::StatusCode::BAD_REQUEST, "bad request");
+                    return self.finish_response_error(ErrorResponse::BadRequest);
                 }
                 Ok(_) => {}
                 Err(ProtocolError::Timeout) => {
-                    return self.finish_response_error(
-                        http::StatusCode::REQUEST_TIMEOUT,
-                        "request timeout",
-                    );
+                    return self.finish_response_error(ErrorResponse::RequestTimeout);
                 }
                 Err(ProtocolError::BodyTooLarge) => {
-                    return self.finish_response_error(
-                        http::StatusCode::PAYLOAD_TOO_LARGE,
-                        "payload too large",
-                    );
+                    return self.finish_response_error(ErrorResponse::PayloadTooLarge);
                 }
                 Err(ProtocolError::Parse(_) | ProtocolError::ProtocolViolation(_)) => {
-                    return self
-                        .finish_response_error(http::StatusCode::BAD_REQUEST, "bad request");
+                    return self.finish_response_error(ErrorResponse::BadRequest);
                 }
                 Err(ProtocolError::Io(_) | ProtocolError::StreamClosed) => {
                     return self.finish_connection_closed();
@@ -216,13 +192,9 @@ impl RequestBodyState {
         PumpStatus::Progress
     }
 
-    fn finish_response_error(
-        &mut self,
-        status: http::StatusCode,
-        body: &'static str,
-    ) -> PumpStatus {
+    fn finish_response_error(&mut self, error: ErrorResponse) -> PumpStatus {
         self.abort();
-        PumpStatus::ResponseError { status, body }
+        PumpStatus::ResponseError { error }
     }
 
     fn finish_connection_closed(&mut self) -> PumpStatus {

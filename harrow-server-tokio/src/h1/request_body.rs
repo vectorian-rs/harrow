@@ -7,8 +7,9 @@ use http_body_util::{BodyExt, Full, StreamBody};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use harrow_codec_h1::{CONTINUE_100, CodecError, ParsedRequest, PayloadDecoder, PayloadItem};
+use harrow_codec_h1::{CONTINUE_100, ParsedRequest, PayloadDecoder, PayloadItem};
 use harrow_core::request::Body;
+use harrow_server::h1::ErrorResponse;
 
 use crate::ServerConfig;
 
@@ -20,7 +21,7 @@ type BodyFrame = Result<Frame<Bytes>, BoxError>;
 pub(crate) enum PumpStatus {
     Progress,
     Eof,
-    ResponseError { status: u16, body: &'static str },
+    ResponseError { error: ErrorResponse },
     ConnectionClosed,
     ReceiverClosed,
 }
@@ -98,14 +99,8 @@ impl RequestBodyState {
 
         loop {
             match decoder.decode(buf, Some(self.max_body_size)) {
-                Err(CodecError::BodyTooLarge) => {
-                    return self.finish_response_error(413, "payload too large");
-                }
-                Err(CodecError::Invalid(_)) => {
-                    return self.finish_response_error(400, "bad request");
-                }
-                Err(CodecError::Incomplete) => {
-                    return self.finish_response_error(400, "bad request");
+                Err(err) => {
+                    return self.finish_response_error(ErrorResponse::from_codec_error(&err));
                 }
                 Ok(Some(PayloadItem::Chunk(chunk))) => {
                     return self.send_chunk(chunk).await;
@@ -120,7 +115,7 @@ impl RequestBodyState {
             if let Some(deadline) = self.body_deadline {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
-                    return self.finish_response_error(408, "request timeout");
+                    return self.finish_response_error(ErrorResponse::RequestTimeout);
                 }
                 match tokio::time::timeout(remaining, stream.read_buf(buf)).await {
                     Ok(Ok(0)) => {
@@ -129,7 +124,7 @@ impl RequestBodyState {
                     Ok(Ok(_)) => {}
                     Ok(Err(_)) => return self.finish_connection_closed(),
                     Err(_) => {
-                        return self.finish_response_error(408, "request timeout");
+                        return self.finish_response_error(ErrorResponse::RequestTimeout);
                     }
                 }
             } else {
@@ -205,9 +200,9 @@ impl RequestBodyState {
         }
     }
 
-    fn finish_response_error(&mut self, status: u16, body: &'static str) -> PumpStatus {
+    fn finish_response_error(&mut self, error: ErrorResponse) -> PumpStatus {
         self.abort();
-        PumpStatus::ResponseError { status, body }
+        PumpStatus::ResponseError { error }
     }
 
     fn finish_connection_closed(&mut self) -> PumpStatus {

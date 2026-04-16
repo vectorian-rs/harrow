@@ -2,6 +2,7 @@ use bytes::BytesMut;
 use tokio::io::AsyncReadExt;
 
 use harrow_codec_h1::{CodecError, MAX_HEADER_BUF, ParsedRequest, try_parse_request};
+use harrow_server::h1::ErrorResponse;
 
 use crate::ServerConfig;
 use crate::h1::error::write_error;
@@ -21,16 +22,19 @@ where
             Ok(parsed) => return Some(parsed),
             Err(CodecError::Incomplete) => {
                 if buf.len() >= MAX_HEADER_BUF {
-                    write_error(stream, 400, "request headers too large").await;
+                    let error = ErrorResponse::RequestHeadersTooLarge;
+                    write_error(stream, error.status_u16(), error.body()).await;
                     return None;
                 }
             }
-            Err(CodecError::Invalid(_)) => {
-                write_error(stream, 400, "bad request").await;
+            Err(err @ CodecError::Invalid(_)) => {
+                let error = ErrorResponse::from_codec_error(&err);
+                write_error(stream, error.status_u16(), error.body()).await;
                 return None;
             }
-            Err(CodecError::BodyTooLarge) => {
-                write_error(stream, 413, "payload too large").await;
+            Err(err @ CodecError::BodyTooLarge) => {
+                let error = ErrorResponse::from_codec_error(&err);
+                write_error(stream, error.status_u16(), error.body()).await;
                 return None;
             }
         }

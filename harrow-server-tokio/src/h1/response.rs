@@ -2,6 +2,7 @@ use http_body_util::BodyExt;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use harrow_codec_h1::write_response_head;
+use harrow_server::h1::{ResponseBodyMode, ResponseWritePlan};
 
 pub(crate) async fn write_response<S>(
     stream: &mut S,
@@ -13,8 +14,6 @@ where
     S: AsyncWrite + Unpin,
 {
     let (mut parts, mut body) = response.into_parts();
-    let has_content_length = parts.headers.contains_key(http::header::CONTENT_LENGTH);
-    let body_permitted = harrow_server::h1::response_body_permitted(is_head_request, parts.status);
 
     if !keep_alive && !parts.headers.contains_key(http::header::CONNECTION) {
         parts
@@ -22,18 +21,14 @@ where
             .insert(http::header::CONNECTION, "close".parse().unwrap());
     }
 
-    let chunked = body_permitted && !has_content_length;
-    let head = write_response_head(parts.status, &parts.headers, chunked);
+    let plan = ResponseWritePlan::new(&parts.headers, is_head_request, parts.status);
+    let head = write_response_head(parts.status, &parts.headers, plan.is_chunked());
     stream.write_all(&head).await?;
 
-    if !body_permitted {
-        return Ok(());
-    }
-
-    if has_content_length {
-        write_body_direct(stream, &mut body).await
-    } else {
-        write_body_chunked(stream, &mut body).await
+    match plan.mode {
+        ResponseBodyMode::None => Ok(()),
+        ResponseBodyMode::Fixed => write_body_direct(stream, &mut body).await,
+        ResponseBodyMode::Chunked => write_body_chunked(stream, &mut body).await,
     }
 }
 

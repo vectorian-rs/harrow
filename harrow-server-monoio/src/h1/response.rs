@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use harrow_server::h1::{ResponseBodyMode, ResponseWritePlan};
 use http_body_util::BodyExt;
 use monoio::io::AsyncWriteRentExt;
 
@@ -21,26 +22,16 @@ impl H1Connection {
                 .insert(http::header::CONNECTION, "close".parse().unwrap());
         }
 
-        let has_content_length = parts.headers.contains_key(http::header::CONTENT_LENGTH);
-        let body_permitted =
-            harrow_server::h1::response_body_permitted(is_head_request, parts.status);
+        let plan = ResponseWritePlan::new(&parts.headers, is_head_request, parts.status);
 
-        let head = codec::write_response_head(
-            parts.status,
-            &parts.headers,
-            body_permitted && !has_content_length,
-        );
+        let head = codec::write_response_head(parts.status, &parts.headers, plan.is_chunked());
         let (result, _) = self.stream.write_all(head).await;
         result?;
 
-        if !body_permitted {
-            return Ok(());
-        }
-
-        if has_content_length {
-            self.write_body_direct(body).await?;
-        } else {
-            self.write_body_chunked(body).await?;
+        match plan.mode {
+            ResponseBodyMode::None => {}
+            ResponseBodyMode::Fixed => self.write_body_direct(body).await?,
+            ResponseBodyMode::Chunked => self.write_body_chunked(body).await?,
         }
 
         Ok(())

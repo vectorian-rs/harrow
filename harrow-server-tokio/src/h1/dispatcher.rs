@@ -42,7 +42,13 @@ where
         let content_length = parsed.content_length;
 
         if harrow_server::h1::request_exceeds_body_limit(content_length, config.max_body_size) {
-            error::write_error(&mut stream, 413, "payload too large").await;
+            let error_response = harrow_server::h1::ErrorResponse::PayloadTooLarge;
+            error::write_error(
+                &mut stream,
+                error_response.status_u16(),
+                error_response.body(),
+            )
+            .await;
             break;
         }
 
@@ -79,8 +85,13 @@ where
                         request_body::PumpStatus::Eof => {
                             request_body_complete = true;
                         }
-                        request_body::PumpStatus::ResponseError { status, body } => {
-                            error::write_error(&mut stream, status, body).await;
+                        request_body::PumpStatus::ResponseError { error: error_response } => {
+                            error::write_error(
+                                &mut stream,
+                                error_response.status_u16(),
+                                error_response.body(),
+                            )
+                            .await;
                             break 'connection;
                         }
                         request_body::PumpStatus::ConnectionClosed => {

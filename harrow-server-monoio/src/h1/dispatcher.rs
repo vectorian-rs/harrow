@@ -96,15 +96,13 @@ impl H1Connection {
                 Ok(parsed) => parsed,
                 Err(ProtocolError::StreamClosed) => return Ok(()),
                 Err(ProtocolError::Timeout) => {
-                    let _ = self
-                        .write_status(http::StatusCode::REQUEST_TIMEOUT, "request timeout")
-                        .await;
+                    let error = harrow_server::h1::ErrorResponse::RequestTimeout;
+                    let _ = self.write_status(error.status(), error.body()).await;
                     return Ok(());
                 }
                 Err(e) => {
-                    let _ = self
-                        .write_status(http::StatusCode::BAD_REQUEST, "bad request")
-                        .await;
+                    let error = harrow_server::h1::ErrorResponse::BadRequest;
+                    let _ = self.write_status(error.status(), error.body()).await;
                     return Err(Box::new(e));
                 }
             };
@@ -113,8 +111,8 @@ impl H1Connection {
 
             // Early reject: Content-Length exceeds limit
             if harrow_server::h1::request_exceeds_body_limit(parsed.content_length, max_body) {
-                self.write_status(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large")
-                    .await?;
+                let error = harrow_server::h1::ErrorResponse::PayloadTooLarge;
+                self.write_status(error.status(), error.body()).await?;
                 break;
             }
 
@@ -152,8 +150,8 @@ impl H1Connection {
                             request_body::PumpStatus::Eof => {
                                 body_complete = true;
                             }
-                            request_body::PumpStatus::ResponseError { status, body } => {
-                                self.write_status(status, body).await?;
+                            request_body::PumpStatus::ResponseError { error } => {
+                                self.write_status(error.status(), error.body()).await?;
                                 break 'connection;
                             }
                             request_body::PumpStatus::ConnectionClosed => {
