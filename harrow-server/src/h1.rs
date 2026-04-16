@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::sync::Arc;
 
 use harrow_codec_h1::{CodecError, ParsedRequest};
@@ -62,6 +63,75 @@ pub fn declared_content_length(headers: &http::HeaderMap) -> Result<Option<usize
         .parse::<usize>()
         .map_err(|_| "invalid content-length header")?;
     Ok(Some(length))
+}
+
+pub type ResponseStreamError = Box<dyn std::error::Error + Send + Sync>;
+
+pub struct PreparedResponse {
+    pub head: Vec<u8>,
+    pub body: ResponseBody,
+    pub plan: ResponseWritePlan,
+    pub expected_len: usize,
+}
+
+pub fn prepare_response(
+    response: http::Response<ResponseBody>,
+    keep_alive: bool,
+    is_head_request: bool,
+) -> Result<PreparedResponse, ResponseStreamError> {
+    let (mut parts, body) = response.into_parts();
+
+    if !keep_alive && !parts.headers.contains_key(http::header::CONNECTION) {
+        parts
+            .headers
+            .insert(http::header::CONNECTION, "close".parse().unwrap());
+    }
+
+    let plan = ResponseWritePlan::new(&parts.headers, is_head_request, parts.status);
+    let expected_len = match plan.mode {
+        ResponseBodyMode::Fixed => declared_content_length(&parts.headers)
+            .map_err(std::io::Error::other)?
+            .ok_or_else(|| std::io::Error::other("fixed response missing content-length"))?,
+        _ => 0,
+    };
+    let head =
+        harrow_codec_h1::write_response_head(parts.status, &parts.headers, plan.is_chunked());
+
+    Ok(PreparedResponse {
+        head,
+        body,
+        plan,
+        expected_len,
+    })
+}
+
+pub fn record_fixed_response_bytes(
+    written: &mut usize,
+    data: &Bytes,
+    expected_len: usize,
+) -> Result<(), ResponseStreamError> {
+    *written = written
+        .checked_add(data.len())
+        .ok_or_else(|| std::io::Error::other("fixed response length overflow"))?;
+    if *written > expected_len {
+        return Err(Box::new(std::io::Error::other(
+            "response body exceeds declared content-length",
+        )));
+    }
+    Ok(())
+}
+
+pub fn finish_fixed_response_body(
+    written: usize,
+    expected_len: usize,
+) -> Result<(), ResponseStreamError> {
+    if written == expected_len {
+        Ok(())
+    } else {
+        Err(Box::new(std::io::Error::other(
+            "response body shorter than declared content-length",
+        )))
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -239,6 +309,36 @@ mod tests {
         assert_eq!(plan.mode, ResponseBodyMode::Fixed);
         assert!(plan.should_write_body());
         assert!(!plan.is_chunked());
+    }
+
+    #[test]
+    fn prepare_response_adds_connection_close_and_expected_len() {
+        let response = Response::text("hello")
+            .header("content-length", "5")
+            .into_inner();
+
+        let prepared = prepare_response(response, false, false).expect("prepared response");
+
+        assert!(String::from_utf8_lossy(&prepared.head).contains("connection: close\r\n"));
+        assert_eq!(prepared.plan.mode, ResponseBodyMode::Fixed);
+        assert_eq!(prepared.expected_len, 5);
+    }
+
+    #[test]
+    fn fixed_response_length_helpers_validate_bounds() {
+        let mut written = 0usize;
+        record_fixed_response_bytes(&mut written, &Bytes::from_static(b"he"), 5).unwrap();
+        record_fixed_response_bytes(&mut written, &Bytes::from_static(b"llo"), 5).unwrap();
+        finish_fixed_response_body(written, 5).unwrap();
+
+        let mut overflow_written = 0usize;
+        let err =
+            record_fixed_response_bytes(&mut overflow_written, &Bytes::from_static(b"hello!"), 5)
+                .expect_err("overflow should fail");
+        assert!(err.to_string().contains("exceeds declared"));
+
+        let err = finish_fixed_response_body(4, 5).expect_err("short body should fail");
+        assert!(err.to_string().contains("shorter than declared"));
     }
 
     #[test]

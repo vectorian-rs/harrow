@@ -24,8 +24,8 @@ use tokio::sync::mpsc;
 use harrow_codec_h1::{self as codec, CodecError, ParsedRequest, PayloadDecoder, PayloadItem};
 use harrow_core::request::Body;
 use harrow_server::h1::{
-    ErrorResponse, ResponseBodyMode, ResponseWritePlan, build_request, declared_content_length,
-    request_exceeds_body_limit,
+    ErrorResponse, ResponseBodyMode, build_request, finish_fixed_response_body, prepare_response,
+    record_fixed_response_bytes, request_exceeds_body_limit,
 };
 
 const MAX_REQUEST_BODY_BUFFER_SIZE: usize = 32 * 1024;
@@ -528,29 +528,14 @@ async fn stream_response_inner(
     keep_alive: bool,
     is_head_request: bool,
 ) -> Result<(), ()> {
-    let (mut parts, mut body) = response.into_parts();
+    let prepared = prepare_response(response, keep_alive, is_head_request).map_err(|_| ())?;
+    let mut body = prepared.body;
 
-    if !keep_alive && !parts.headers.contains_key(http::header::CONNECTION) {
-        parts.headers.insert(
-            http::header::CONNECTION,
-            http::HeaderValue::from_static("close"),
-        );
-    }
-
-    let plan = ResponseWritePlan::new(&parts.headers, is_head_request, parts.status);
-    let expected_len = match plan.mode {
-        ResponseBodyMode::Fixed => declared_content_length(&parts.headers)
-            .map_err(|_| ())?
-            .ok_or(())?,
-        _ => 0,
-    };
-
-    let head = codec::write_response_head(parts.status, &parts.headers, plan.is_chunked());
-    if !send_response_bytes(tx, Bytes::from(head)).await {
+    if !send_response_bytes(tx, Bytes::from(prepared.head)).await {
         return Ok(());
     }
 
-    match plan.mode {
+    match prepared.plan.mode {
         ResponseBodyMode::None => Ok(()),
         ResponseBodyMode::Fixed => {
             let mut written = 0usize;
@@ -560,21 +545,15 @@ async fn stream_response_inner(
                 if let Ok(data) = frame.into_data()
                     && !data.is_empty()
                 {
-                    written = written.checked_add(data.len()).ok_or(())?;
-                    if written > expected_len {
-                        return Err(());
-                    }
+                    record_fixed_response_bytes(&mut written, &data, prepared.expected_len)
+                        .map_err(|_| ())?;
                     if !send_response_bytes(tx, data).await {
                         return Ok(());
                     }
                 }
             }
 
-            if written == expected_len {
-                Ok(())
-            } else {
-                Err(())
-            }
+            finish_fixed_response_body(written, prepared.expected_len).map_err(|_| ())
         }
         ResponseBodyMode::Chunked => {
             while let Some(frame) = body.frame().await {

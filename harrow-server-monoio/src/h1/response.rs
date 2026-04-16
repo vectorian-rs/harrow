@@ -1,5 +1,7 @@
 use bytes::Bytes;
-use harrow_server::h1::{ResponseBodyMode, ResponseWritePlan, declared_content_length};
+use harrow_server::h1::{
+    ResponseBodyMode, finish_fixed_response_body, prepare_response, record_fixed_response_bytes,
+};
 use http_body_util::BodyExt;
 use monoio::io::AsyncWriteRentExt;
 
@@ -14,30 +16,18 @@ impl H1Connection {
         keep_alive: bool,
         is_head_request: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (mut parts, body) = response.into_parts();
-
-        if !keep_alive {
-            parts
-                .headers
-                .insert(http::header::CONNECTION, "close".parse().unwrap());
-        }
-
-        let plan = ResponseWritePlan::new(&parts.headers, is_head_request, parts.status);
-        let expected_len = match plan.mode {
-            ResponseBodyMode::Fixed => declared_content_length(&parts.headers)
-                .map_err(std::io::Error::other)?
-                .ok_or_else(|| std::io::Error::other("fixed response missing content-length"))?,
-            _ => 0,
-        };
-
-        let head = codec::write_response_head(parts.status, &parts.headers, plan.is_chunked());
-        let (result, _) = self.stream.write_all(head).await;
+        let prepared = prepare_response(response, keep_alive, is_head_request)
+            .map_err(|e| -> Box<dyn std::error::Error> { e })?;
+        let (result, _) = self.stream.write_all(prepared.head).await;
         result?;
 
-        match plan.mode {
+        match prepared.plan.mode {
             ResponseBodyMode::None => {}
-            ResponseBodyMode::Fixed => self.write_body_direct(body, expected_len).await?,
-            ResponseBodyMode::Chunked => self.write_body_chunked(body).await?,
+            ResponseBodyMode::Fixed => {
+                self.write_body_direct(prepared.body, prepared.expected_len)
+                    .await?
+            }
+            ResponseBodyMode::Chunked => self.write_body_chunked(prepared.body).await?,
         }
 
         Ok(())
@@ -55,25 +45,14 @@ impl H1Connection {
             if let Ok(data) = frame.into_data()
                 && !data.is_empty()
             {
-                written = written
-                    .checked_add(data.len())
-                    .ok_or_else(|| std::io::Error::other("fixed response length overflow"))?;
-                if written > expected_len {
-                    return Err(Box::new(std::io::Error::other(
-                        "response body exceeds declared content-length",
-                    )));
-                }
+                record_fixed_response_bytes(&mut written, &data, expected_len)
+                    .map_err(|e| -> Box<dyn std::error::Error> { e })?;
                 self.write_data_frame(data).await?;
             }
         }
 
-        if written != expected_len {
-            return Err(Box::new(std::io::Error::other(
-                "response body shorter than declared content-length",
-            )));
-        }
-
-        Ok(())
+        finish_fixed_response_body(written, expected_len)
+            .map_err(|e| -> Box<dyn std::error::Error> { e })
     }
 
     async fn write_body_chunked(
