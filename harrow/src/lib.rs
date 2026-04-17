@@ -79,7 +79,7 @@ pub mod runtime {
     #[cfg(feature = "tokio")]
     pub mod tokio {
         pub use harrow_server_tokio::{
-            ServerConfig, serve, serve_with_config, serve_with_shutdown,
+            ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
         };
     }
 

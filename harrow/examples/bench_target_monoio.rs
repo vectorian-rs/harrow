@@ -25,19 +25,21 @@ fn main() {
 
     let addr = common::parse_args("bench_target_monoio");
 
-    let app = App::new()
-        .default_problem_details()
-        .health("/health")
-        .liveness("/live")
-        .readiness_handler("/ready", common::readiness)
-        .get("/", root)
-        .get("/users/:id", common::get_user)
-        .post("/users", common::create_user)
-        .get("/users/:user_id/posts/:post_id", common::get_user_posts)
-        .post("/echo", common::echo)
-        .put("/echo", common::echo)
-        .delete("/echo", common::echo)
-        .get("/cpu", common::cpu_intensive);
+    let app = || {
+        App::new()
+            .default_problem_details()
+            .health("/health")
+            .liveness("/live")
+            .readiness_handler("/ready", common::readiness)
+            .get("/", root)
+            .get("/users/:id", common::get_user)
+            .post("/users", common::create_user)
+            .get("/users/:user_id/posts/:post_id", common::get_user_posts)
+            .post("/echo", common::echo)
+            .put("/echo", common::echo)
+            .delete("/echo", common::echo)
+            .get("/cpu", common::cpu_intensive)
+    };
 
     tracing::info!("Monoio/io_uring server starting on http://{}", addr);
 

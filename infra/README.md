@@ -84,12 +84,15 @@ ssh -i ~/.ssh/your-key.pem alpine@"$CLIENT_PUB" \
 ## Verification Checklist
 
 ```bash
-# on each host
-sysctl net.core.somaxconn       # 65535
-sysctl fs.file-max              # 2097152
-ulimit -n                       # 32000
+# automated (reads infra/ansible/inventory.ini)
+mise run bench:verify
+
+# manual spot checks on each host
+sysctl net.core.somaxconn  # 65535
+sysctl fs.file-max         # 2097152
+ulimit -n                  # 32000
 chronyc sources
-docker ps
+docker info
 ```
 
 ## Cleanup

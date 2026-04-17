@@ -74,7 +74,7 @@ RUN cargo build --locked --profile perf --target=${TARGET} \
 # (perf record -g -p <pid>, strace -c -f -p <pid>)
 # ---------------------------------------------------------------------------
 
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-tokio-perf
+FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-perf-server
 COPY --from=build-env /out/harrow-perf-server /
 CMD ["/harrow-perf-server", "--bind", "0.0.0.0"]
 
@@ -86,6 +86,6 @@ FROM gcr.io/distroless/cc-debian13:latest-arm64 AS harrow-meguri-perf
 COPY --from=build-env /out/harrow-server-meguri /
 CMD ["/harrow-server-meguri", "--bind", "0.0.0.0"]
 
-FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-tokio-perf
+FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-perf-server
 COPY --from=build-env /out/ntex-perf-server /
 CMD ["/ntex-perf-server", "--bind", "0.0.0.0"]

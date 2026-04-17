@@ -17,7 +17,7 @@ pub use harrow_io::BufPool;
 use std::io::Write as _;
 use std::task::Poll;
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use http::header::{CONNECTION, CONTENT_LENGTH, EXPECT, TRANSFER_ENCODING};
 use http::{HeaderMap, Method, StatusCode, Uri, Version};
 
@@ -619,6 +619,33 @@ pub fn write_response_head(status: StatusCode, headers: &HeaderMap, chunked: boo
     let mut buf = Vec::with_capacity(256);
     write_response_head_into(status, headers, chunked, &mut buf);
     buf
+}
+
+/// Write the HTTP response status line + headers into a [`BytesMut`].
+pub fn write_response_head_into_bytes_mut(
+    status: StatusCode,
+    headers: &HeaderMap,
+    chunked: bool,
+    buf: &mut BytesMut,
+) {
+    buf.put_slice(b"HTTP/1.1 ");
+    buf.put_slice(status.as_str().as_bytes());
+    buf.put_u8(b' ');
+    buf.put_slice(status.canonical_reason().unwrap_or("").as_bytes());
+    buf.put_slice(b"\r\n");
+
+    for (name, value) in headers.iter() {
+        buf.put_slice(name.as_str().as_bytes());
+        buf.put_slice(b": ");
+        buf.put_slice(value.as_bytes());
+        buf.put_slice(b"\r\n");
+    }
+
+    if chunked {
+        buf.put_slice(b"transfer-encoding: chunked\r\n");
+    }
+
+    buf.put_slice(b"\r\n");
 }
 
 /// Encode a single chunk into a caller-provided buffer.

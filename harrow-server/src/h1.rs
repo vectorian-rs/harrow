@@ -68,7 +68,8 @@ pub fn declared_content_length(headers: &http::HeaderMap) -> Result<Option<usize
 pub type ResponseStreamError = Box<dyn std::error::Error + Send + Sync>;
 
 pub struct PreparedResponse {
-    pub head: Vec<u8>,
+    pub status: http::StatusCode,
+    pub headers: http::HeaderMap,
     pub body: ResponseBody,
     pub plan: ResponseWritePlan,
     pub expected_len: usize,
@@ -94,11 +95,10 @@ pub fn prepare_response(
             .ok_or_else(|| std::io::Error::other("fixed response missing content-length"))?,
         _ => 0,
     };
-    let head =
-        harrow_codec_h1::write_response_head(parts.status, &parts.headers, plan.is_chunked());
 
     Ok(PreparedResponse {
-        head,
+        status: parts.status,
+        headers: parts.headers,
         body,
         plan,
         expected_len,
@@ -380,8 +380,13 @@ mod tests {
             .into_inner();
 
         let prepared = prepare_response(response, false, false).expect("prepared response");
+        let head = harrow_codec_h1::write_response_head(
+            prepared.status,
+            &prepared.headers,
+            prepared.plan.is_chunked(),
+        );
 
-        assert!(String::from_utf8_lossy(&prepared.head).contains("connection: close\r\n"));
+        assert!(String::from_utf8_lossy(&head).contains("connection: close\r\n"));
         assert_eq!(prepared.plan.mode, ResponseBodyMode::Fixed);
         assert_eq!(prepared.expected_len, 5);
     }

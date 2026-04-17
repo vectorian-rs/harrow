@@ -533,7 +533,12 @@ async fn stream_response_inner(
     let prepared = prepare_response(response, keep_alive, is_head_request).map_err(|_| ())?;
     let mut body = prepared.body;
 
-    if !send_response_bytes(tx, Bytes::from(prepared.head)).await {
+    let head = codec::write_response_head(
+        prepared.status,
+        &prepared.headers,
+        prepared.plan.is_chunked(),
+    );
+    if !send_response_bytes(tx, Bytes::from(head)).await {
         return Ok(());
     }
 

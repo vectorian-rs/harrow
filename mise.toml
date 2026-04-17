@@ -117,7 +117,7 @@ run = "docker build --provenance=false -t harrow-server-monoio:perf-arm64 -f doc
 
 [tasks."docker:loadgen:spinr"]
 description = "Build ARM64 spinr load generator image"
-run = "docker build --provenance=false --platform linux/arm64 -t spinr:arm64 -f infra/load-generators/spinr.Dockerfile infra/load-generators"
+run = "docker build --provenance=false --platform linux/arm64 -t spinr:arm64 -f infra/load-generators/spinr.arm64.Dockerfile infra/load-generators"
 
 [tasks."docker:loadgen:wrk3"]
 description = "Build ARM64 wrk3 load generator image"
@@ -131,8 +131,17 @@ depends = ["docker:loadgen:spinr", "docker:loadgen:wrk3"]
 description = "Build all ARM64 Docker images"
 depends = ["docker:prod-arm64", "docker:dev-arm64", "docker:prod-arm64:harrow-server-monoio"]
 
+[tasks."bench:infra-bootstrap"]
+description = "Initialize Terraform and provision base infra plus EC2 spot instances"
+run = """
+terraform -chdir=infra/base-infra init
+terraform -chdir=infra/base-infra apply -auto-approve
+terraform -chdir=infra/ec2-spot init
+terraform -chdir=infra/ec2-spot apply -auto-approve -var key_name=harrow-bench
+"""
+
 [tasks."bench:infra-up"]
-description = "Create EC2 spot instances for benchmarking"
+description = "Create EC2 spot instances for benchmarking (assumes initialized Terraform and existing base infra)"
 dir = "infra/ec2-spot"
 run = "terraform apply -auto-approve -var key_name=harrow-bench"
 
@@ -140,6 +149,10 @@ run = "terraform apply -auto-approve -var key_name=harrow-bench"
 description = "Destroy EC2 spot instances"
 dir = "infra/ec2-spot"
 run = "terraform destroy -auto-approve -var key_name=harrow-bench"
+
+[tasks."bench:inventory"]
+description = "Write Terraform EC2 inventory to infra/ansible/inventory.ini"
+run = "terraform -chdir=infra/ec2-spot output -raw ansible_inventory > infra/ansible/inventory.ini"
 
 [tasks."bench:ecr-login"]
 description = "Login to ECR"
@@ -216,6 +229,7 @@ cd infra/ansible && ansible-playbook playbooks/bench.yml --extra-vars "harrow_ve
 [tasks."bench:baseline:harrow"]
 description = "Run harrow baseline (spinr only, no profiling)"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
   --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
   --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
@@ -227,6 +241,7 @@ cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
 [tasks."bench:baseline:ntex"]
 description = "Run ntex baseline (spinr only, no profiling)"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
   --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
   --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
@@ -238,6 +253,7 @@ cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
 [tasks."bench:baseline:all"]
 description = "Run baseline for both harrow and ntex (no profiling)"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
   --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
   --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
@@ -256,6 +272,7 @@ cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
 [tasks."bench:perf:harrow"]
 description = "Run perf capture for harrow (spinr + perf record + strace)"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
   --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
   --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
@@ -268,6 +285,7 @@ cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
 [tasks."bench:perf:ntex"]
 description = "Run perf capture for ntex (spinr + perf record + strace)"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
   --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
   --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
@@ -280,6 +298,7 @@ cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
 [tasks."bench:perf:all"]
 description = "Run perf capture for both harrow and ntex sequentially"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
   --mode remote --server-ssh $BENCH_SERVER_IP --client-ssh $BENCH_CLIENT_IP \
   --server-private $BENCH_SERVER_PRIVATE_IP --instance-type c8gn.12xlarge \
@@ -300,6 +319,7 @@ cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
 [tasks."bench:compare:harrow-vs-ntex"]
 description = "Compare Harrow Tokio vs ntex Tokio across the framework-comparison suite"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 cargo run -p harrow-bench --release --bin bench-compare -- \
   --left harrow-tokio-prod-mimalloc-${HARROW_VERSION} \
   --right ntex-tokio-prod-mimalloc-3.7.2 \
@@ -315,8 +335,8 @@ cargo run -p harrow-bench --release --bin bench-compare -- \
 """
 
 [tasks."bench:verify"]
-description = "Verify OS tuning and images on both bench nodes"
-run = "bash infra/scripts/verify-bench.sh $BENCH_SERVER_IP $BENCH_CLIENT_IP"
+description = "Verify OS tuning and local image tags on both bench nodes from the generated inventory"
+run = "bash infra/scripts/verify-bench.sh infra/ansible/inventory.ini"
 
 # Run all 19 implementations sequentially.
 # Runs all 19 implementations sequentially (one at a time — they share the same server)

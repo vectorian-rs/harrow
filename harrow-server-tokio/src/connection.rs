@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 use harrow_core::dispatch::SharedState;
 
@@ -14,7 +15,15 @@ pub(crate) async fn handle_tcp_connection(
     shutdown: harrow_server::ShutdownSignal,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_nodelay(true)?;
-    dispatcher::handle_connection_with_shutdown(stream, shared, config, &shutdown).await
+    let (read_stream, write_stream): (OwnedReadHalf, OwnedWriteHalf) = stream.into_split();
+    dispatcher::handle_connection_with_shutdown(
+        read_stream,
+        write_stream,
+        shared,
+        config,
+        &shutdown,
+    )
+    .await
 }
 
 #[doc(hidden)]
@@ -24,8 +33,16 @@ pub async fn handle_connection<S>(
     config: &ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static,
 {
     let shutdown = harrow_server::ShutdownSignal::new();
-    dispatcher::handle_connection_with_shutdown(stream, shared, config, &shutdown).await
+    let (read_stream, write_stream) = tokio::io::split(stream);
+    dispatcher::handle_connection_with_shutdown(
+        read_stream,
+        write_stream,
+        shared,
+        config,
+        &shutdown,
+    )
+    .await
 }

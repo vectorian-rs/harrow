@@ -18,7 +18,12 @@ impl H1Connection {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let prepared = prepare_response(response, keep_alive, is_head_request)
             .map_err(|e| -> Box<dyn std::error::Error> { e })?;
-        let (result, _) = self.stream.write_all(prepared.head).await;
+        let head = codec::write_response_head(
+            prepared.status,
+            &prepared.headers,
+            prepared.plan.is_chunked(),
+        );
+        let (result, _) = self.stream.write_all(head).await;
         result?;
 
         match prepared.plan.mode {

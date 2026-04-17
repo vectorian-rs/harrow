@@ -8,9 +8,9 @@ use std::time::Instant;
 use bytes::{Bytes, BytesMut};
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::{BodyExt, Full};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
-use harrow_codec_h1::{CONTINUE_100, ParsedRequest, PayloadDecoder, PayloadItem};
+use harrow_codec_h1::{ParsedRequest, PayloadDecoder, PayloadItem};
 use harrow_core::request::Body;
 use harrow_server::h1::{ErrorResponse, RequestBodyProgress};
 
@@ -43,25 +43,14 @@ impl RequestBodyState {
         }
     }
 
-    pub(crate) async fn start<S>(
-        stream: &mut S,
-        parsed: &ParsedRequest,
-        config: &ServerConfig,
-    ) -> std::io::Result<(Self, Body)>
-    where
-        S: AsyncWrite + Unpin,
-    {
+    pub(crate) fn start(parsed: &ParsedRequest, config: &ServerConfig) -> (Self, Body) {
         let Some(decoder) = PayloadDecoder::from_parsed(parsed) else {
-            return Ok((Self::finished(config.max_body_size), empty_body()));
+            return (Self::finished(config.max_body_size), empty_body());
         };
-
-        if parsed.expect_continue {
-            stream.write_all(CONTINUE_100).await?;
-        }
 
         let (sender, body) = payload_channel(MAX_REQUEST_BODY_BUFFER_SIZE);
 
-        Ok((
+        (
             Self {
                 decoder: Some(decoder),
                 sender: Some(sender),
@@ -69,7 +58,7 @@ impl RequestBodyState {
                 max_body_size: config.max_body_size,
             },
             body,
-        ))
+        )
     }
 
     pub(crate) fn is_complete(&self) -> bool {

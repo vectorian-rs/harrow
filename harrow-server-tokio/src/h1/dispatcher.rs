@@ -2,8 +2,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Buf;
-use tokio::io::AsyncWriteExt;
+use tokio::io::AsyncRead;
 
+use harrow_codec_h1::CONTINUE_100;
 use harrow_core::dispatch::{self, SharedState};
 use harrow_io::BufPool;
 use harrow_server::h1::{
@@ -11,19 +12,21 @@ use harrow_server::h1::{
 };
 
 use crate::ServerConfig;
-use crate::h1::{error, request_body, request_head, response};
+use crate::h1::{request_body, request_head, response};
 
 pub(crate) async fn handle_connection_with_shutdown<S>(
-    mut stream: S,
+    mut read_stream: S,
+    write_stream: impl tokio::io::AsyncWrite + Unpin + 'static,
     shared: Arc<SharedState>,
     config: &ServerConfig,
     shutdown: &harrow_server::ShutdownSignal,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    S: AsyncRead + Unpin,
 {
     let accepted_at = Instant::now();
     let mut buf = BufPool::acquire_read();
+    let writer = response::WriteRunner::spawn(write_stream);
 
     'connection: loop {
         if shutdown.is_shutdown() {
@@ -36,9 +39,16 @@ where
             break;
         }
 
-        let parsed = match request_head::read_request_head(&mut stream, &mut buf, config).await {
-            Some(parsed) => parsed,
-            None => break,
+        let parsed = match request_head::read_request_head(&mut read_stream, &mut buf, config).await
+        {
+            request_head::RequestHeadRead::Parsed(parsed) => *parsed,
+            request_head::RequestHeadRead::WriteError(error_response) => {
+                let _ = writer
+                    .write_error(error_response.status_u16(), error_response.body())
+                    .await;
+                break;
+            }
+            request_head::RequestHeadRead::Close => break,
         };
 
         let keep_alive = parsed.keep_alive;
@@ -46,23 +56,19 @@ where
 
         if harrow_server::h1::request_exceeds_body_limit(content_length, config.max_body_size) {
             let error_response = harrow_server::h1::ErrorResponse::PayloadTooLarge;
-            error::write_error(
-                &mut stream,
-                error_response.status_u16(),
-                error_response.body(),
-            )
-            .await;
+            let _ = writer
+                .write_error(error_response.status_u16(), error_response.body())
+                .await;
             break;
         }
 
         buf.advance(parsed.header_len);
 
         let is_head_request = parsed.method == http::Method::HEAD;
-        let (mut request_body_state, body) =
-            match request_body::RequestBodyState::start(&mut stream, &parsed, config).await {
-                Ok(state) => state,
-                Err(_) => break 'connection,
-            };
+        let (mut request_body_state, body) = request_body::RequestBodyState::start(&parsed, config);
+        if parsed.expect_continue && writer.write_raw(CONTINUE_100).await.is_err() {
+            break 'connection;
+        }
         let request = harrow_server::h1::build_request(&parsed, body)?;
         let mut response_fut = std::pin::pin!(dispatch::dispatch(Arc::clone(&shared), request));
 
@@ -83,7 +89,7 @@ where
                     drain_request_body = control.drain_request_body;
                     break response;
                 }
-                pump = request_body_state.pump_once(&mut stream, &mut buf) => {
+                pump = request_body_state.pump_once(&mut read_stream, &mut buf) => {
                     match decide_request_body_progress(
                         pump,
                         connection_reusable,
@@ -96,12 +102,9 @@ where
                             drain_request_body |= should_drain;
                         }
                         RequestBodyDecision::WriteError(error_response) => {
-                            error::write_error(
-                                &mut stream,
-                                error_response.status_u16(),
-                                error_response.body(),
-                            )
-                            .await;
+                            let _ = writer
+                                .write_error(error_response.status_u16(), error_response.body())
+                                .await;
                             break 'connection;
                         }
                         RequestBodyDecision::CloseConnection => {
@@ -112,7 +115,8 @@ where
             }
         };
 
-        if response::write_response(&mut stream, response, connection_reusable, is_head_request)
+        if writer
+            .write_response(response, connection_reusable, is_head_request)
             .await
             .is_err()
         {
@@ -120,10 +124,12 @@ where
         }
 
         if drain_request_body {
-            if stream.shutdown().await.is_err() {
+            if writer.shutdown().await.is_err() {
                 break;
             }
-            request_body_state.drain_to_eof(&mut stream, &mut buf).await;
+            request_body_state
+                .drain_to_eof(&mut read_stream, &mut buf)
+                .await;
         }
 
         if !connection_reusable {
@@ -132,5 +138,6 @@ where
     }
 
     BufPool::release_read(buf);
+    let _ = writer.finish().await;
     Ok(())
 }

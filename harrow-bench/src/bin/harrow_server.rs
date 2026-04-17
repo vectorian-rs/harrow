@@ -51,27 +51,26 @@ fn parse_args() -> (String, u16) {
     (bind, port)
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let (bind, port) = parse_args();
     let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
-    let app = App::new()
-        .get("/", hello)
-        .get("/greet/:name", greet)
-        .get("/health", health);
+    let app = || {
+        App::new()
+            .get("/", hello)
+            .get("/greet/:name", greet)
+            .get("/health", health)
+    };
 
     eprintln!("harrow listening on {addr}");
-    harrow::runtime::tokio::serve_with_config(
+    harrow::runtime::tokio::serve_multi_worker(
         app,
         addr,
-        std::future::pending(),
         harrow::runtime::tokio::ServerConfig {
             header_read_timeout: None,
             connection_timeout: None,
             ..Default::default()
         },
     )
-    .await
     .unwrap();
 }
