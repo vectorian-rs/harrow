@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "harrow"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
  "harrow-core",
@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-bench"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "axum",
  "blake3",
@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-codec-h1"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
  "harrow-io",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-core"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "base64",
  "bytes",
@@ -1483,14 +1483,14 @@ dependencies = [
 
 [[package]]
 name = "harrow-io"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
 ]
 
 [[package]]
 name = "harrow-middleware"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "blake3",
  "brotli 7.0.0",
@@ -1512,7 +1512,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-o11y"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "harrow-core",
  "rolly",
@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-serde"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
  "rmp-serde",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
  "harrow-codec-h1",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-meguri"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
  "harrow-codec-h1",
@@ -1564,7 +1564,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-monoio"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bolero",
  "bytes",
@@ -1586,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-tokio"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "ntex-compio-bench"
-version = "0.9.6"
+version = "0.10.0"
 dependencies = [
  "mimalloc",
  "ntex",

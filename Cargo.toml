@@ -19,23 +19,23 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.6"
+version = "0.10.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/vectorian-rs/harrow"
 readme = "README.md"
 
 [workspace.dependencies]
-harrow-codec-h1 = { path = "harrow-codec-h1", version = "0.9.6" }
-harrow-io = { path = "harrow-io", version = "0.9.6" }
-harrow-server = { path = "harrow-server", version = "0.9.6" }
-harrow-core = { path = "harrow-core", version = "0.9.6" }
-harrow-o11y = { path = "harrow-o11y", version = "0.9.6" }
-harrow-middleware = { path = "harrow-middleware", version = "0.9.6" }
-harrow-serde = { path = "harrow-serde", version = "0.9.6" }
-harrow-server-tokio = { path = "harrow-server-tokio", version = "0.9.6" }
-harrow-server-monoio = { path = "harrow-server-monoio", version = "0.9.6" }
-harrow-server-meguri = { path = "harrow-server-meguri", version = "0.9.6" }
+harrow-codec-h1 = { path = "harrow-codec-h1", version = "0.10.0" }
+harrow-io = { path = "harrow-io", version = "0.10.0" }
+harrow-server = { path = "harrow-server", version = "0.10.0" }
+harrow-core = { path = "harrow-core", version = "0.10.0" }
+harrow-o11y = { path = "harrow-o11y", version = "0.10.0" }
+harrow-middleware = { path = "harrow-middleware", version = "0.10.0" }
+harrow-serde = { path = "harrow-serde", version = "0.10.0" }
+harrow-server-tokio = { path = "harrow-server-tokio", version = "0.10.0" }
+harrow-server-monoio = { path = "harrow-server-monoio", version = "0.10.0" }
+harrow-server-meguri = { path = "harrow-server-meguri", version = "0.10.0" }
 meguri = { path = "meguri", version = "0.1.0" }
 
 bytes = "1"

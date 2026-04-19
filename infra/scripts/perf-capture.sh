@@ -19,6 +19,7 @@ WARMUP=5
 PORT=3090
 CONNS=128
 SSH="ssh -o StrictHostKeyChecking=no"
+HARROW_VERSION="${HARROW_VERSION:-0.10.0}"
 
 # Output directory
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
@@ -35,12 +36,12 @@ echo ""
 # --- Select image and binary ---
 case "$FRAMEWORK" in
   harrow)
-    IMAGE="harrow-perf-server:perf-0.9.6"
+    IMAGE="harrow-perf-server:perf-${HARROW_VERSION}"
     CMD="/harrow-perf-server --bind 0.0.0.0"
     HEALTH_PATH="/health"
     ;;
   ntex)
-    IMAGE="ntex-perf-server:perf-0.9.6"
+    IMAGE="ntex-perf-server:perf-${HARROW_VERSION}"
     CMD="/ntex-perf-server --bind 0.0.0.0"
     HEALTH_PATH="/health"
     ;;
@@ -126,7 +127,7 @@ scp -o StrictHostKeyChecking=no "alpine@$SERVER_IP:/tmp/strace.txt" "$OUTDIR/str
 $SSH "alpine@$SERVER_IP" "
   doas perf script -i /tmp/perf.data 2>/dev/null | \
   stackcollapse-perf.pl 2>/dev/null | \
-  flamegraph.pl --title '$FRAMEWORK perf-0.9.6' > /tmp/flamegraph.svg 2>/dev/null
+  flamegraph.pl --title '$FRAMEWORK perf-${HARROW_VERSION}' > /tmp/flamegraph.svg 2>/dev/null
 " && scp -o StrictHostKeyChecking=no "alpine@$SERVER_IP:/tmp/flamegraph.svg" "$OUTDIR/flamegraph.svg" 2>/dev/null || echo "  WARNING: flamegraph generation not available (install FlameGraph tools on server)"
 
 # --- Stop server ---
