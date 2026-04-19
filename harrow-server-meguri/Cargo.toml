@@ -39,3 +39,4 @@ harrow-middleware = { workspace = true }
 harrow-o11y = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+futures-util = { workspace = true }

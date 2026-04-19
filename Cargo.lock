@@ -1546,6 +1546,7 @@ name = "harrow-server-meguri"
 version = "0.10.0"
 dependencies = [
  "bytes",
+ "futures-util",
  "harrow-codec-h1",
  "harrow-core",
  "harrow-middleware",

@@ -110,6 +110,8 @@ pub(crate) struct Conn {
     pub recv_pending: bool,
     /// Whether there is a pending WRITE SQE for this connection.
     pub write_pending: bool,
+    /// Timeout error waiting to be translated into a wire response.
+    timeout_error: Option<ErrorResponse>,
     /// When this connection was accepted.
     pub accepted_at: Instant,
     /// When the current request started (reset on keep-alive).
@@ -174,6 +176,7 @@ impl Conn {
             keep_alive: true,
             recv_pending: false,
             write_pending: false,
+            timeout_error: None,
             accepted_at: now,
             request_started_at: now,
         }
@@ -405,6 +408,7 @@ impl Conn {
         self.pending_request_body = None;
         self.dispatch_handle = None;
         self.response_rx = None;
+        self.timeout_error = None;
         self.state = ConnState::Writing;
     }
 
@@ -433,6 +437,7 @@ impl Conn {
         self.response_done = false;
         self.response_failed = false;
         self.keep_alive = true;
+        self.timeout_error = None;
         self.request_started_at = Instant::now();
         // Don't clear `buf` — leftover bytes from a pipelined request stay available.
     }
@@ -471,6 +476,20 @@ impl Conn {
         };
 
         timeout.is_some_and(|d| self.request_started_at.elapsed() >= d)
+    }
+
+    pub fn body_read_timed_out(&self, body_timeout: Option<Duration>) -> bool {
+        matches!(self.state, ConnState::Dispatching)
+            && self.request_body_in_progress()
+            && body_timeout.is_some_and(|d| self.request_started_at.elapsed() >= d)
+    }
+
+    pub fn arm_timeout_error(&mut self, error: ErrorResponse) {
+        self.timeout_error = Some(error);
+    }
+
+    pub fn take_timeout_error(&mut self) -> Option<ErrorResponse> {
+        self.timeout_error.take()
     }
 }
 
