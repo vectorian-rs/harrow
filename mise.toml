@@ -39,6 +39,42 @@ depends = ["fmt", "clippy"]
 description = "Run fmt, clippy, and tests"
 depends = ["fmt", "clippy", "test"]
 
+[tasks."fuzz:check"]
+description = "Build all HTTP correctness fuzz crates"
+run = """
+cargo check --manifest-path harrow-core/fuzz/Cargo.toml
+cargo check --manifest-path harrow-middleware/fuzz/Cargo.toml
+cargo check --manifest-path harrow-codec-h1/fuzz/Cargo.toml
+"""
+
+[tasks."fuzz:core:query"]
+description = "Run query-string fuzzing"
+run = "cargo fuzz run --manifest-path harrow-core/fuzz/Cargo.toml fuzz_query_parsing"
+
+[tasks."fuzz:core:path"]
+description = "Run path-matching fuzzing"
+run = "cargo fuzz run --manifest-path harrow-core/fuzz/Cargo.toml fuzz_path_matching"
+
+[tasks."fuzz:middleware:accept-encoding"]
+description = "Run Accept-Encoding fuzzing through compression middleware"
+run = "cargo fuzz run --manifest-path harrow-middleware/fuzz/Cargo.toml fuzz_accept_encoding"
+
+[tasks."fuzz:codec:parse-request"]
+description = "Run HTTP/1 request parser fuzzing"
+run = "cargo fuzz run --manifest-path harrow-codec-h1/fuzz/Cargo.toml fuzz_parse_request"
+
+[tasks."fuzz:codec:chunked-decode"]
+description = "Run HTTP/1 chunked-decoder fuzzing"
+run = "cargo fuzz run --manifest-path harrow-codec-h1/fuzz/Cargo.toml fuzz_chunked_decode"
+
+[tasks."fuzz:codec:response-head"]
+description = "Run HTTP/1 response-head fuzzing"
+run = "cargo fuzz run --manifest-path harrow-codec-h1/fuzz/Cargo.toml fuzz_response_head"
+
+[tasks."fuzz:codec:payload-decoder"]
+description = "Run HTTP/1 payload-decoder fuzzing"
+run = "cargo fuzz run --manifest-path harrow-codec-h1/fuzz/Cargo.toml fuzz_payload_decoder"
+
 [tasks.ci]
 description = "Run full CI pipeline (fmt, clippy, test)"
 depends = ["verify"]
@@ -334,19 +370,48 @@ cargo run -p harrow-bench --release --bin bench-compare -- \
   --warmup 5
 """
 
+[tasks."bench:run:runtime-matrix"]
+description = "Run the 5-way runtime matrix: Harrow Tokio/Monoio/Meguri vs ntex Tokio/Compio"
+run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
+IMPLS="harrow-tokio-prod-mimalloc-${HARROW_VERSION}
+harrow-monoio-prod-mimalloc-${HARROW_VERSION}
+harrow-meguri-prod-mimalloc-${HARROW_VERSION}
+ntex-tokio-prod-mimalloc-3.7.2
+ntex-compio-prod-mimalloc-3.7.2"
+
+for IMPL in $IMPLS; do
+  echo "========== ${IMPL} =========="
+  cargo run -p harrow-bench --release --bin bench-single -- \
+    --impl "${IMPL}" \
+    --suite harrow-bench/suites/framework-comparison.toml \
+    --registry harrow-bench/implementations.toml \
+    --mode remote \
+    --server-ssh ${BENCH_SERVER_IP} \
+    --client-ssh ${BENCH_CLIENT_IP} \
+    --server-private-ip ${BENCH_SERVER_PRIVATE_IP} \
+    --no-build-missing \
+    --duration 30 \
+    --warmup 5
+  echo ""
+done
+"""
+
 [tasks."bench:verify"]
 description = "Verify OS tuning and local image tags on both bench nodes from the generated inventory"
 run = "bash infra/scripts/verify-bench.sh infra/ansible/inventory.ini"
 
-# Run all 19 implementations sequentially.
-# Runs all 19 implementations sequentially (one at a time — they share the same server)
+# Run all 21 implementations sequentially.
+# Runs all 21 implementations sequentially (one at a time — they share the same server)
 [tasks."bench:run:all"]
 description = "Run all implementations against framework-comparison suite"
 run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
 IMPLS="harrow-tokio-prod-mimalloc-${HARROW_VERSION}
 harrow-tokio-prod-jemalloc-${HARROW_VERSION}
 harrow-tokio-prod-sysalloc-${HARROW_VERSION}
 harrow-monoio-prod-mimalloc-${HARROW_VERSION}
+harrow-meguri-prod-mimalloc-${HARROW_VERSION}
 axum-tokio-prod-mimalloc-0.8.8
 axum-tokio-prod-jemalloc-0.8.8
 axum-tokio-prod-sysalloc-0.8.8
@@ -361,7 +426,8 @@ warp-tokio-prod-jemalloc-0.4.2
 warp-tokio-prod-sysalloc-0.4.2
 ntex-tokio-prod-mimalloc-3.7.2
 ntex-tokio-prod-jemalloc-3.7.2
-ntex-tokio-prod-sysalloc-3.7.2"
+ntex-tokio-prod-sysalloc-3.7.2
+ntex-compio-prod-mimalloc-3.7.2"
 
 for IMPL in $IMPLS; do
   echo "========== ${IMPL} =========="
@@ -395,6 +461,23 @@ run = "cargo run -p harrow-bench --release --bin bench-single -- --impl harrow-t
 [tasks."bench:run:harrow-monoio-mimalloc"]
 description = "Bench Harrow Monoio mimalloc"
 run = "cargo run -p harrow-bench --release --bin bench-single -- --impl harrow-monoio-prod-mimalloc-${HARROW_VERSION} --suite harrow-bench/suites/framework-comparison.toml --registry harrow-bench/implementations.toml --mode remote --server-ssh ${BENCH_SERVER_IP} --client-ssh ${BENCH_CLIENT_IP} --server-private-ip ${BENCH_SERVER_PRIVATE_IP} --no-build-missing --duration 30 --warmup 5"
+
+[tasks."bench:run:harrow-meguri-mimalloc"]
+description = "Bench Harrow Meguri mimalloc"
+run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
+cargo run -p harrow-bench --release --bin bench-single -- \
+  --impl harrow-meguri-prod-mimalloc-${HARROW_VERSION} \
+  --suite harrow-bench/suites/framework-comparison.toml \
+  --registry harrow-bench/implementations.toml \
+  --mode remote \
+  --server-ssh ${BENCH_SERVER_IP} \
+  --client-ssh ${BENCH_CLIENT_IP} \
+  --server-private-ip ${BENCH_SERVER_PRIVATE_IP} \
+  --no-build-missing \
+  --duration 30 \
+  --warmup 5
+"""
 
 [tasks."bench:run:axum-tokio-mimalloc"]
 description = "Bench axum-tokio-prod-mimalloc-0.8.8"
@@ -455,3 +538,20 @@ run = "cargo run -p harrow-bench --release --bin bench-single -- --impl ntex-tok
 [tasks."bench:run:ntex-tokio-sysalloc"]
 description = "Bench ntex-tokio-prod-sysalloc-3.7.2"
 run = "cargo run -p harrow-bench --release --bin bench-single -- --impl ntex-tokio-prod-sysalloc-3.7.2 --suite harrow-bench/suites/framework-comparison.toml --registry harrow-bench/implementations.toml --mode remote --server-ssh ${BENCH_SERVER_IP} --client-ssh ${BENCH_CLIENT_IP} --server-private-ip ${BENCH_SERVER_PRIVATE_IP} --no-build-missing --duration 30 --warmup 5"
+
+[tasks."bench:run:ntex-compio-mimalloc"]
+description = "Bench ntex-compio-prod-mimalloc-3.7.2"
+run = """
+eval "$(bash infra/scripts/bench-addresses.sh --exports)"
+cargo run -p harrow-bench --release --bin bench-single -- \
+  --impl ntex-compio-prod-mimalloc-3.7.2 \
+  --suite harrow-bench/suites/framework-comparison.toml \
+  --registry harrow-bench/implementations.toml \
+  --mode remote \
+  --server-ssh ${BENCH_SERVER_IP} \
+  --client-ssh ${BENCH_CLIENT_IP} \
+  --server-private-ip ${BENCH_SERVER_PRIVATE_IP} \
+  --no-build-missing \
+  --duration 30 \
+  --warmup 5
+"""

@@ -725,6 +725,7 @@ mod tests {
     use crate::handler;
     use crate::response::Response;
     use http::StatusCode;
+    use proptest::prelude::*;
     use std::sync::Arc;
 
     async fn dummy(_req: Request) -> Response {
@@ -739,6 +740,85 @@ mod tests {
             metadata: RouteMetadata::default(),
             middleware: Vec::new(),
         }
+    }
+
+    #[derive(Clone, Debug)]
+    enum TestSegment {
+        Literal(String),
+        Param(String),
+        Glob(String),
+    }
+
+    fn arb_literal() -> impl Strategy<Value = TestSegment> {
+        "[a-z]{1,6}".prop_map(TestSegment::Literal)
+    }
+
+    fn arb_param() -> impl Strategy<Value = TestSegment> {
+        "[a-z]{1,4}".prop_map(TestSegment::Param)
+    }
+
+    fn arb_glob() -> impl Strategy<Value = TestSegment> {
+        "[a-z]{1,4}".prop_map(TestSegment::Glob)
+    }
+
+    fn arb_non_glob_segment() -> impl Strategy<Value = TestSegment> {
+        prop_oneof![arb_literal(), arb_param()]
+    }
+
+    fn uniquify_names(segments: Vec<TestSegment>) -> Vec<TestSegment> {
+        segments
+            .into_iter()
+            .enumerate()
+            .map(|(idx, segment)| match segment {
+                TestSegment::Param(name) => TestSegment::Param(format!("{name}{idx}")),
+                TestSegment::Glob(name) => TestSegment::Glob(format!("{name}{idx}")),
+                other => other,
+            })
+            .collect()
+    }
+
+    fn arb_pattern() -> impl Strategy<Value = Vec<TestSegment>> {
+        prop_oneof![
+            4 => prop::collection::vec(arb_non_glob_segment(), 1..=4).prop_map(uniquify_names),
+            1 => (prop::collection::vec(arb_non_glob_segment(), 0..=3), arb_glob())
+                .prop_map(|(mut segments, glob)| {
+                    segments.push(glob);
+                    uniquify_names(segments)
+                }),
+        ]
+    }
+
+    fn arb_non_glob_pattern() -> impl Strategy<Value = Vec<TestSegment>> {
+        prop::collection::vec(arb_non_glob_segment(), 1..=4).prop_map(uniquify_names)
+    }
+
+    fn pattern_string(segments: &[TestSegment]) -> String {
+        segments
+            .iter()
+            .map(|segment| match segment {
+                TestSegment::Literal(lit) => format!("/{lit}"),
+                TestSegment::Param(name) => format!("/:{name}"),
+                TestSegment::Glob(name) => format!("/*{name}"),
+            })
+            .collect::<String>()
+    }
+
+    fn matching_path(segments: &[TestSegment]) -> String {
+        let parts: Vec<String> = segments
+            .iter()
+            .enumerate()
+            .flat_map(|(idx, segment)| match segment {
+                TestSegment::Literal(lit) => vec![lit.clone()],
+                TestSegment::Param(_) => vec![format!("v{idx}")],
+                TestSegment::Glob(_) => vec![format!("tail{idx}"), format!("rest{idx}")],
+            })
+            .collect();
+
+        format!("/{}", parts.join("/"))
+    }
+
+    fn method_universe() -> Vec<Method> {
+        vec![Method::GET, Method::POST, Method::PUT, Method::DELETE]
     }
 
     #[test]
@@ -1238,5 +1318,142 @@ mod tests {
         );
         assert_eq!(resp.header("allow"), Some("POST"));
         assert!(resp.text().is_empty(), "HEAD 405 should not include a body");
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_route_table_registered_methods_round_trip(
+            segments in arb_pattern(),
+            method_mask in prop::collection::vec(any::<bool>(), 4),
+        ) {
+            let mut table = RouteTable::new();
+            let pattern = pattern_string(&segments);
+            let path = matching_path(&segments);
+            let universe = method_universe();
+
+            let mut registered = Vec::new();
+            for (enabled, method) in method_mask.into_iter().zip(universe.iter().cloned()) {
+                if enabled {
+                    table.push(make_route(method.clone(), &pattern));
+                    registered.push(method);
+                }
+            }
+
+            if registered.is_empty() {
+                table.push(make_route(Method::GET, &pattern));
+                registered.push(Method::GET);
+            }
+
+            prop_assert!(table.any_route_matches_path(&path));
+
+            for method in &registered {
+                let matched = table.match_route_idx(method, &path);
+                prop_assert!(
+                    matched.is_some(),
+                    "registered method {} did not match pattern {} path {}",
+                    method,
+                    pattern,
+                    path
+                );
+            }
+
+            for method in method_universe() {
+                if !registered.contains(&method) {
+                    prop_assert!(
+                        table.match_route_idx(&method, &path).is_none(),
+                        "unregistered method {} unexpectedly matched pattern {} path {}",
+                        method,
+                        pattern,
+                        path
+                    );
+                }
+            }
+
+            let mut expected: Vec<String> = registered
+                .iter()
+                .map(|method| method.as_str().to_string())
+                .collect();
+            if registered.contains(&Method::GET) && !registered.contains(&Method::HEAD) {
+                expected.push("HEAD".to_string());
+            }
+            expected.sort();
+
+            let mut actual: Vec<String> = table
+                .allowed_methods(&path)
+                .iter()
+                .map(|method| method.as_str().to_string())
+                .collect();
+            actual.sort();
+
+            prop_assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn proptest_route_table_non_matching_paths_stay_404(
+            segments in arb_non_glob_pattern(),
+            method in prop_oneof![Just(Method::GET), Just(Method::POST), Just(Method::PUT), Just(Method::DELETE)],
+        ) {
+            let mut table = RouteTable::new();
+            let pattern = pattern_string(&segments);
+            let path = matching_path(&segments);
+            let missing_path = format!("{path}/__extra");
+
+            table.push(make_route(method.clone(), &pattern));
+
+            prop_assert!(
+                table.match_route_idx(&method, &missing_path).is_none(),
+                "non-matching path {} unexpectedly matched {} {}",
+                missing_path,
+                method,
+                pattern
+            );
+            prop_assert!(
+                !table.any_route_matches_path(&missing_path),
+                "non-matching path {} unexpectedly reported path hit for {}",
+                missing_path,
+                pattern
+            );
+            prop_assert!(
+                table.allowed_methods(&missing_path).is_empty(),
+                "non-matching path {} unexpectedly returned allowed methods",
+                missing_path
+            );
+        }
+
+        #[test]
+        fn proptest_route_pattern_for_path_is_consistent(
+            segments in arb_pattern(),
+            method_mask in prop::collection::vec(any::<bool>(), 4),
+        ) {
+            let mut table = RouteTable::new();
+            let pattern = pattern_string(&segments);
+            let path = matching_path(&segments);
+            let universe = method_universe();
+
+            let mut added = false;
+            for (enabled, method) in method_mask.into_iter().zip(universe.iter().cloned()) {
+                if enabled {
+                    table.push(make_route(method, &pattern));
+                    added = true;
+                }
+            }
+
+            if !added {
+                table.push(make_route(Method::GET, &pattern));
+            }
+
+            let route_pattern = table
+                .route_pattern_for_path(&path)
+                .expect("matching path should produce a route pattern");
+            let reparsed = PathPattern::parse(&route_pattern);
+
+            prop_assert!(
+                reparsed.matches(&path),
+                "route_pattern_for_path returned pattern {} that does not match {}",
+                route_pattern,
+                path
+            );
+            prop_assert!(table.any_route_matches_path(&path));
+        }
     }
 }

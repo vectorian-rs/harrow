@@ -51,23 +51,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "harrow-codec"
+name = "harrow-codec-h1"
 version = "0.9.6"
 dependencies = [
  "bytes",
+ "harrow-io",
  "http",
  "httparse",
  "memchr",
 ]
 
 [[package]]
-name = "harrow-codec-fuzz"
+name = "harrow-codec-h1-fuzz"
 version = "0.0.0"
 dependencies = [
  "bytes",
- "harrow-codec",
+ "harrow-codec-h1",
  "http",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "harrow-io"
+version = "0.9.6"
+dependencies = [
+ "bytes",
 ]
 
 [[package]]

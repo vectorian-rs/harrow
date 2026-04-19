@@ -19,6 +19,7 @@ COPY harrow-server-monoio/Cargo.toml harrow-server-monoio/Cargo.toml
 COPY harrow-server-meguri/Cargo.toml harrow-server-meguri/Cargo.toml
 COPY meguri/Cargo.toml meguri/Cargo.toml
 COPY harrow-bench/Cargo.toml harrow-bench/Cargo.toml
+COPY ntex-compio-bench/Cargo.toml ntex-compio-bench/Cargo.toml
 
 # Cargo needs target entrypoints present to resolve the workspace during fetch.
 COPY harrow/examples harrow/examples
@@ -37,6 +38,7 @@ COPY meguri/src/lib.rs meguri/src/lib.rs
 COPY harrow-bench/benches harrow-bench/benches
 COPY harrow-bench/src/lib.rs harrow-bench/src/lib.rs
 COPY harrow-bench/src/bin harrow-bench/src/bin
+COPY ntex-compio-bench/src/main.rs ntex-compio-bench/src/main.rs
 
 RUN rustup target add aarch64-unknown-linux-gnu && \
     cargo fetch --locked --target=aarch64-unknown-linux-gnu
@@ -55,6 +57,7 @@ COPY harrow-server-monoio/src harrow-server-monoio/src
 COPY harrow-server-meguri/src harrow-server-meguri/src
 COPY meguri/src meguri/src
 COPY harrow-bench/src harrow-bench/src
+COPY ntex-compio-bench/src ntex-compio-bench/src
 
 ARG PERF_BINS="--bin harrow-perf-server --bin harrow-server-monoio --bin harrow-server-meguri --bin ntex-perf-server"
 ARG TARGET=aarch64-unknown-linux-gnu
@@ -63,11 +66,14 @@ ARG PERF_DIR=/app/target/aarch64-unknown-linux-gnu/perf
 # Build all perf binaries with mimalloc (default features)
 RUN cargo build --locked --profile perf --target=${TARGET} \
         -p harrow-bench ${PERF_BINS} && \
+    cargo build --locked --profile perf --target=${TARGET} \
+        -p ntex-compio-bench --bin ntex-compio-perf-server && \
     mkdir -p /out && \
     cp ${PERF_DIR}/harrow-perf-server /out/ && \
     cp ${PERF_DIR}/harrow-server-monoio /out/ && \
     cp ${PERF_DIR}/harrow-server-meguri /out/ && \
-    cp ${PERF_DIR}/ntex-perf-server /out/
+    cp ${PERF_DIR}/ntex-perf-server /out/ && \
+    cp ${PERF_DIR}/ntex-compio-perf-server /out/
 
 # ---------------------------------------------------------------------------
 # Runtime images — distroless, profiling tools run on the host
@@ -89,3 +95,7 @@ CMD ["/harrow-server-meguri", "--bind", "0.0.0.0"]
 FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-perf-server
 COPY --from=build-env /out/ntex-perf-server /
 CMD ["/ntex-perf-server", "--bind", "0.0.0.0"]
+
+FROM gcr.io/distroless/cc-debian13:latest-arm64 AS ntex-compio-perf-server
+COPY --from=build-env /out/ntex-compio-perf-server /
+CMD ["/ntex-compio-perf-server", "--bind", "0.0.0.0"]

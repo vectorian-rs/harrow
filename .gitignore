@@ -1,4 +1,6 @@
 /target
+**/fuzz/target/
+**/fuzz/Cargo.lock
 flamegraphs/*.svg
 *.folded
 flamegraphs/manifest.json

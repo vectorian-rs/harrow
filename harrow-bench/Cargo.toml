@@ -36,7 +36,7 @@ tikv-jemallocator = { version = "0.6", optional = true }
 tako-rs = "1.1"
 salvo = { version = "0.90", default-features = false, features = ["server", "server-handle", "http1", "http2"] }
 warp = { version = "0.4", features = ["server"] }
-ntex = { version = "3", features = ["tokio"] }
+ntex = { version = "3", default-features = false, features = ["tokio"] }
 harrow-server-meguri = { workspace = true }
 
 [dev-dependencies]

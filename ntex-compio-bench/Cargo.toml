@@ -1,0 +1,25 @@
+[package]
+name = "ntex-compio-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "ntex compio benchmark server for Harrow remote comparisons"
+
+[features]
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
+
+[dependencies]
+mimalloc = { workspace = true, optional = true }
+tikv-jemallocator = { version = "0.6", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ntex = { version = "3", default-features = false, features = ["compio"] }
+serde = { workspace = true }
+
+[[bin]]
+name = "ntex-compio-perf-server"
+path = "src/main.rs"

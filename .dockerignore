@@ -73,3 +73,8 @@
 !harrow-bench/Cargo.toml
 !harrow-bench/src/
 !harrow-bench/src/**
+
+!ntex-compio-bench/
+!ntex-compio-bench/Cargo.toml
+!ntex-compio-bench/src/
+!ntex-compio-bench/src/**

@@ -194,7 +194,7 @@ health_path = "/health"
 platform = "linux/arm64"
 
 # =============================================================================
-# monoio (mimalloc only — separate Dockerfile, io_uring backend)
+# local-worker runtime variants beyond Tokio (mimalloc only)
 # =============================================================================
 
 [[implementation]]
@@ -203,6 +203,26 @@ image = "harrow-server-monoio:arm64-${HARROW_VERSION}"
 command = "/harrow-server-monoio --bind 0.0.0.0 --port {{ port }}"
 framework = "harrow"
 backend = "monoio"
+profile = "prod"
+health_path = "/health"
+platform = "linux/arm64"
+
+[[implementation]]
+id = "harrow-meguri-prod-mimalloc-${HARROW_VERSION}"
+image = "harrow-bench:prod-mimalloc-${HARROW_VERSION}"
+command = "/usr/local/bin/harrow-server-meguri --bind 0.0.0.0 --port {{ port }}"
+framework = "harrow"
+backend = "meguri"
+profile = "prod"
+health_path = "/health"
+platform = "linux/arm64"
+
+[[implementation]]
+id = "ntex-compio-prod-mimalloc-3.7.2"
+image = "harrow-bench:prod-mimalloc-${HARROW_VERSION}"
+command = "/usr/local/bin/ntex-compio-perf-server --bind 0.0.0.0 --port {{ port }}"
+framework = "ntex"
+backend = "compio"
 profile = "prod"
 health_path = "/health"
 platform = "linux/arm64"

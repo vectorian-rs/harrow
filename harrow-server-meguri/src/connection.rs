@@ -1143,7 +1143,8 @@ mod tests {
         let response = String::from_utf8_lossy(&response);
         assert!(saw_done);
         assert!(response.contains("connection: close\r\n"));
-        assert!(response.contains("transfer-encoding: chunked\r\n"));
+        assert!(response.contains("content-length: 0\r\n"));
+        assert!(!response.contains("transfer-encoding: chunked\r\n"));
     }
 
     #[test]

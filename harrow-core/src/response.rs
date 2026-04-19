@@ -26,9 +26,12 @@ fn full_to_body(full: Full<Bytes>) -> ResponseBody {
 impl Response {
     /// Create a response with the given status and body.
     pub fn new(status: StatusCode, body: impl Into<Bytes>) -> Self {
-        let body = full_to_body(Full::new(body.into()));
+        let body = body.into();
+        let content_length = body.len();
+        let body = full_to_body(Full::new(body));
         let inner = http::Response::builder()
             .status(status)
+            .header(http::header::CONTENT_LENGTH, content_length)
             .body(body)
             .expect("valid response");
         Self { inner }
@@ -263,6 +266,13 @@ mod tests {
     async fn new_sets_status_and_body() {
         let resp = Response::new(StatusCode::CREATED, "created");
         assert_eq!(resp.status_code(), StatusCode::CREATED);
+        assert_eq!(
+            resp.inner()
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some("7")
+        );
         assert_eq!(body_bytes(resp).await, Bytes::from("created"));
     }
 
@@ -270,6 +280,13 @@ mod tests {
     async fn ok_returns_200_empty() {
         let resp = Response::ok();
         assert_eq!(resp.status_code(), StatusCode::OK);
+        assert_eq!(
+            resp.inner()
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some("0")
+        );
         assert_eq!(body_bytes(resp).await, Bytes::new());
     }
 
@@ -281,6 +298,13 @@ mod tests {
         assert_eq!(
             inner.headers().get(http::header::CONTENT_TYPE).unwrap(),
             "text/plain; charset=utf-8"
+        );
+        assert_eq!(
+            inner
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some("5")
         );
         let body = inner.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(body, Bytes::from("hello"));

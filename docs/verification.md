@@ -3,9 +3,9 @@
 Harrow is a stateless, request-response HTTP framework. It has no replicas, no
 consensus protocol, no on-disk durability, and no distributed state machine.
 This means the techniques that shine in distributed databases (DST with
-shadow-state oracles, TLA+ specifications, Stateright model checking, Maelstrom
-linearizability tests) are largely inapplicable here. Applying them would create
-maintenance burden without catching real bugs.
+shadow-state oracles, broad TLA+ specifications, Stateright model checking,
+Maelstrom linearizability tests) are largely inapplicable here. Applying them
+too broadly would create maintenance burden without catching real bugs.
 
 What harrow *does* have:
 
@@ -15,11 +15,14 @@ What harrow *does* have:
 - Compression round-trip logic.
 - Query-string parsing with percent-decoding.
 - Body-size enforcement at two layers (Content-Length pre-check and frame accumulation).
+- A finite connection/control state machine in the HTTP/1 backends.
 
 These are the surfaces where bugs hide. The right tools are **property-based
 testing** (proptest) for algebraic invariants, **fuzzing** (cargo-fuzz) for
 parsing robustness, and **Kani** for bounded verification of small, pure
-functions. Everything else is unit tests.
+functions. A *small* formal model also makes sense where there is a genuine
+finite state machine to explore (today: backend connection/control lifecycle,
+not the framework as a whole). Everything else is unit tests.
 
 ---
 
@@ -28,10 +31,10 @@ functions. Everything else is unit tests.
 | Technique | Applicable? | Where |
 |-----------|-------------|-------|
 | **proptest** | Yes | Path matching, routing, GCRA arithmetic, compression round-trip, middleware ordering |
-| **cargo-fuzz** | Yes | Query-string parsing, path matching, Accept-Encoding parsing |
+| **cargo-fuzz** | Yes | Query-string parsing, path matching, Accept-Encoding parsing, HTTP/1 codec decoding |
 | **Kani** | Maybe | GCRA single-step correctness, `ns_to_secs_ceil`, path segment classification |
 | **DST** | No | No stateful command sequences, no shadow oracle needed |
-| **TLA+** | No | No distributed protocol to specify |
+| **TLA+ / Quint** | Narrowly | HTTP/1 connection/control lifecycle only (today: TLA+ only) |
 | **Stateright** | No | No state-space explosion to explore |
 | **Maelstrom** | No | Not a distributed system |
 
@@ -128,7 +131,7 @@ identity middleware, and dispatch a synthetic request.
   `ns_to_secs_ceil(n) * 1_000_000_000 >= n` and
   `(ns_to_secs_ceil(n) - 1) * 1_000_000_000 < n` (unless n == 0).
 
-#### 2. Compression (compression.rs) — proptest
+#### 2. Compression (compression.rs) — proptest + fuzz
 
 **Properties to verify:**
 
@@ -138,6 +141,13 @@ identity middleware, and dispatch a synthetic request.
   Generate random Accept-Encoding strings and verify preference order holds.
 - No double-compress: a response with `content-encoding` already set is
   returned unchanged.
+
+**Fuzz targets:**
+
+- `fuzz_accept_encoding(raw_header: &[u8])` — exercise the public
+  `compression_middleware` with adversarial `Accept-Encoding` values. Verify no
+  panics, only supported `content-encoding` values are emitted, and compressed
+  bodies round-trip back to the original payload.
 
 #### 3. CORS (cors.rs) — unit tests sufficient
 
@@ -164,7 +174,26 @@ to verify beyond the existing round-trip tests.
 Connection handling and graceful shutdown are Tokio-level concerns. Property
 testing the shutdown protocol would require simulating Tokio's runtime, which
 is impractical. The integration tests in `harrow-server-tokio/tests/integration.rs`
-cover the key paths. No additional formal verification.
+cover the key paths. The one exception is the finite connection/control state
+machine itself: slab-slot ownership, pending I/O, keep-alive reuse, timeout
+closure, and shutdown/drain transitions are small enough to justify the focused
+model in `specs/tla/ConnectionLifecycle.tla`. We are keeping that single TLA+
+spec for now rather than maintaining an equivalent Quint mirror with no extra
+state space or proof coverage.
+
+---
+
+## First-Class Commands
+
+- `cargo test -p harrow-core`
+- `cargo test -p harrow-middleware --features rate-limit,compression`
+- `cargo check --manifest-path harrow-core/fuzz/Cargo.toml`
+- `cargo check --manifest-path harrow-middleware/fuzz/Cargo.toml`
+- `cargo check --manifest-path harrow-codec-h1/fuzz/Cargo.toml`
+- `mise run fuzz:check`
+- `mise run fuzz:core:path`
+- `mise run fuzz:core:query`
+- `mise run fuzz:middleware:accept-encoding`
 
 ---
 
@@ -208,9 +237,11 @@ Ordered by expected bug-finding value per hour of effort:
   consistency violation. A shadow oracle for "given this request, what should
   the response be" is just the handler itself.
 
-- **TLA+ / Stateright**: No protocol to specify. The middleware chain is a
-  linear pipeline, not a state machine with branching transitions that benefit
-  from exhaustive exploration.
+- **TLA+ / Quint for the whole framework**: No. The middleware chain is a
+  linear pipeline, not a protocol worth modeling end-to-end. The exception is
+  the backend connection/control lifecycle, which is finite enough to justify a
+  focused TLA+ state-machine model. A Quint mirror would currently duplicate
+  that maintenance burden without adding coverage.
 
 - **Maelstrom / Jepsen**: Not a distributed system.
 
@@ -218,5 +249,6 @@ Ordered by expected bug-finding value per hour of effort:
   dispatch (`dyn Middleware`). Kani cannot reason about trait objects or async
   in a useful way here. Proptest covers this better.
 
-If harrow later grows stateful features (sessions, distributed rate limiting,
-request queuing), revisit DST and TLA+ at that point.
+If harrow later grows more protocol-shaped state (sessions, distributed rate
+limiting, request queuing), revisit DST and broader TLA+/Quint modeling at
+that point.

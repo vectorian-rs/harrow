@@ -1,0 +1,25 @@
+[package]
+name = "harrow-middleware-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bytes = "1"
+flate2 = "1"
+harrow-core = { path = "../../harrow-core" }
+harrow-middleware = { path = "..", features = ["compression"] }
+http = "1"
+http-body-util = "0.1"
+libfuzzer-sys = "0.4"
+tokio = { version = "1", features = ["rt"] }
+
+[[bin]]
+name = "fuzz_accept_encoding"
+path = "fuzz_targets/fuzz_accept_encoding.rs"
+doc = false

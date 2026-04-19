@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["harrow-core/fuzz", "harrow-codec-h1/fuzz"]
+exclude = ["harrow-core/fuzz", "harrow-codec-h1/fuzz", "harrow-middleware/fuzz"]
 members = [
     "harrow",
     "harrow-core",
@@ -14,6 +14,7 @@ members = [
     "harrow-io",
     "harrow-server-meguri",
     "harrow-bench",
+    "ntex-compio-bench",
     "meguri",
 ]
 
