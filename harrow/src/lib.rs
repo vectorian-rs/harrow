@@ -1,13 +1,16 @@
 //! # Harrow
 //!
-//! A thin, macro-free HTTP framework over Hyper with opt-in observability.
+//! A thin, macro-free HTTP framework with custom HTTP/1 backends, local-worker
+//! runtime architecture, and opt-in observability.
 //!
 //! ## Server Backends (Required)
 //!
-//! Harrow requires you to explicitly select a server backend via Cargo features.
-//! There is no default — you must pick exactly one of:
+//! Harrow requires you to explicitly select a server backend via Cargo
+//! features. There is no default — in the public `harrow` crate you must pick
+//! exactly one of:
 //!
-//! - **`tokio`**: Traditional async/await with Tokio + Hyper.
+//! - **`tokio`**: Custom HTTP/1 transport on Tokio with per-worker
+//!   `current_thread` runtimes and `LocalSet`.
 //!   Use for cross-platform compatibility, development on macOS/Windows,
 //!   or deployment in containers/Lambda where io_uring is unavailable.
 //!
@@ -15,10 +18,9 @@
 //!   Use for maximum throughput on Linux 6.1+ bare metal or EC2.
 //!   Requires custom seccomp profile in containers.
 //!
-//! - **`meguri`**: Pure io_uring backend using Harrow's own io_uring library.
-//!   Exposes advanced io_uring features (registered buffers, buffer rings,
-//!   zero-copy send, multishot recv) that Monoio does not support.
-//!   Linux only. No Tokio dependency.
+//! The workspace also contains `harrow-server-meguri`, an experimental direct
+//! io_uring backend, but it is not currently re-exported from the root
+//! `harrow` crate.
 //!
 //! ### Feature Flag Selection
 //!
@@ -28,10 +30,12 @@
 //!
 //! # io_uring backend via Monoio (Linux 6.1+ only)
 //! harrow = { version = "0.9", features = ["monoio"] }
-//!
-//! # io_uring backend via Meguri (Linux only, advanced features)
-//! harrow = { version = "0.9", features = ["meguri"] }
 //! ```
+//!
+//! The current runtime direction is documented in
+//! [`docs/strategy-local-workers.md`](../docs/strategy-local-workers.md), and
+//! the shared HTTP/1 dispatcher shape is documented in
+//! [`docs/h1-dispatcher-design.md`](../docs/h1-dispatcher-design.md).
 
 pub use harrow_core::client::{Client, TestResponse};
 pub use harrow_core::handler;
@@ -68,13 +72,14 @@ compile_error!(
 /// Use this module when you need to explicitly select a server backend
 /// regardless of which feature flags are enabled.
 pub mod runtime {
-    /// Tokio-based server (Hyper + epoll/kqueue).
+    /// Tokio-based server with Harrow's custom HTTP/1 transport and local
+    /// worker runtime model.
     ///
     /// Available when the `tokio` feature is enabled.
     #[cfg(feature = "tokio")]
     pub mod tokio {
         pub use harrow_server_tokio::{
-            ServerConfig, serve, serve_with_config, serve_with_shutdown,
+            ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
         };
     }
 
@@ -191,8 +196,9 @@ pub mod o11y {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use harrow::o11y::{O11yConfig, init_telemetry};
+    /// use harrow::AppO11yExt;
     ///
     /// let config = O11yConfig::default().service_name("my-app");
     /// let _guard = init_telemetry(config.clone());

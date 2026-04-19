@@ -19,11 +19,13 @@ fn bench_middleware_depth(c: &mut Criterion) {
     for depth in [0u32, 1, 2, 3, 5, 10] {
         let client = {
             let addr = rt.block_on(async {
-                let mut app = App::new();
-                for _ in 0..depth {
-                    app = app.middleware(noop_middleware);
-                }
-                app = app.get("/ping", text_handler);
+                let app = move || {
+                    let mut app = App::new();
+                    for _ in 0..depth {
+                        app = app.middleware(noop_middleware);
+                    }
+                    app.get("/ping", text_handler)
+                };
                 start_server(app).await
             });
             Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -55,7 +57,7 @@ fn bench_middleware_realistic(c: &mut Criterion) {
     // 0 middleware baseline
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/ping", text_handler);
+            let app = || App::new().get("/ping", text_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -74,11 +76,13 @@ fn bench_middleware_realistic(c: &mut Criterion) {
     // 3 middleware: timing + header + noop
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new()
-                .middleware(timing_middleware)
-                .middleware(header_middleware)
-                .middleware(noop_middleware)
-                .get("/ping", text_handler);
+            let app = || {
+                App::new()
+                    .middleware(timing_middleware)
+                    .middleware(header_middleware)
+                    .middleware(noop_middleware)
+                    .get("/ping", text_handler)
+            };
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -97,13 +101,15 @@ fn bench_middleware_realistic(c: &mut Criterion) {
     // 5 middleware: timing + 2x header + 2x noop
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new()
-                .middleware(timing_middleware)
-                .middleware(header_middleware)
-                .middleware(noop_middleware)
-                .middleware(header_middleware)
-                .middleware(noop_middleware)
-                .get("/ping", text_handler);
+            let app = || {
+                App::new()
+                    .middleware(timing_middleware)
+                    .middleware(header_middleware)
+                    .middleware(noop_middleware)
+                    .middleware(header_middleware)
+                    .middleware(noop_middleware)
+                    .get("/ping", text_handler)
+            };
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))

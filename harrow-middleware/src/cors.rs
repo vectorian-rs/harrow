@@ -1,6 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use harrow_core::handler::HandlerFuture;
 use harrow_core::middleware::{Middleware, Next};
 use harrow_core::request::Request;
 use harrow_core::response::Response;
@@ -88,7 +86,7 @@ pub struct CorsMiddleware {
 }
 
 impl Middleware for CorsMiddleware {
-    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> HandlerFuture {
         let config = std::sync::Arc::clone(&self.config);
         Box::pin(async move {
             let origin = req.header("origin").map(|s| s.to_string());

@@ -77,9 +77,11 @@ fn bench_middleware_individual(c: &mut Criterion) {
 
     let harrow_client = {
         let addr = rt.block_on(async {
-            let app = App::new()
-                .middleware(harrow::request_id_middleware)
-                .get("/echo", harrow_text_handler);
+            let app = || {
+                App::new()
+                    .middleware(harrow::request_id_middleware)
+                    .get("/echo", harrow_text_handler)
+            };
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -120,9 +122,11 @@ fn bench_middleware_individual(c: &mut Criterion) {
 
     let harrow_client = {
         let addr = rt.block_on(async {
-            let app = App::new()
-                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-                .get("/echo", harrow_text_handler);
+            let app = || {
+                App::new()
+                    .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                    .get("/echo", harrow_text_handler)
+            };
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -170,9 +174,11 @@ fn bench_middleware_individual(c: &mut Criterion) {
 
     let harrow_client = {
         let addr = rt.block_on(async {
-            let app = App::new()
-                .middleware(harrow::compression_middleware)
-                .get("/echo", harrow_text_handler);
+            let app = || {
+                App::new()
+                    .middleware(harrow::compression_middleware)
+                    .get("/echo", harrow_text_handler)
+            };
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -230,11 +236,13 @@ fn bench_middleware_full_stack(c: &mut Criterion) {
     // Harrow: request_id → cors → compression
     let harrow_client = {
         let addr = rt.block_on(async {
-            let app = App::new()
-                .middleware(harrow::request_id_middleware)
-                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-                .middleware(harrow::compression_middleware)
-                .get("/echo", harrow_text_handler);
+            let app = || {
+                App::new()
+                    .middleware(harrow::request_id_middleware)
+                    .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                    .middleware(harrow::compression_middleware)
+                    .get("/echo", harrow_text_handler)
+            };
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -301,11 +309,13 @@ fn bench_middleware_concurrent(c: &mut Criterion) {
 
     // Harrow full stack server
     let harrow_addr = rt.block_on(async {
-        let app = App::new()
-            .middleware(harrow::request_id_middleware)
-            .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-            .middleware(harrow::compression_middleware)
-            .get("/echo", harrow_text_handler);
+        let app = || {
+            App::new()
+                .middleware(harrow::request_id_middleware)
+                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                .middleware(harrow::compression_middleware)
+                .get("/echo", harrow_text_handler)
+        };
         start_server(app).await
     });
 

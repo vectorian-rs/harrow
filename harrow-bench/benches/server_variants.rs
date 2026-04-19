@@ -4,9 +4,11 @@ use std::time::Duration;
 
 use axum::{Router, routing::get};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use http_body_util::BodyExt;
 use hyper::body::Incoming;
+use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -14,7 +16,6 @@ use tokio::task::JoinSet;
 use harrow::App;
 use harrow_bench::{BenchClient, run_concurrent, text_handler};
 use harrow_core::dispatch::{SharedState, dispatch};
-use harrow_core::request::box_incoming;
 
 const CLIENT_WORKERS: usize = 4;
 const SERVER_WORKERS: usize = 4;
@@ -83,13 +84,27 @@ async fn start_axum_server(app: Router) -> SocketAddr {
     addr
 }
 
-async fn start_harrow_variant_server(app: App, variant: HarrowVariant) -> SocketAddr {
-    let shared = app.into_shared_state();
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+async fn start_harrow_variant_server<F>(make_app: F, variant: HarrowVariant) -> SocketAddr
+where
+    F: FnOnce() -> App + Send + 'static,
+{
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
     let addr = listener.local_addr().unwrap();
 
-    tokio::spawn(run_harrow_variant_listener(listener, shared, variant));
+    std::thread::spawn(move || {
+        let app = make_app();
+        let shared = app.into_shared_state();
+        let listener = TcpListener::from_std(listener).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+
+        rt.block_on(local.run_until(run_harrow_variant_listener(listener, shared, variant)));
+    });
+
     tokio::time::sleep(STARTUP_DELAY).await;
     addr
 }
@@ -104,11 +119,7 @@ async fn run_harrow_variant_listener(
     } else {
         None
     };
-    let mut connections = if variant.use_joinset {
-        Some(JoinSet::<()>::new())
-    } else {
-        None
-    };
+    let mut connections = variant.use_joinset.then(JoinSet::<()>::new);
 
     loop {
         if let Some(connections) = connections.as_mut() {
@@ -139,15 +150,18 @@ async fn run_harrow_variant_listener(
             let service = service_fn(move |req: http::Request<Incoming>| {
                 let shared = Arc::clone(&shared);
                 async move {
-                    let boxed = req.map(box_incoming);
+                    let boxed = req.map(|incoming| {
+                        incoming
+                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                            .boxed_unsync()
+                    });
                     Ok::<_, std::convert::Infallible>(dispatch(shared, boxed).await)
                 }
             });
 
-            let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+            let mut builder = http1::Builder::new();
             if variant.use_timers {
                 builder
-                    .http1()
                     .timer(TokioTimer::new())
                     .header_read_timeout(HEADER_READ_TIMEOUT);
             }
@@ -161,9 +175,9 @@ async fn run_harrow_variant_listener(
         };
 
         if let Some(connections) = connections.as_mut() {
-            connections.spawn(connection_task);
+            connections.spawn_local(connection_task);
         } else {
-            tokio::spawn(connection_task);
+            tokio::task::spawn_local(connection_task);
         }
     }
 }
@@ -208,7 +222,7 @@ fn bench_server_variants(c: &mut Criterion) {
         .copied()
         .map(|variant| {
             let addr = server_rt.block_on(async {
-                let app = App::new().get("/text", text_handler);
+                let app = || App::new().get("/text", text_handler);
                 start_harrow_variant_server(app, variant).await
             });
             (variant, addr)

@@ -1,11 +1,11 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{Method, StatusCode};
 use http_body_util::{BodyExt, Full};
 
+use crate::handler::HandlerFuture;
 use crate::middleware::{Middleware, Next};
 use crate::path::PathMatch;
 use crate::request::{Body, Request};
@@ -19,11 +19,12 @@ pub struct SharedState {
     pub middleware: Vec<Box<dyn Middleware>>,
     pub state: Arc<TypeMap>,
     pub max_body_size: usize,
+    pub(crate) not_found_handler: Option<NotFoundHandler>,
+    pub(crate) method_not_allowed_handler: Option<MethodNotAllowedHandler>,
 }
 
 /// Terminal closure type for the global middleware chain (404/405 handlers).
-type TerminalFn =
-    Arc<dyn Fn(Request) -> Pin<Box<dyn Future<Output = Response> + Send>> + Send + Sync>;
+type TerminalFn = Rc<dyn Fn(Request) -> HandlerFuture>;
 
 /// Dispatch a request through the routing and middleware pipeline.
 #[cfg_attr(feature = "profiling", inline(never))]
@@ -61,14 +62,14 @@ pub async fn dispatch(
                 let req = unmatched_request(&shared, hyper_req, route_pattern);
 
                 let terminal: TerminalFn = {
-                    let shared_state = Arc::clone(&shared.state);
+                    let shared_state = Arc::clone(&shared);
                     let allow = allow_value.clone();
-                    Arc::new(move |req| {
-                        let state = Arc::clone(&shared_state);
+                    Rc::new(move |req| {
+                        let shared = Arc::clone(&shared_state);
                         let methods = methods.clone();
                         let allow = allow.clone();
                         Box::pin(async move {
-                            if let Some(handler) = state.try_get::<MethodNotAllowedHandler>() {
+                            if let Some(handler) = shared.method_not_allowed_handler.as_ref() {
                                 let fut = (handler.0)(req, methods);
                                 fut.await
                                     .status(StatusCode::METHOD_NOT_ALLOWED.as_u16())
@@ -93,11 +94,11 @@ pub async fn dispatch(
                 let req = unmatched_request(&shared, hyper_req, None);
 
                 let terminal: TerminalFn = {
-                    let shared_state = Arc::clone(&shared.state);
-                    Arc::new(move |req| {
-                        let state = Arc::clone(&shared_state);
+                    let shared_state = Arc::clone(&shared);
+                    Rc::new(move |req| {
+                        let shared = Arc::clone(&shared_state);
                         Box::pin(async move {
-                            if let Some(handler) = state.try_get::<NotFoundHandler>() {
+                            if let Some(handler) = shared.not_found_handler.as_ref() {
                                 let fut = (handler.0)(req);
                                 fut.await.status(StatusCode::NOT_FOUND.as_u16())
                             } else {
@@ -157,7 +158,7 @@ pub async fn dispatch(
         let (parts, _body) = response.into_parts();
         let empty = Full::new(Bytes::new())
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-            .boxed();
+            .boxed_unsync();
         http::Response::from_parts(parts, empty)
     } else {
         response
@@ -187,7 +188,7 @@ fn finalize_unmatched_response(
         let (parts, _body) = response.into_parts();
         let empty = Full::new(Bytes::new())
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-            .boxed();
+            .boxed_unsync();
         http::Response::from_parts(parts, empty)
     } else {
         response
@@ -201,13 +202,13 @@ fn run_global_middleware_chain(
     mw_idx: usize,
     req: Request,
     terminal: TerminalFn,
-) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+) -> HandlerFuture {
     let global_len = shared.middleware.len();
     if mw_idx >= global_len {
         (terminal)(req)
     } else {
         let shared_next = Arc::clone(&shared);
-        let terminal_next = Arc::clone(&terminal);
+        let terminal_next = Rc::clone(&terminal);
         let next = Next::new(move |req| {
             run_global_middleware_chain(shared_next, mw_idx + 1, req, terminal_next)
         });
@@ -230,7 +231,7 @@ fn run_middleware_chain(
     route_idx: usize,
     mw_idx: usize,
     req: Request,
-) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+) -> HandlerFuture {
     let global_len = shared.middleware.len();
     let route = shared
         .route_table
@@ -272,7 +273,7 @@ mod tests {
     }
 
     impl Middleware for IndexMiddleware {
-        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, req: Request, next: Next) -> HandlerFuture {
             self.log.lock().unwrap().push(self.index);
             Box::pin(async move { next.run(req).await })
         }
@@ -285,11 +286,7 @@ mod tests {
     }
 
     impl Middleware for ShortCircuitMiddleware {
-        fn call(
-            &self,
-            _req: Request,
-            _next: Next,
-        ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, _req: Request, _next: Next) -> HandlerFuture {
             self.log.lock().unwrap().push(self.index);
             Box::pin(async { Response::new(http::StatusCode::FORBIDDEN, "blocked") })
         }
@@ -299,7 +296,7 @@ mod tests {
     struct HeaderMiddleware;
 
     impl Middleware for HeaderMiddleware {
-        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, req: Request, next: Next) -> HandlerFuture {
             Box::pin(async move { next.run(req).await.header("x-mw", "applied") })
         }
     }
@@ -310,7 +307,7 @@ mod tests {
     }
 
     impl Middleware for RouteCapture {
-        fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        fn call(&self, req: Request, next: Next) -> HandlerFuture {
             let pattern = req.route_pattern().map(|s| s.to_string());
             *self.captured.lock().unwrap() = Some(pattern);
             Box::pin(async move { next.run(req).await })

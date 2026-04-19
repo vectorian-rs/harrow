@@ -672,8 +672,7 @@ fn start_server_container(
         config.deployment_mode.as_str()
     );
 
-    // io_uring backends (monoio) need --privileged to bypass Docker seccomp filters
-    let privileged = if variant.implementation.backend.as_deref() == Some("monoio") {
+    let privileged = if backend_requires_privileged(variant.implementation.backend.as_deref()) {
         " --privileged"
     } else {
         ""
@@ -721,6 +720,10 @@ fn start_server_container(
 
     thread::sleep(Duration::from_secs(2));
     Ok(())
+}
+
+fn backend_requires_privileged(backend: Option<&str>) -> bool {
+    matches!(backend, Some("monoio" | "meguri" | "compio"))
 }
 
 fn stop_server_container(config: &CommonRunConfig, variant: &RunVariant) {

@@ -1,0 +1,18 @@
+[package]
+name = "harrow-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Shared server primitives for Harrow: listener, workers, shutdown, config"
+
+[dependencies]
+bytes = { workspace = true }
+harrow-codec-h1 = { workspace = true }
+harrow-core = { workspace = true }
+http = { workspace = true }
+socket2 = { version = "0.5", features = ["all"] }
+
+[dev-dependencies]
+http-body-util = { workspace = true }

@@ -12,24 +12,28 @@ fn bench_body_limit(c: &mut Criterion) {
 
     // baseline: text handler, no middleware
     let baseline_addr = rt.block_on(async {
-        let app = App::new().get("/echo", text_handler);
+        let app = || App::new().get("/echo", text_handler);
         start_server(app).await
     });
 
     // body_limit only (1 MiB limit)
     let body_limit_addr = rt.block_on(async {
-        let app = App::new()
-            .middleware(harrow::body_limit_middleware(1024 * 1024))
-            .get("/echo", text_handler);
+        let app = || {
+            App::new()
+                .middleware(harrow::body_limit_middleware(1024 * 1024))
+                .get("/echo", text_handler)
+        };
         start_server(app).await
     });
 
     // body_limit + noop middleware
     let stack_addr = rt.block_on(async {
-        let app = App::new()
-            .middleware(harrow::body_limit_middleware(1024 * 1024))
-            .middleware(noop_middleware)
-            .get("/echo", text_handler);
+        let app = || {
+            App::new()
+                .middleware(harrow::body_limit_middleware(1024 * 1024))
+                .middleware(noop_middleware)
+                .get("/echo", text_handler)
+        };
         start_server(app).await
     });
 

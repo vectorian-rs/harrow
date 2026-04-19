@@ -1,51 +1,27 @@
-# Chizu configuration for harrow
-# Harrow - A high-performance HTTP toolkit
-# https://github.com/l1x/harrow
-
 [index]
-# Exclude build artifacts and dependencies
 exclude_patterns = [
     "**/target/**",
     "**/.git/**",
     "**/node_modules/**",
     "**/.venv/**",
-    "**/fuzz/**",
     "**/*.lock",
-    "**/Cargo.lock",
 ]
-parallel_workers = 4
 
-[query]
-default_limit = 15
 
-[query.rerank_weights]
-task_route = 0.30
-keyword = 0.20
-name_match = 0.15
-vector = 0.20
-kind_preference = 0.05
-exported = 0.05
-path_match = 0.05
-
-# LLM configuration for summarization
-# Uses local Ollama by default
-[llm]
+[providers.ollama]
 base_url = "http://localhost:11434/v1"
-api_key = ""                      # empty for local Ollama
-default_model = "llama3:8b"       # or "gemma3:latest"
 timeout_secs = 120
 retry_attempts = 3
+
+[summary]
+provider = "ollama"
+model = "llama3:8b"
 max_tokens = 512
 temperature = 0.2
+concurrency = 8
 
-# Embedding configuration for vector search
-# Used by: chizu index --embed
 [embedding]
-enabled = true
 provider = "ollama"
-base_url = "http://localhost:11434/v1"
-api_key = ""
 model = "nomic-embed-text-v2-moe:latest"
 dimensions = 768
 batch_size = 32
-timeout_secs = 120

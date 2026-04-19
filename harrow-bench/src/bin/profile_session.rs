@@ -80,33 +80,39 @@ async fn start_scenario(name: &str) -> (SocketAddr, HeaderList) {
     match name {
         "baseline" => {
             let addr =
-                harrow_bench::start_server(App::new().get("/echo", harrow_bench::text_handler))
+                harrow_bench::start_server(|| App::new().get("/echo", harrow_bench::text_handler))
                     .await;
             (addr, vec![])
         }
         "no-touch" => {
             let store = harrow_bench::InMemorySessionStore::new();
             let config = harrow_bench::bench_session_config();
-            let app = App::new()
-                .middleware(harrow::session_middleware(store, config))
-                .get("/echo", harrow_bench::session_noop_handler);
+            let app = move || {
+                App::new()
+                    .middleware(harrow::session_middleware(store, config))
+                    .get("/echo", harrow_bench::session_noop_handler)
+            };
             (harrow_bench::start_server(app).await, vec![])
         }
         "new" => {
             let store = harrow_bench::InMemorySessionStore::new();
             let config = harrow_bench::bench_session_config();
-            let app = App::new()
-                .middleware(harrow::session_middleware(store, config))
-                .get("/echo", harrow_bench::session_set_handler);
+            let app = move || {
+                App::new()
+                    .middleware(harrow::session_middleware(store, config))
+                    .get("/echo", harrow_bench::session_set_handler)
+            };
             (harrow_bench::start_server(app).await, vec![])
         }
         "read" => {
             let store = harrow_bench::InMemorySessionStore::new();
             harrow_bench::seed_bench_session(&store).await;
             let config = harrow_bench::bench_session_config();
-            let app = App::new()
-                .middleware(harrow::session_middleware(store, config))
-                .get("/echo", harrow_bench::session_get_handler);
+            let app = move || {
+                App::new()
+                    .middleware(harrow::session_middleware(store, config))
+                    .get("/echo", harrow_bench::session_get_handler)
+            };
             (
                 harrow_bench::start_server(app).await,
                 vec![("cookie".to_string(), cookie)],
@@ -116,9 +122,11 @@ async fn start_scenario(name: &str) -> (SocketAddr, HeaderList) {
             let store = harrow_bench::InMemorySessionStore::new();
             harrow_bench::seed_bench_session(&store).await;
             let config = harrow_bench::bench_session_config();
-            let app = App::new()
-                .middleware(harrow::session_middleware(store, config))
-                .get("/echo", harrow_bench::session_write_handler);
+            let app = move || {
+                App::new()
+                    .middleware(harrow::session_middleware(store, config))
+                    .get("/echo", harrow_bench::session_write_handler)
+            };
             (
                 harrow_bench::start_server(app).await,
                 vec![("cookie".to_string(), cookie)],
@@ -128,11 +136,13 @@ async fn start_scenario(name: &str) -> (SocketAddr, HeaderList) {
             let store = harrow_bench::InMemorySessionStore::new();
             harrow_bench::seed_bench_session(&store).await;
             let config = harrow_bench::bench_session_config();
-            let app = App::new()
-                .middleware(harrow::session_middleware(store, config))
-                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-                .middleware(harrow::compression_middleware)
-                .get("/echo", harrow_bench::session_large_get_handler);
+            let app = move || {
+                App::new()
+                    .middleware(harrow::session_middleware(store, config))
+                    .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                    .middleware(harrow::compression_middleware)
+                    .get("/echo", harrow_bench::session_large_get_handler)
+            };
             (
                 harrow_bench::start_server(app).await,
                 vec![
@@ -149,11 +159,13 @@ async fn start_scenario(name: &str) -> (SocketAddr, HeaderList) {
             let store = harrow_bench::InMemorySessionStore::new();
             harrow_bench::seed_bench_session(&store).await;
             let config = harrow_bench::bench_session_config();
-            let app = App::new()
-                .middleware(harrow::session_middleware(store, config))
-                .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
-                .middleware(harrow::compression_middleware)
-                .get("/echo", harrow_bench::session_large_write_handler);
+            let app = move || {
+                App::new()
+                    .middleware(harrow::session_middleware(store, config))
+                    .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
+                    .middleware(harrow::compression_middleware)
+                    .get("/echo", harrow_bench::session_large_write_handler)
+            };
             (
                 harrow_bench::start_server(app).await,
                 vec![

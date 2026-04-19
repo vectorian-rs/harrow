@@ -1,0 +1,18 @@
+[package]
+name = "harrow-codec-h1"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "HTTP/1.1 codec for Harrow: request parsing, response serialization, chunked encoding"
+
+[dependencies]
+harrow-io = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+httparse = { workspace = true }
+memchr = "2"
+
+[dev-dependencies]
+proptest = { workspace = true }

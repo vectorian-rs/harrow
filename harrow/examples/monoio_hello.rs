@@ -25,7 +25,7 @@ async fn health(_req: Request) -> Response {
 fn main() {
     tracing_subscriber::fmt::init();
 
-    let app = App::new().get("/", hello).get("/health", health);
+    let app = || App::new().get("/", hello).get("/health", health);
     let addr = "127.0.0.1:3000".parse().unwrap();
 
     tracing::info!("starting monoio server on http://{}", addr);

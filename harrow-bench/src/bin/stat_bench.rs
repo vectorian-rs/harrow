@@ -190,17 +190,17 @@ fn normal_cdf(x: f64) -> f64 {
 // ---------------------------------------------------------------------------
 
 async fn start_harrow_text() -> SocketAddr {
-    let app = harrow::App::new().get("/echo", harrow_bench::text_handler);
+    let app = || harrow::App::new().get("/echo", harrow_bench::text_handler);
     harrow_bench::start_server(app).await
 }
 
 async fn start_harrow_json() -> SocketAddr {
-    let app = harrow::App::new().get("/echo", harrow_bench::json_1kb_handler);
+    let app = || harrow::App::new().get("/echo", harrow_bench::json_1kb_handler);
     harrow_bench::start_server(app).await
 }
 
 async fn start_harrow_io() -> SocketAddr {
-    let app = harrow::App::new().get("/echo", harrow_bench::simulated_io_handler);
+    let app = || harrow::App::new().get("/echo", harrow_bench::simulated_io_handler);
     harrow_bench::start_server(app).await
 }
 

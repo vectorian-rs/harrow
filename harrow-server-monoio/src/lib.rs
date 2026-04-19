@@ -28,7 +28,7 @@
 //!           ▼                       ▼
 //! ┌─────────────────┐   ┌─────────────────────┐
 //! │   H1 Handler    │   │   H2 Handler        │
-//! │    (h1.rs)      │   │    (h2.rs)          │
+//! │(h1/dispatcher.rs)│  │    (h2.rs)          │
 //! └─────────────────┘   └─────────────────────┘
 //! ```
 //!
@@ -36,10 +36,12 @@
 //!
 //! ```ignore
 //! fn main() {
-//!     let app = App::new().get("/hello", hello);
-//!
 //!     // High-level thread-per-core bootstrap.
-//!     harrow_server_monoio::run(app, "127.0.0.1:3000".parse().unwrap()).unwrap();
+//!     harrow_server_monoio::run(
+//!         || App::new().get("/hello", hello),
+//!         "127.0.0.1:3000".parse().unwrap(),
+//!     )
+//!     .unwrap();
 //! }
 //! ```
 //!
@@ -82,7 +84,7 @@
 
 mod buffer;
 mod cancel;
-mod codec;
+use harrow_codec_h1 as codec;
 mod connection;
 mod h1;
 mod h2;
@@ -226,40 +228,49 @@ impl Drop for ServerHandle {
 }
 
 /// Start the application using Harrow's thread-per-core monoio bootstrap.
-pub fn run(app: App, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    run_with_config(app, addr, ServerConfig::default())
+pub fn run<F>(make_app: F, addr: SocketAddr) -> Result<(), Box<dyn Error>>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
+    run_with_config(make_app, addr, ServerConfig::default())
 }
 
 /// Start the application using Harrow's thread-per-core monoio bootstrap and
 /// block until shutdown.
-pub fn run_with_config(
-    app: App,
+pub fn run_with_config<F>(
+    make_app: F,
     addr: SocketAddr,
     config: ServerConfig,
-) -> Result<(), Box<dyn Error>> {
-    start_with_config(app, addr, config)?.wait()
+) -> Result<(), Box<dyn Error>>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
+    start_with_config(make_app, addr, config)?.wait()
 }
 
 /// Start the application using Harrow's thread-per-core monoio bootstrap and
 /// return a handle for shutdown / test control.
-pub fn start(app: App, addr: SocketAddr) -> Result<ServerHandle, Box<dyn Error>> {
-    start_with_config(app, addr, ServerConfig::default())
+pub fn start<F>(make_app: F, addr: SocketAddr) -> Result<ServerHandle, Box<dyn Error>>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
+    start_with_config(make_app, addr, ServerConfig::default())
 }
 
 /// Start the application using Harrow's thread-per-core monoio bootstrap and
 /// return a handle for shutdown / test control.
-pub fn start_with_config(
-    app: App,
+pub fn start_with_config<F>(
+    make_app: F,
     addr: SocketAddr,
     config: ServerConfig,
-) -> Result<ServerHandle, Box<dyn Error>> {
+) -> Result<ServerHandle, Box<dyn Error>>
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
     // Fail fast on unsupported kernels.
     if let Err(err) = kernel_check::check_kernel_version() {
         return Err(Box::new(err));
     }
-
-    let shared = app.into_shared_state();
-    shared.route_table.print_routes();
 
     let worker_count = resolved_worker_count(config.workers)?;
     let worker_config = per_worker_config(config, worker_count);
@@ -268,11 +279,12 @@ pub fn start_with_config(
 
     let (completion_tx, completion_rx) = mpsc::channel();
     let first_worker = spawn_worker(
-        Arc::clone(&shared),
+        make_app.clone(),
         addr,
         worker_config,
         Arc::clone(&shutdown),
         completion_tx.clone(),
+        true,
     );
     let bound_addr = match first_worker.startup.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(bound_addr)) => bound_addr,
@@ -306,11 +318,12 @@ pub fn start_with_config(
 
     for _ in 1..worker_count {
         let worker = spawn_worker(
-            Arc::clone(&shared),
+            make_app.clone(),
             bound_addr,
             worker_config,
             Arc::clone(&shutdown),
             completion_tx.clone(),
+            false,
         );
         match worker.startup.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(_)) => workers.push(worker.handle),
@@ -562,15 +575,25 @@ struct WorkerThread {
     startup: mpsc::Receiver<Result<SocketAddr, BoxError>>,
 }
 
-fn spawn_worker(
-    shared: Arc<SharedState>,
+fn spawn_worker<F>(
+    make_app: F,
     addr: SocketAddr,
     config: ServerConfig,
     shutdown: Arc<AtomicBool>,
     completion: mpsc::Sender<Result<(), String>>,
-) -> WorkerThread {
+    print_routes: bool,
+) -> WorkerThread
+where
+    F: Fn() -> App + Send + 'static,
+{
     let (startup_tx, startup_rx) = mpsc::channel::<Result<SocketAddr, BoxError>>();
     let handle = thread::spawn(move || {
+        let app = make_app();
+        let shared = app.into_shared_state();
+        if print_routes {
+            shared.route_table.print_routes();
+        }
+
         let mut runtime = match monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
             .enable_timer()
             .build()

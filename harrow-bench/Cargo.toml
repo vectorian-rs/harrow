@@ -36,7 +36,8 @@ tikv-jemallocator = { version = "0.6", optional = true }
 tako-rs = "1.1"
 salvo = { version = "0.90", default-features = false, features = ["server", "server-handle", "http1", "http2"] }
 warp = { version = "0.4", features = ["server"] }
-ntex = { version = "3", features = ["tokio"] }
+ntex = { version = "3", default-features = false, features = ["tokio"] }
+harrow-server-meguri = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
@@ -94,6 +95,10 @@ path = "src/bin/harrow_perf_server.rs"
 [[bin]]
 name = "harrow-server-monoio"
 path = "src/bin/harrow_monoio_perf_server.rs"
+
+[[bin]]
+name = "harrow-server-meguri"
+path = "src/bin/harrow_meguri_perf_server.rs"
 
 [[bin]]
 name = "axum-perf-server"

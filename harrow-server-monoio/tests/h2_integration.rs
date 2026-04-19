@@ -29,9 +29,12 @@ async fn echo_body(req: Request) -> Response {
 // -- Helpers -----------------------------------------------------------------
 
 /// Start an HTTP/2 monoio server with Harrow's public bootstrap.
-fn start_h2_server(app: App) -> (SocketAddr, harrow_server_monoio::ServerHandle) {
+fn start_h2_server<F>(make_app: F) -> (SocketAddr, harrow_server_monoio::ServerHandle)
+where
+    F: Fn() -> App + Send + Clone + 'static,
+{
     start_h2_server_with_config(
-        app,
+        make_app,
         harrow_server_monoio::ServerConfig {
             workers: Some(1),
             header_read_timeout: Some(Duration::from_secs(2)),
@@ -46,11 +49,11 @@ fn start_h2_server(app: App) -> (SocketAddr, harrow_server_monoio::ServerHandle)
 }
 
 fn start_h2_server_with_config(
-    app: App,
+    make_app: impl Fn() -> App + Send + Clone + 'static,
     config: harrow_server_monoio::ServerConfig,
 ) -> (SocketAddr, harrow_server_monoio::ServerHandle) {
     let server =
-        harrow_server_monoio::start_with_config(app, "127.0.0.1:0".parse().unwrap(), config)
+        harrow_server_monoio::start_with_config(make_app, "127.0.0.1:0".parse().unwrap(), config)
             .unwrap();
 
     let addr = server.local_addr();
@@ -63,7 +66,7 @@ fn start_h2_server_with_config(
 
 #[monoio::test]
 async fn h2_basic_get() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let (addr, _server) = start_h2_server(app);
 
     use monoio::net::TcpStream;
@@ -108,7 +111,7 @@ async fn h2_basic_get() {
 
 #[monoio::test]
 async fn h2_post_with_body() {
-    let app = App::new().post("/echo", echo_body);
+    let app = || App::new().post("/echo", echo_body);
     let (addr, _server) = start_h2_server(app);
 
     use monoio::net::TcpStream;
@@ -152,7 +155,7 @@ async fn h2_post_with_body() {
 
 #[monoio::test]
 async fn h2_not_found() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let (addr, _server) = start_h2_server(app);
 
     use monoio::net::TcpStream;
@@ -193,7 +196,7 @@ async fn h2_not_found() {
 
 #[monoio::test]
 async fn h2_preserves_response_headers() {
-    let app = App::new().get("/hello", hello_with_headers);
+    let app = || App::new().get("/hello", hello_with_headers);
     let (addr, _server) = start_h2_server(app);
 
     use monoio::net::TcpStream;
@@ -229,7 +232,7 @@ async fn h2_preserves_response_headers() {
 
 #[monoio::test]
 async fn h2_body_limit_returns_413() {
-    let app = App::new().max_body_size(5).post("/echo", echo_body);
+    let app = || App::new().max_body_size(5).post("/echo", echo_body);
     let (addr, _server) = start_h2_server(app);
 
     use monoio::net::TcpStream;
@@ -269,7 +272,7 @@ async fn h2_body_limit_returns_413() {
 
 #[test]
 fn h2_handshake_timeout_closes_idle_socket() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let (addr, _server) = start_h2_server_with_config(
         app,
         harrow_server_monoio::ServerConfig {
@@ -321,7 +324,7 @@ fn h2_handshake_timeout_closes_idle_socket() {
 
 #[monoio::test]
 async fn h2_idle_keepalive_timeout_closes_connection() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let (addr, _server) = start_h2_server_with_config(
         app,
         harrow_server_monoio::ServerConfig {
@@ -384,7 +387,7 @@ async fn h2_idle_keepalive_timeout_closes_connection() {
 
 #[monoio::test]
 async fn h2_connection_timeout_closes_connection() {
-    let app = App::new().get("/hello", hello);
+    let app = || App::new().get("/hello", hello);
     let (addr, _server) = start_h2_server_with_config(
         app,
         harrow_server_monoio::ServerConfig {

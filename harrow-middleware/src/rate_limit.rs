@@ -1,7 +1,7 @@
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use harrow_core::handler::HandlerFuture;
 use harrow_core::middleware::{Middleware, Next};
 use harrow_core::request::Request;
 use harrow_core::response::Response;
@@ -113,7 +113,7 @@ impl<K: KeyExtractor, B: RateLimitBackend> RateLimitMiddleware<K, B> {
 }
 
 impl<K: KeyExtractor, B: RateLimitBackend> Middleware for RateLimitMiddleware<K, B> {
-    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> HandlerFuture {
         let key = self.key_extractor.extract(&req);
 
         match key {
@@ -172,6 +172,7 @@ mod tests {
     use super::*;
     use harrow_core::path::PathMatch;
     use harrow_core::state::TypeMap;
+    use proptest::prelude::*;
     use std::sync::Arc;
 
     fn make_request(headers: &[(&str, &str)]) -> Request {
@@ -220,5 +221,37 @@ mod tests {
         assert_eq!(ns_to_secs_ceil(1_000_000_000), 1);
         assert_eq!(ns_to_secs_ceil(1_000_000_001), 2);
         assert_eq!(ns_to_secs_ceil(2_500_000_000), 3);
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_ns_to_secs_ceil_is_true_ceil(ns in any::<u64>()) {
+            let ceil = ns_to_secs_ceil(ns);
+
+            prop_assert!(
+                ceil.saturating_mul(1_000_000_000) >= ns,
+                "ceil result underestimates for ns={ns} ceil={ceil}"
+            );
+
+            if ns > 0 {
+                prop_assert!(
+                    ceil > 0,
+                    "positive ns produced zero ceil result for ns={ns}"
+                );
+                prop_assert!(
+                    (ceil - 1).saturating_mul(1_000_000_000) < ns,
+                    "ceil result is not minimal for ns={ns} ceil={ceil}"
+                );
+            }
+        }
+
+        #[test]
+        fn proptest_ns_to_secs_ceil_is_monotonic(a in any::<u64>(), b in any::<u64>()) {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            prop_assert!(
+                ns_to_secs_ceil(lo) <= ns_to_secs_ceil(hi),
+                "ceil should be monotonic for lo={lo} hi={hi}"
+            );
+        }
     }
 }

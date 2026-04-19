@@ -1,16 +1,20 @@
 [workspace]
 resolver = "2"
-exclude = ["harrow-core/fuzz"]
+exclude = ["harrow-core/fuzz", "harrow-codec-h1/fuzz", "harrow-middleware/fuzz"]
 members = [
     "harrow",
     "harrow-core",
     "harrow-middleware",
     "harrow-o11y",
     "harrow-serde",
+    "harrow-server",
     "harrow-server-tokio",
     "harrow-server-monoio",
+    "harrow-codec-h1",
+    "harrow-io",
     "harrow-server-meguri",
     "harrow-bench",
+    "ntex-compio-bench",
     "meguri",
 ]
 
@@ -22,6 +26,9 @@ repository = "https://github.com/vectorian-rs/harrow"
 readme = "README.md"
 
 [workspace.dependencies]
+harrow-codec-h1 = { path = "harrow-codec-h1", version = "0.9.6" }
+harrow-io = { path = "harrow-io", version = "0.9.6" }
+harrow-server = { path = "harrow-server", version = "0.9.6" }
 harrow-core = { path = "harrow-core", version = "0.9.6" }
 harrow-o11y = { path = "harrow-o11y", version = "0.9.6" }
 harrow-middleware = { path = "harrow-middleware", version = "0.9.6" }
@@ -43,9 +50,9 @@ serde_json = "1"
 rmp-serde = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-rolly = "0.14"
-rolly-tokio = "0.14"
-rolly-monoio = "0.14"
+rolly = "0.16"
+rolly-tokio = "0.16"
+rolly-monoio = "0.16"
 axum = "0.8"
 futures-util = "0.3"
 percent-encoding = "2"

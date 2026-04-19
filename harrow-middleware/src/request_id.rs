@@ -1,7 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use harrow_core::handler::HandlerFuture;
 use harrow_core::middleware::{Middleware, Next};
 use harrow_core::request::Request;
 use harrow_core::response::Response;
@@ -36,7 +35,7 @@ pub struct RequestIdMiddleware {
 }
 
 impl Middleware for RequestIdMiddleware {
-    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> HandlerFuture {
         let header = Arc::clone(&self.header);
         Box::pin(async move { run(&header, req, next).await })
     }

@@ -4,6 +4,8 @@ version = "0.0.0"
 publish = false
 edition = "2024"
 
+[workspace]
+
 [package.metadata]
 cargo-fuzz = true
 
@@ -17,4 +19,9 @@ http-body-util = "0.1"
 [[bin]]
 name = "fuzz_query_parsing"
 path = "fuzz_targets/fuzz_query_parsing.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_path_matching"
+path = "fuzz_targets/fuzz_path_matching.rs"
 doc = false

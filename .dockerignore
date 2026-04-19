@@ -12,10 +12,20 @@
 !harrow/src/
 !harrow/src/**
 
+!harrow-codec-h1/
+!harrow-codec-h1/Cargo.toml
+!harrow-codec-h1/src/
+!harrow-codec-h1/src/**
+
 !harrow-core/
 !harrow-core/Cargo.toml
 !harrow-core/src/
 !harrow-core/src/**
+
+!harrow-io/
+!harrow-io/Cargo.toml
+!harrow-io/src/
+!harrow-io/src/**
 
 !harrow-middleware/
 !harrow-middleware/Cargo.toml
@@ -31,6 +41,11 @@
 !harrow-serde/Cargo.toml
 !harrow-serde/src/
 !harrow-serde/src/**
+
+!harrow-server/
+!harrow-server/Cargo.toml
+!harrow-server/src/
+!harrow-server/src/**
 
 !harrow-server-tokio/
 !harrow-server-tokio/Cargo.toml
@@ -58,3 +73,8 @@
 !harrow-bench/Cargo.toml
 !harrow-bench/src/
 !harrow-bench/src/**
+
+!ntex-compio-bench/
+!ntex-compio-bench/Cargo.toml
+!ntex-compio-bench/src/
+!ntex-compio-bench/src/**

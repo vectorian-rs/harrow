@@ -38,11 +38,12 @@ pub async fn catch_panic_middleware(req: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use harrow_core::handler::HandlerFuture;
     use harrow_core::path::PathMatch;
     use harrow_core::state::TypeMap;
     use std::sync::Arc;
 
-    fn call(req: Request, next: Next) -> impl std::future::Future<Output = Response> + Send {
+    fn call(req: Request, next: Next) -> HandlerFuture {
         harrow_core::middleware::Middleware::call(&catch_panic_middleware, req, next)
     }
 

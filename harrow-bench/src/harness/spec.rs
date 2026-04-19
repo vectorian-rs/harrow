@@ -111,7 +111,8 @@ impl ImplementationRegistry {
                 path.display()
             )
         })?;
-        toml::from_str(&text).map_err(|e| {
+        let expanded = expand_registry_vars(&text);
+        toml::from_str(&expanded).map_err(|e| {
             format!(
                 "failed to parse implementation registry {}: {e}",
                 path.display()
@@ -122,6 +123,13 @@ impl ImplementationRegistry {
     pub fn get(&self, id: &str) -> Option<&ImplementationSpec> {
         self.implementations.iter().find(|spec| spec.id == id)
     }
+}
+
+fn expand_registry_vars(text: &str) -> String {
+    text.replace(
+        "${HARROW_VERSION}",
+        &std::env::var("HARROW_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

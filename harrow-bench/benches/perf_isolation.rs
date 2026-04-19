@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 use harrow::App;
-use harrow_core::dispatch::{SharedState, dispatch};
+use harrow_core::dispatch::dispatch;
 use harrow_core::request::full_body;
 
 use harrow_bench::{
@@ -214,7 +214,7 @@ fn bench_connection_lifecycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("perf_isolation/connection_lifecycle");
 
     let harrow_addr = rt.block_on(async {
-        let app = App::new().get("/echo", text_handler);
+        let app = || App::new().get("/echo", text_handler);
         start_server(app).await
     });
 

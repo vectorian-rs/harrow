@@ -690,7 +690,7 @@ fn main() {
     // echo_text
     let r = measure_tcp(
         || async {
-            harrow_bench::start_server(App::new().get("/echo", harrow_bench::text_handler)).await
+            harrow_bench::start_server(|| App::new().get("/echo", harrow_bench::text_handler)).await
         },
         "/echo",
         200,
@@ -704,7 +704,7 @@ fn main() {
     // echo_json
     let r = measure_tcp(
         || async {
-            harrow_bench::start_server(App::new().get("/echo", harrow_bench::json_handler)).await
+            harrow_bench::start_server(|| App::new().get("/echo", harrow_bench::json_handler)).await
         },
         "/echo",
         200,
@@ -718,7 +718,7 @@ fn main() {
     // echo_json_1kb
     let r = measure_tcp(
         || async {
-            harrow_bench::start_server(App::new().get("/echo", harrow_bench::json_1kb_handler))
+            harrow_bench::start_server(|| App::new().get("/echo", harrow_bench::json_1kb_handler))
                 .await
         },
         "/echo",
@@ -733,7 +733,7 @@ fn main() {
     // echo_json_10kb
     let r = measure_tcp(
         || async {
-            harrow_bench::start_server(App::new().get("/echo", harrow_bench::json_10kb_handler))
+            harrow_bench::start_server(|| App::new().get("/echo", harrow_bench::json_10kb_handler))
                 .await
         },
         "/echo",
@@ -748,7 +748,7 @@ fn main() {
     // echo_param
     let r = measure_tcp(
         || async {
-            harrow_bench::start_server(App::new().get("/users/:id", harrow_bench::text_handler))
+            harrow_bench::start_server(|| App::new().get("/users/:id", harrow_bench::text_handler))
                 .await
         },
         "/users/42",
@@ -763,7 +763,7 @@ fn main() {
     // echo_404
     let r = measure_tcp(
         || async {
-            harrow_bench::start_server(App::new().get("/echo", harrow_bench::text_handler)).await
+            harrow_bench::start_server(|| App::new().get("/echo", harrow_bench::text_handler)).await
         },
         "/nope",
         404,
@@ -780,15 +780,15 @@ fn main() {
             let counter = std::sync::Arc::new(harrow_bench::HitCounter(
                 std::sync::atomic::AtomicUsize::new(0),
             ));
-            harrow_bench::start_server(
+            harrow_bench::start_server(move || {
                 App::new()
                     .state(counter)
                     .middleware(harrow_bench::timing_middleware)
                     .middleware(harrow_bench::header_middleware)
                     .middleware(harrow_bench::noop_middleware)
                     .get("/users/:id", harrow_bench::param_state_handler)
-                    .get("/health", harrow_bench::text_handler),
-            )
+                    .get("/health", harrow_bench::text_handler)
+            })
             .await
         },
         "/users/42",
@@ -806,15 +806,15 @@ fn main() {
             let counter = std::sync::Arc::new(harrow_bench::HitCounter(
                 std::sync::atomic::AtomicUsize::new(0),
             ));
-            harrow_bench::start_server(
+            harrow_bench::start_server(move || {
                 App::new()
                     .state(counter)
                     .middleware(harrow_bench::timing_middleware)
                     .middleware(harrow_bench::header_middleware)
                     .middleware(harrow_bench::noop_middleware)
                     .get("/users/:id", harrow_bench::param_state_handler)
-                    .get("/health", harrow_bench::text_handler),
-            )
+                    .get("/health", harrow_bench::text_handler)
+            })
             .await
         },
         "/health",
@@ -829,11 +829,14 @@ fn main() {
     // mw_depth_10
     let r = measure_tcp(
         || async {
-            let mut app = App::new();
-            for _ in 0..10 {
-                app = app.middleware(harrow_bench::noop_middleware);
-            }
-            harrow_bench::start_server(app.get("/echo", harrow_bench::text_handler)).await
+            harrow_bench::start_server(|| {
+                let mut app = App::new();
+                for _ in 0..10 {
+                    app = app.middleware(harrow_bench::noop_middleware);
+                }
+                app.get("/echo", harrow_bench::text_handler)
+            })
+            .await
         },
         "/echo",
         200,
@@ -855,11 +858,11 @@ fn main() {
             || async {
                 let store = harrow_bench::InMemorySessionStore::new();
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
-                        .get("/echo", harrow_bench::session_set_handler),
-                )
+                        .get("/echo", harrow_bench::session_set_handler)
+                })
                 .await
             },
             "/echo",
@@ -876,11 +879,11 @@ fn main() {
             || async {
                 let store = harrow_bench::InMemorySessionStore::new();
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
-                        .get("/echo", harrow_bench::session_noop_handler),
-                )
+                        .get("/echo", harrow_bench::session_noop_handler)
+                })
                 .await
             },
             "/echo",
@@ -899,11 +902,11 @@ fn main() {
                 let store = harrow_bench::InMemorySessionStore::new();
                 harrow_bench::seed_bench_session(&store).await;
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
-                        .get("/echo", harrow_bench::session_get_handler),
-                )
+                        .get("/echo", harrow_bench::session_get_handler)
+                })
                 .await
             },
             "/echo",
@@ -923,11 +926,11 @@ fn main() {
                 let store = harrow_bench::InMemorySessionStore::new();
                 harrow_bench::seed_bench_session(&store).await;
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
-                        .get("/echo", harrow_bench::session_write_handler),
-                )
+                        .get("/echo", harrow_bench::session_write_handler)
+                })
                 .await
             },
             "/echo",
@@ -947,12 +950,12 @@ fn main() {
                 let store = harrow_bench::InMemorySessionStore::new();
                 harrow_bench::seed_bench_session(&store).await;
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
                         .middleware(harrow_bench::noop_middleware)
-                        .get("/echo", harrow_bench::session_get_handler),
-                )
+                        .get("/echo", harrow_bench::session_get_handler)
+                })
                 .await
             },
             "/echo",
@@ -968,9 +971,9 @@ fn main() {
         // realistic_stack_baseline: 1KB text body and realistic headers, but no middleware
         let r = measure_tcp_with_headers(
             || async {
-                harrow_bench::start_server(
-                    App::new().get("/echo", harrow_bench::large_text_handler),
-                )
+                harrow_bench::start_server(|| {
+                    App::new().get("/echo", harrow_bench::large_text_handler)
+                })
                 .await
             },
             "/echo",
@@ -993,13 +996,13 @@ fn main() {
                 let store = harrow_bench::InMemorySessionStore::new();
                 harrow_bench::seed_bench_session(&store).await;
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
                         .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
                         .middleware(harrow::compression_middleware)
-                        .get("/echo", harrow_bench::session_large_get_handler),
-                )
+                        .get("/echo", harrow_bench::session_large_get_handler)
+                })
                 .await
             },
             "/echo",
@@ -1023,13 +1026,13 @@ fn main() {
                 let store = harrow_bench::InMemorySessionStore::new();
                 harrow_bench::seed_bench_session(&store).await;
                 let config = harrow_bench::bench_session_config();
-                harrow_bench::start_server(
+                harrow_bench::start_server(move || {
                     App::new()
                         .middleware(harrow::session_middleware(store, config))
                         .middleware(harrow::cors_middleware(harrow::CorsConfig::default()))
                         .middleware(harrow::compression_middleware)
-                        .get("/echo", harrow_bench::session_large_write_handler),
-                )
+                        .get("/echo", harrow_bench::session_large_write_handler)
+                })
                 .await
             },
             "/echo",

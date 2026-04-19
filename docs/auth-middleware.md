@@ -478,7 +478,7 @@ impl harrow_core::middleware::Middleware for ApiKeyMiddleware {
         &self,
         req: Request,
         next: Next,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response>>> {
         let store = Arc::clone(&self.store);
         let location = self.location.clone();
 

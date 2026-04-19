@@ -3,12 +3,13 @@ use std::borrow::Cow;
 use bytes::{Bytes, BytesMut};
 use futures_util::Stream;
 use http::StatusCode;
-use http_body_util::combinators::BoxBody;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 
-/// The response body type. Both buffered and streaming paths go through `BoxBody`
-/// so that all body types share a uniform `Body` impl for hyper's `serve_connection`.
-pub type ResponseBody = BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+/// The response body type. Both buffered and streaming paths go through
+/// `UnsyncBoxBody` so all body types share a uniform `Body` impl without
+/// requiring cross-thread sharing on the hot path.
+pub type ResponseBody = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Harrow's response wrapper. Built via chained methods, no builder traits.
 pub struct Response {
@@ -19,15 +20,18 @@ pub struct Response {
 /// mapped away at zero cost since it can never occur.
 fn full_to_body(full: Full<Bytes>) -> ResponseBody {
     full.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { match e {} })
-        .boxed()
+        .boxed_unsync()
 }
 
 impl Response {
     /// Create a response with the given status and body.
     pub fn new(status: StatusCode, body: impl Into<Bytes>) -> Self {
-        let body = full_to_body(Full::new(body.into()));
+        let body = body.into();
+        let content_length = body.len();
+        let body = full_to_body(Full::new(body));
         let inner = http::Response::builder()
             .status(status)
+            .header(http::header::CONTENT_LENGTH, content_length)
             .body(body)
             .expect("valid response");
         Self { inner }
@@ -36,13 +40,11 @@ impl Response {
     /// Create a streaming response from a `Stream` of `Frame<Bytes>`.
     pub fn streaming<S>(status: StatusCode, stream: S) -> Self
     where
-        S: Stream<
-                Item = Result<hyper::body::Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>,
-            > + Send
-            + Sync
+        S: Stream<Item = Result<http_body::Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>
+            + Send
             + 'static,
     {
-        let body = StreamBody::new(stream).boxed();
+        let body = StreamBody::new(stream).boxed_unsync();
         let inner = http::Response::builder()
             .status(status)
             .body(body)
@@ -264,6 +266,13 @@ mod tests {
     async fn new_sets_status_and_body() {
         let resp = Response::new(StatusCode::CREATED, "created");
         assert_eq!(resp.status_code(), StatusCode::CREATED);
+        assert_eq!(
+            resp.inner()
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some("7")
+        );
         assert_eq!(body_bytes(resp).await, Bytes::from("created"));
     }
 
@@ -271,6 +280,13 @@ mod tests {
     async fn ok_returns_200_empty() {
         let resp = Response::ok();
         assert_eq!(resp.status_code(), StatusCode::OK);
+        assert_eq!(
+            resp.inner()
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some("0")
+        );
         assert_eq!(body_bytes(resp).await, Bytes::new());
     }
 
@@ -282,6 +298,13 @@ mod tests {
         assert_eq!(
             inner.headers().get(http::header::CONTENT_TYPE).unwrap(),
             "text/plain; charset=utf-8"
+        );
+        assert_eq!(
+            inner
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some("5")
         );
         let body = inner.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(body, Bytes::from("hello"));
@@ -422,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_response_collects_frames() {
-        use hyper::body::Frame;
+        use http_body::Frame;
         let chunks = vec![
             Ok(Frame::data(Bytes::from("hello "))),
             Ok(Frame::data(Bytes::from("world"))),

@@ -1,4 +1,8 @@
-//! Unified performance test orchestrator.
+//! Unified direct performance test orchestrator.
+//!
+//! This is the one-shot runner used by the `bench:baseline:*` and
+//! `bench:perf:*` mise tasks. It is intentionally narrower than the
+//! registry/suite-driven `bench-single` and `bench-compare` binaries.
 //!
 //! Supports both local (single-node) and remote (multi-node) deployments,
 //! using the spinr load generator.
@@ -1223,11 +1227,11 @@ fn stop_and_collect_profilers(args: &Args, key: &str) {
          fi",
     );
 
-    if let Ok(o) = &collapse_result {
-        if !o.status.success() {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!("    warning: collapse failed: {}", stderr.trim());
-        }
+    if let Ok(o) = &collapse_result
+        && !o.status.success()
+    {
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        eprintln!("    warning: collapse failed: {}", stderr.trim());
     }
 
     // Collect only the compact artifacts.

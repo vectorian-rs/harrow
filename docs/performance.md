@@ -1,20 +1,104 @@
-# Harrow Performance Baseline
+# Harrow Performance Notes
 
 **Date:** 2026-02-20
-**Harrow version:** 0.1.0-dev
+**Historical baseline version:** 0.1.0-dev
 **Platform:** macOS (Darwin 24.6.0), Apple Silicon
 **Rust:** edition 2024, release profile (`opt-level = 3`, `lto = "thin"`, `debug = true`)
 **Benchmark tools:** criterion 0.5; `spinr` + `harrow-bench` for remote perf runs
 
+This document is a historical baseline from Harrow's earlier Hyper/Tokio phase.
+Current runtime-direction decisions live in
+[`docs/strategy-local-workers.md`](./strategy-local-workers.md) and
+[`docs/article.md`](./article.md).
+
 ---
 
-## How to reproduce
+## Current Benchmark Workflow
+
+Use the benchmark surface in [mise.toml](/Users/l1x/code/home/vectorian-rs/harrow/mise.toml:1) for the current workflow. There is no single `bench:run` task anymore.
+
+### Local Microbenchmarks
 
 ```bash
-# Run all benchmarks
 cargo bench
+cargo bench --bench echo
+cargo bench --bench middleware_chain
+cargo bench --bench full_stack
+cargo bench --bench route_groups
+```
 
-# Run individual suites
+Criterion output is written to `target/criterion/`.
+
+### Remote Harrow vs ntex
+
+The shortest current path for the Tokio/local-worker comparison is:
+
+```bash
+mise run bench:verify
+mise run bench:baseline:all
+mise run bench:perf:all
+mise run bench:compare:harrow-vs-ntex
+```
+
+What each task does:
+
+- `bench:verify`: checks the benchmark hosts and OS tuning.
+- `bench:baseline:all`: runs direct `harrow-remote-perf-test` baseline captures for Harrow Tokio and ntex Tokio using `spinr`.
+- `bench:perf:all`: reruns the same direct comparison with `perf` capture enabled.
+- `bench:compare:harrow-vs-ntex`: runs the broader suite comparison through `bench-compare` and `harrow-bench/suites/framework-comparison.toml`.
+
+### Full Suite And Registry-Driven Runs
+
+Use the `bench:run:*` tasks when you want the registry/suite workflow rather than the direct Harrow-vs-ntex runner:
+
+```bash
+mise run bench:run:harrow-tokio-mimalloc
+mise run bench:run:ntex-tokio-mimalloc
+mise run bench:run:all
+```
+
+These tasks use:
+
+- [harrow-bench/implementations.toml](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/implementations.toml:1)
+- [harrow-bench/suites/framework-comparison.toml](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/suites/framework-comparison.toml:1)
+- [harrow-bench/src/bin/bench_single.rs](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/src/bin/bench_single.rs:1)
+- [harrow-bench/src/bin/bench_compare.rs](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/src/bin/bench_compare.rs:1)
+
+### Results And Re-rendering
+
+Remote runs write results under `docs/perf/<instance-type>/<timestamp>/`.
+
+To re-render a captured run:
+
+```bash
+cargo run -p harrow-bench --bin render-perf-summary -- docs/perf/<instance>/<timestamp>
+```
+
+### Direct Runner
+
+The direct remote orchestrator used by `bench:baseline:*` and `bench:perf:*` is:
+
+```bash
+cargo run -p harrow-bench --release --bin harrow-remote-perf-test -- \
+  --mode remote \
+  --server-ssh <server-public-ip> \
+  --client-ssh <client-public-ip> \
+  --server-private <server-private-ip> \
+  --instance-type c8gn.12xlarge \
+  --framework harrow \
+  --backend tokio \
+  --allocator mimalloc \
+  --duration 30 \
+  --warmup 5 \
+  --config harrow-bench/spinr/text-c128.toml
+```
+
+---
+
+## Historical Reproduction Notes
+
+```bash
+cargo bench
 cargo bench --bench echo
 cargo bench --bench middleware_chain
 cargo bench --bench full_stack
@@ -40,11 +124,8 @@ cargo run -p harrow-bench --bin harrow-remote-perf-test -- \
   --config harrow-bench/spinr/text-c128.toml \
   --config harrow-bench/spinr/json-1kb-c128.toml
 
-# Or use the checked-in task wrapper
-mise run bench:run
-
 # Re-render a results directory later if needed
-cargo run -p harrow-bench --bin render_perf_summary -- docs/perf/<instance>/<timestamp>
+cargo run -p harrow-bench --bin render-perf-summary -- docs/perf/<instance>/<timestamp>
 ```
 
 By default, the runner writes results under `docs/perf/<instance-type>/<timestamp>/`.
@@ -323,7 +404,10 @@ Based on these measurements, the per-request overhead budget for Harrow:
 | Response construction | < 100 ns | ~50 ns |
 | **Total framework overhead** | **< 3 µs** | **~2 µs typical** |
 
-The PRD target of "< 1 µs added latency over raw Hyper" is met for the echo workload (param extraction + route match). The full-stack workload with middleware and JSON is ~2 µs, which is within the spirit of the target given that middleware and serialization are user-chosen costs.
+The historical PRD target of "< 1 µs added latency over raw Hyper" was met for
+the echo workload (param extraction + route match). The full-stack workload
+with middleware and JSON is ~2 µs, which was within the spirit of that earlier
+target given that middleware and serialization are user-chosen costs.
 
 ---
 

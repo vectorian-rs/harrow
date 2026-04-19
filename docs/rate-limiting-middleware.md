@@ -35,8 +35,8 @@ middleware system. Harrow does not use Tower, so all designs target harrow's
 native `Middleware` trait:
 
 ```rust
-pub trait Middleware: Send + Sync {
-    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>>;
+pub trait Middleware {
+    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response>>>;
 }
 ```
 
@@ -1096,7 +1096,7 @@ pub struct RateLimitMiddleware<K: KeyExtractor, B: RateLimitBackend> {
 }
 
 impl<K: KeyExtractor, B: RateLimitBackend> Middleware for RateLimitMiddleware<K, B> {
-    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response>>> {
         let config = Arc::clone(&self.config);
         let backend = Arc::clone(&self.backend);
 

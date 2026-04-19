@@ -1,0 +1,44 @@
+[package]
+name = "harrow-codec-h1-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+harrow-codec-h1 = { path = ".." }
+bytes = "1"
+http = "1"
+
+[[bin]]
+name = "fuzz_parse_request"
+path = "fuzz_targets/fuzz_parse_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_chunked_decode"
+path = "fuzz_targets/fuzz_chunked_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_response_head"
+path = "fuzz_targets/fuzz_response_head.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_payload_decoder"
+path = "fuzz_targets/fuzz_payload_decoder.rs"
+test = false
+doc = false
+bench = false

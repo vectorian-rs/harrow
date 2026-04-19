@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn content_length_removed() {
+    async fn content_length_recomputed_for_compressed_body() {
         let next = Next::new(|_req| {
             Box::pin(async {
                 let body = "x".repeat(1024);
@@ -327,7 +327,14 @@ mod tests {
         let resp = Middleware::call(&compression_middleware, req, next).await;
         let inner = resp.into_inner();
         assert_eq!(inner.headers().get("content-encoding").unwrap(), "gzip");
-        assert!(inner.headers().get("content-length").is_none());
+        let content_length = inner
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+            .expect("compressed response should have a recomputed content-length");
+        assert!(content_length > 0);
+        assert!(content_length < 1024);
     }
 
     #[tokio::test]

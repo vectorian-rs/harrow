@@ -1,23 +1,23 @@
 use std::future::Future;
-use std::pin::Pin;
+use std::rc::Rc;
 
+use crate::handler::HandlerFuture;
 use crate::request::Request;
 use crate::response::Response;
 
-/// A boxed, `Send` future that resolves to a `Response`.
-type BoxFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+type BoxFuture = HandlerFuture;
 
 /// A middleware function. Receives the request and a `Next` handle to call
 /// the remainder of the chain (or the final handler).
-pub trait Middleware: Send + Sync {
+pub trait Middleware {
     fn call(&self, req: Request, next: Next) -> BoxFuture;
 }
 
 /// Blanket impl: any matching async function is a Middleware.
 impl<F, Fut> Middleware for F
 where
-    F: Fn(Request, Next) -> Fut + Send + Sync,
-    Fut: Future<Output = Response> + Send + 'static,
+    F: Fn(Request, Next) -> Fut,
+    Fut: Future<Output = Response> + 'static,
 {
     fn call(&self, req: Request, next: Next) -> BoxFuture {
         Box::pin((self)(req, next))
@@ -26,11 +26,11 @@ where
 
 /// Handle to the next middleware or the final handler.
 pub struct Next {
-    inner: Box<dyn FnOnce(Request) -> BoxFuture + Send>,
+    inner: Box<dyn FnOnce(Request) -> BoxFuture>,
 }
 
 impl Next {
-    pub fn new(f: impl FnOnce(Request) -> BoxFuture + Send + 'static) -> Self {
+    pub fn new(f: impl FnOnce(Request) -> BoxFuture + 'static) -> Self {
         Self { inner: Box::new(f) }
     }
 
@@ -54,7 +54,7 @@ impl Next {
 /// ```
 pub fn map_request<F>(f: F) -> MapRequest<F>
 where
-    F: Fn(Request) -> Request + Send + Sync + 'static,
+    F: Fn(Request) -> Request + 'static,
 {
     MapRequest(f)
 }
@@ -63,7 +63,7 @@ pub struct MapRequest<F>(F);
 
 impl<F> Middleware for MapRequest<F>
 where
-    F: Fn(Request) -> Request + Send + Sync + 'static,
+    F: Fn(Request) -> Request + 'static,
 {
     fn call(&self, req: Request, next: Next) -> BoxFuture {
         let req = (self.0)(req);
@@ -80,19 +80,19 @@ where
 /// ```
 pub fn map_response<F>(f: F) -> MapResponse<F>
 where
-    F: Fn(Response) -> Response + Send + Sync + 'static,
+    F: Fn(Response) -> Response + 'static,
 {
-    MapResponse(std::sync::Arc::new(f))
+    MapResponse(Rc::new(f))
 }
 
-pub struct MapResponse<F>(std::sync::Arc<F>);
+pub struct MapResponse<F>(Rc<F>);
 
 impl<F> Middleware for MapResponse<F>
 where
-    F: Fn(Response) -> Response + Send + Sync + 'static,
+    F: Fn(Response) -> Response + 'static,
 {
     fn call(&self, req: Request, next: Next) -> BoxFuture {
-        let f = std::sync::Arc::clone(&self.0);
+        let f = Rc::clone(&self.0);
         Box::pin(async move {
             let resp = next.run(req).await;
             (f)(resp)
@@ -110,7 +110,7 @@ where
 /// ```
 pub fn when<P, M>(predicate: P, middleware: M) -> When<P, M>
 where
-    P: Fn(&Request) -> bool + Send + Sync + 'static,
+    P: Fn(&Request) -> bool + 'static,
     M: Middleware + 'static,
 {
     When {
@@ -126,7 +126,7 @@ pub struct When<P, M> {
 
 impl<P, M> Middleware for When<P, M>
 where
-    P: Fn(&Request) -> bool + Send + Sync + 'static,
+    P: Fn(&Request) -> bool + 'static,
     M: Middleware + 'static,
 {
     fn call(&self, req: Request, next: Next) -> BoxFuture {
@@ -148,7 +148,7 @@ where
 /// ```
 pub fn unless<P, M>(predicate: P, middleware: M) -> Unless<P, M>
 where
-    P: Fn(&Request) -> bool + Send + Sync + 'static,
+    P: Fn(&Request) -> bool + 'static,
     M: Middleware + 'static,
 {
     Unless {
@@ -164,7 +164,7 @@ pub struct Unless<P, M> {
 
 impl<P, M> Middleware for Unless<P, M>
 where
-    P: Fn(&Request) -> bool + Send + Sync + 'static,
+    P: Fn(&Request) -> bool + 'static,
     M: Middleware + 'static,
 {
     fn call(&self, req: Request, next: Next) -> BoxFuture {

@@ -1,7 +1,7 @@
 # Harrow Performance Journal
 
 **Status:** living document  
-**Last updated:** 2026-04-05
+**Last updated:** 2026-04-19
 
 This is not a launch post and not a benchmark victory lap. It is a dated
 engineering log for Harrow's performance work: what we measured, what moved the
@@ -21,6 +21,25 @@ reconstructing it from commit history and half-remembered flamegraphs.
 - Making those timers optional and disabling them in the benchmark servers
   moved Harrow from **501,742 -> 1,041,052 RPS** on `/text` and
   **589,757 -> 967,501 RPS** on `/json/1kb` on `c8g.12xlarge`.
+- After the custom HTTP/1 backend work and the Monoio results, the larger
+  architectural direction became clear: Harrow should move toward
+  **local-worker runtimes, explicit dispatchers, and bounded payload
+  backpressure** in the nginx/ntex sense.
+- On 2026-04-17, the first Harrow-vs-`ntex` Tokio benchmark after the custom
+  backend rewrite looked catastrophically slow, but the first diagnosis was not
+  "Tokio is too slow." It was **benchmark shape mismatch**: Harrow was still
+  being measured through the wrong server entrypoint.
+- After switching the benchmark server to Harrow's actual local-worker path,
+  the remaining gap shrank dramatically and the evidence narrowed to the
+  **write path**: Harrow was still issuing about **2.3 `sendto()` syscalls per
+  request** while `ntex` was closer to **1.1-1.2**.
+- On 2026-04-19, the last big Tokio gap on `/text` turned out not to be "Tokio
+  cannot match `ntex`" or even "the write runner is still too naive." The hot
+  path was still being sent **chunked** because `Response::new(...)` did not set
+  `Content-Length` for fully buffered bodies.
+- Fixing that one framing bug moved Harrow Tokio from about
+  **786k-841k rps** to about **1.72M-1.73M rps** on the non-`perf` `/text`
+  benchmark, essentially eliminating the old baseline gap with `ntex`.
 - We also benchmarked the middleware architecture directly instead of arguing in
   the abstract. Pure Tower-style static layers are effectively allocation-flat.
   Harrow's dynamic middleware costs about **+728 bytes and +2 allocs per noop
@@ -31,8 +50,9 @@ reconstructing it from commit history and half-remembered flamegraphs.
 
 ## What Harrow Is Optimizing For
 
-Harrow is trying to be a thin, macro-free HTTP framework on top of Hyper.
-There are three design constraints:
+Harrow is trying to be a thin, macro-free HTTP framework with explicit
+application APIs and backend-owned transport/runtime control. There are three
+design constraints:
 
 1. Framework overhead should stay below transport and application noise.
 2. The fast path should be understandable without Tower-level type archaeology.
@@ -189,14 +209,14 @@ article.
 Today Harrow's middleware API is intentionally dynamic:
 
 ```rust
-type BoxFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+type BoxFuture = Pin<Box<dyn Future<Output = Response>>>;
 
-pub trait Middleware: Send + Sync {
+pub trait Middleware {
     fn call(&self, req: Request, next: Next) -> BoxFuture;
 }
 
 pub struct Next {
-    inner: Box<dyn FnOnce(Request) -> BoxFuture + Send>,
+    inner: Box<dyn FnOnce(Request) -> BoxFuture>,
 }
 ```
 
@@ -820,8 +840,9 @@ batching is a future optimization when the ecosystem catches up.
 ## 2026-03-31: body_read_timeout for Tokio Backend
 
 Added `body_read_timeout` to `harrow-server-tokio`'s `ServerConfig`.
-When configured, wraps the hyper `Incoming` body in a `TimeoutBody`
-that enforces a per-frame read deadline. A slow body sender (e.g.,
+At that point the Tokio backend was still Hyper-based, so the implementation
+wrapped Hyper's `Incoming` body in a `TimeoutBody` that enforced a per-frame
+read deadline. A slow body sender (e.g.,
 sending 1 byte/sec within the size limit) is terminated with a 400
 error after the timeout expires.
 
@@ -1262,6 +1283,257 @@ No `.unwrap()`, no `.map_err()`. Missing state returns 500, bad body returns
 - **0.9.3**: `From<ProblemDetail> for Response`, consistent import style,
   removed unused test imports, added README to crate packages.
 - **0.9.4**: MIT license file, CHANGELOG.md, README version updates.
+
+## 2026-04-15: Chosen Runtime Direction — Local Workers
+
+The Monoio numbers were already pointing in one direction: the gain was coming
+from local ownership and the thread-per-core execution model, not from
+`io_uring` by itself.
+
+The custom HTTP/1 backend work made that direction actionable for Tokio too.
+Once Harrow owned the connection loop, request-body pump, and response write
+path, the remaining question was what runtime shape best fits that transport
+design.
+
+Reading `ntex` made the answer obvious. Its Tokio path still uses `LocalSet`,
+`spawn_local`, the same HTTP/1 dispatcher, and the same local payload queue.
+Tokio is not locked to a generic work-stealing server model. The useful pattern
+is:
+
+- keep connection ownership local to one worker
+- keep parser state, payload state, and response state local to that worker
+- stop reading request-body bytes when the handler-side buffer is full
+- resume only when the handler drains enough buffered data
+
+That is the part of the nginx/ntex design space Harrow should copy.
+
+So the direction is now explicit:
+
+- Tokio should move toward per-worker `current_thread` runtimes plus
+  `LocalSet` and local tasks
+- Monoio should keep the same local-worker structure and finish the
+  byte-bounded request-body queue
+- Meguri should not be forced into this shape until it has streaming request
+  bodies
+
+This also changes how to read the earlier benchmark sections. The old Tokio
+numbers are still useful, but they are now baseline material for the
+pre-custom-backend, work-stealing implementation rather than the end state
+Harrow is aiming for.
+
+The gain we are chasing is broader than "Tokio timers were expensive." The real
+target is local ownership, explicit transport state machines, and bounded
+payload backpressure.
+
+## 2026-04-17: Slow -> Reason -> Solution on Tokio
+
+This was the first serious benchmark pass after the custom HTTP/1 rewrite and
+the move toward local-worker runtimes. It is worth documenting in the
+slow -> reason -> solution format because the first number looked disastrous and
+the wrong explanation would have sent the project in the wrong direction.
+
+### Slow
+
+The first remote Harrow-vs-`ntex` Tokio baseline on `c8gn.12xlarge` looked
+awful:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | `168,648.67 rps` | `0.94 ms` |
+| `ntex` Tokio | `1,775,624.97 rps` | `0.15 ms` |
+
+If those numbers had been real, the conclusion would have been that Harrow's
+Tokio backend was still fundamentally wrong.
+
+It was not.
+
+### Reason
+
+The first reason was not transport overhead. It was a benchmark bug.
+
+Harrow's benchmark server was still being launched through the single-runtime
+Tokio path, while the server backend had already moved to the local-worker
+runtime shape. In other words, we were benchmarking the wrong Harrow server.
+
+Switching the benchmark binary to `serve_multi_worker(...)` immediately changed
+the picture:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | about `801k-828k rps` | about `0.26-0.27 ms` |
+| `ntex` Tokio | about `1.78M-1.81M rps` | about `0.15 ms` |
+
+That did not close the gap, but it killed the false story. The huge slowdown
+was not "custom Harrow transport is broken." It was "the benchmark is not
+using the same runtime shape Harrow was designed for."
+
+Once the runtime path was corrected, the next diagnosis came from `perf stat`,
+`strace -c`, and flamegraphs:
+
+- scheduler-level signals were no longer dramatically different
+- request-body backpressure was not the dominant remaining cost
+- the write path still was
+
+The cleanest signal was syscall shape. Harrow was still at roughly
+`2.33 sendto()/request`, while `ntex` was much closer to `1.1-1.2`.
+
+That made the remaining problem narrower: not routing, not parsing, not the
+basic local-worker design, but **too many write escapes on the Tokio response
+path**.
+
+### Solution
+
+The solution was not one patch. It was a sequence of increasingly specific
+write-path changes.
+
+1. **Move the benchmark to the real Harrow Tokio runtime path.**
+   This was the biggest correction because it turned a misleading result into a
+   useful one.
+
+2. **Add a connection-local write buffer and coalesce small fixed responses.**
+   This removed the obvious "head write, body write, temp chunk vec" shape from
+   the common path.
+
+3. **Add a dedicated local write runner.**
+   This matched the `ntex` structure better, but by itself it did not
+   materially change throughput.
+
+4. **Encode response heads directly into the connection-local buffer.**
+   This removed an allocate-then-copy step for the header path.
+
+The important part is what actually moved:
+
+- perf-mode Harrow improved from roughly `22k rps` to roughly `29k rps`
+- Harrow `sendto()` count dropped from about `3.57 sendto()/request` to about
+  `2.33 sendto()/request`
+
+That means the response writer work was real and worth doing. It also means we
+can now say something precise about the remaining gap.
+
+### What Did Not Work
+
+Removing `PreparedResponse.head: Vec<u8>` and writing headers directly into the
+connection-local buffer was a good cleanup, but it did **not** materially move
+the benchmark. That is useful because it rules out a tempting but too-small
+explanation.
+
+The remaining Harrow-vs-`ntex` Tokio gap is still mostly about the **overall
+write/flush/syscall pattern**, not the cost of one header allocation.
+
+### What This Means
+
+The evidence chain is now much better than it was at the start of the day:
+
+- the old gigantic gap was mostly a benchmark-entrypoint mistake
+- the local-worker/nginx-`ntex` direction was the right architectural move
+- the remaining gap is real, but much narrower
+- the remaining target is the write side, especially flush policy and syscall
+  shape
+
+That is exactly the kind of outcome this document should preserve. We want the
+next optimization pass to start from the true remaining problem, not from the
+ghost of a bad benchmark setup.
+
+## 2026-04-19: The Hot Path Was Still Chunked
+
+This is the correction that matters most. The 2026-04-17 write-path work was
+not wasted, but it was also not the full answer.
+
+### Slow
+
+After the runtime-shape fix and the first response-writer cleanup pass, Harrow
+Tokio was still well behind `ntex` on the remote `/text` baseline:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | about `786k-841k rps` | about `0.27 ms` |
+| `ntex` Tokio | about `1.74M-1.79M rps` | about `0.16 ms` |
+
+The profiled runs had also improved, but Harrow was still behind there too:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | about `27.8k-28.9k rps` | about `7.8-10.6 ms` |
+| `ntex` Tokio | about `40.4k-41.4k rps` | about `3.6-3.7 ms` |
+
+At that point the working theory was still "Tokio output/syscall shape."
+
+### Reason
+
+The key realization was embarrassingly simple: `text-c128` means **128
+connections**, not "a 128-byte body." The hot benchmark route is just `/text`,
+and in Harrow that path returns a fully buffered `Response::text(...)`.
+
+The bug was in Harrow's core response construction:
+
+- `Response::new(status, body)` boxed a full body
+- but it did **not** set `Content-Length`
+- shared HTTP/1 response planning therefore treated those bodies as **chunked**
+  instead of fixed-length
+
+So the microbenchmark was not mostly measuring the residual cost of Harrow's
+write runner. It was measuring the cost of emitting chunked framing on the
+hot path where `ntex` was sending a tiny fixed-length response.
+
+That also explained why the earlier syscall diagnosis looked so stark. Harrow's
+remaining `sendto()` excess was real, but a big part of it came from choosing
+the wrong wire format for a fully known body.
+
+### Solution
+
+The fix was to make `Response::new(...)` set `Content-Length` automatically for
+fully buffered bodies.
+
+That immediately changed the `/text` hot path from chunked to fixed-length
+across backends that use Harrow's shared response type and shared HTTP/1
+planning logic.
+
+The numbers moved dramatically on the very next rerun:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | `1,731,499 rps` | `0.16 ms` |
+| `ntex` Tokio | `1,819,009 rps` | `0.15 ms` |
+
+Confirmation run:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | `1,722,245 rps` | `0.16 ms` |
+| `ntex` Tokio | `1,802,656 rps` | `0.16 ms` |
+
+The profiled runs moved too:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | `34,618 rps` | `6.92 ms` |
+| `ntex` Tokio | `40,452 rps` | `3.68 ms` |
+
+Confirmation run:
+
+| Framework | Throughput | p99 |
+|---|---:|---:|
+| Harrow Tokio | `34,253 rps` | `8.02 ms` |
+| `ntex` Tokio | `41,365 rps` | `3.62 ms` |
+
+Most importantly, the syscall picture converged too. On the new profiled run,
+Harrow was at about **1.17 `sendto()` per request**, which is effectively the
+same range as `ntex` on this workload.
+
+### What This Means
+
+This is the stronger lesson than "write buffering matters":
+
+- the nginx/`ntex` local-worker architecture work was still the right
+  direction
+- the response-writer cleanup was still useful
+- but the last dramatic gap was dominated by a **wire-format correctness bug**
+  on the hottest path
+
+That is exactly why performance work has to stay tied to protocol correctness.
+If you send the wrong HTTP framing, you can spend a long time "optimizing the
+writer" when the real problem is that the writer is doing extra work because
+the response was described incorrectly in the first place.
 
 ## What This Document Should Become
 

@@ -83,27 +83,8 @@ fn main() {
     let (bind, port, o11y, session, compression) = parse_args();
     let addr: std::net::SocketAddr = format!("{bind}:{port}").parse().unwrap();
 
-    let mut app = App::new()
-        .get("/text", text_handler)
-        .get("/text/128kb", harrow_bench::text_128kb_handler)
-        .get("/text/256kb", harrow_bench::text_256kb_handler)
-        .get("/text/512kb", harrow_bench::text_512kb_handler)
-        .get("/text/1mb", harrow_bench::text_1mb_handler)
-        .post("/echo", harrow_bench::echo_body_handler)
-        .get("/json/small", json_small_handler)
-        .get("/json/1kb", json_1kb_typed_handler)
-        .get("/json/10kb", json_10kb_typed_handler)
-        .get("/msgpack/small", msgpack_small_handler)
-        .get("/msgpack/1kb", msgpack_1kb_handler)
-        .get("/msgpack/10kb", msgpack_10kb_handler)
-        .get("/health", health);
-
-    if session {
-        use harrow::session_middleware;
-        use harrow_bench::{
-            InMemorySessionStore, bench_session_config, seed_bench_session, session_get_handler,
-            session_noop_handler, session_set_handler, session_write_handler,
-        };
+    let store = if session {
+        use harrow_bench::{InMemorySessionStore, seed_bench_session};
 
         let store = InMemorySessionStore::new();
         let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
@@ -114,26 +95,20 @@ fn main() {
             seed_bench_session(&store).await;
         });
 
-        app = app
-            .middleware(session_middleware(store, bench_session_config()))
-            .get("/session/noop", session_noop_handler)
-            .get("/session/set", session_set_handler)
-            .get("/session/get", session_get_handler)
-            .get("/session/write", session_write_handler);
-
         eprintln!("session middleware enabled (4 session routes)");
-    }
+        Some(store)
+    } else {
+        None
+    };
 
     if compression {
-        app = app.middleware(harrow::compression_middleware);
         eprintln!("compression middleware enabled");
     }
 
-    if o11y {
+    let o11y_config = if o11y {
         let otlp_endpoint =
             std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:4318".to_string());
 
-        use harrow::AppO11yExt;
         use harrow::o11y::init_telemetry;
         use harrow_o11y::O11yConfig;
 
@@ -143,13 +118,57 @@ fn main() {
             .environment("bench")
             .otlp_traces_endpoint(otlp_endpoint);
 
-        // Leak the guard so it lives for the process lifetime.
         let guard = init_telemetry(config.clone());
         std::mem::forget(guard);
 
-        app = app.o11y_middleware(config);
         eprintln!("o11y enabled");
-    }
+        Some(config)
+    } else {
+        None
+    };
+
+    let app = move || {
+        let mut app = App::new()
+            .get("/text", text_handler)
+            .get("/text/128kb", harrow_bench::text_128kb_handler)
+            .get("/text/256kb", harrow_bench::text_256kb_handler)
+            .get("/text/512kb", harrow_bench::text_512kb_handler)
+            .get("/text/1mb", harrow_bench::text_1mb_handler)
+            .post("/echo", harrow_bench::echo_body_handler)
+            .get("/json/small", json_small_handler)
+            .get("/json/1kb", json_1kb_typed_handler)
+            .get("/json/10kb", json_10kb_typed_handler)
+            .get("/msgpack/small", msgpack_small_handler)
+            .get("/msgpack/1kb", msgpack_1kb_handler)
+            .get("/msgpack/10kb", msgpack_10kb_handler)
+            .get("/health", health);
+
+        if let Some(store) = store.clone() {
+            use harrow::session_middleware;
+            use harrow_bench::{
+                bench_session_config, session_get_handler, session_noop_handler,
+                session_set_handler, session_write_handler,
+            };
+
+            app = app
+                .middleware(session_middleware(store, bench_session_config()))
+                .get("/session/noop", session_noop_handler)
+                .get("/session/set", session_set_handler)
+                .get("/session/get", session_get_handler)
+                .get("/session/write", session_write_handler);
+        }
+
+        if compression {
+            app = app.middleware(harrow::compression_middleware);
+        }
+
+        if let Some(config) = o11y_config.clone() {
+            use harrow::AppO11yExt;
+            app = app.o11y_middleware(config);
+        }
+
+        app
+    };
 
     let io_driver = harrow::runtime::monoio::detect_io_driver();
     eprintln!(

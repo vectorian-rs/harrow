@@ -1,6 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use harrow_core::handler::HandlerFuture;
 use harrow_core::middleware::{Middleware, Next};
 use harrow_core::request::Request;
 use harrow_core::response::Response;
@@ -22,7 +20,7 @@ pub fn body_limit_middleware(max_size: usize) -> BodyLimitMiddleware {
 }
 
 impl Middleware for BodyLimitMiddleware {
-    fn call(&self, mut req: Request, next: Next) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+    fn call(&self, mut req: Request, next: Next) -> HandlerFuture {
         let max_size = self.max_size;
         Box::pin(async move {
             if let Some(content_length) = req.header("content-length")

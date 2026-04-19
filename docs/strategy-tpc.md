@@ -4,6 +4,11 @@ Thread-per-core (TPC) pins each worker to a CPU core with its own event loop, el
 
 This document covers what TPC means for Harrow, the evidence for and against it, and how to adopt it.
 
+For the current Harrow architecture decision, read
+[`docs/strategy-local-workers.md`](./strategy-local-workers.md) first. This
+document remains the broader research note on TPC systems, tradeoffs, and prior
+art.
+
 ---
 
 ## 1. Why Thread-Per-Core

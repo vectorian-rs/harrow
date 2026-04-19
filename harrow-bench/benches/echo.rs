@@ -103,7 +103,7 @@ fn bench_echo_tcp(c: &mut Criterion) {
     // Text echo, 0 middleware
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/echo", text_handler);
+            let app = || App::new().get("/echo", text_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -122,7 +122,7 @@ fn bench_echo_tcp(c: &mut Criterion) {
     // JSON echo, 0 middleware
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/echo", json_handler);
+            let app = || App::new().get("/echo", json_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -141,7 +141,7 @@ fn bench_echo_tcp(c: &mut Criterion) {
     // Text echo with path param, 0 middleware
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/users/:id", text_handler);
+            let app = || App::new().get("/users/:id", text_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -160,7 +160,7 @@ fn bench_echo_tcp(c: &mut Criterion) {
     // JSON 1KB echo, 0 middleware
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/echo", json_1kb_handler);
+            let app = || App::new().get("/echo", json_1kb_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -179,7 +179,7 @@ fn bench_echo_tcp(c: &mut Criterion) {
     // JSON 10KB echo, 0 middleware
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/echo", json_10kb_handler);
+            let app = || App::new().get("/echo", json_10kb_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -198,7 +198,7 @@ fn bench_echo_tcp(c: &mut Criterion) {
     // 404 path (zero-alloc miss)
     let client = {
         let addr = rt.block_on(async {
-            let app = App::new().get("/echo", text_handler);
+            let app = || App::new().get("/echo", text_handler);
             start_server(app).await
         });
         Arc::new(Mutex::new(rt.block_on(BenchClient::connect(addr))))
@@ -234,7 +234,7 @@ fn bench_concurrent_tcp(c: &mut Criterion) {
     // --- Keep-alive pipelines: N connections × 10 requests each ---
 
     let addr_text = rt.block_on(async {
-        let app = App::new().get("/echo", text_handler);
+        let app = || App::new().get("/echo", text_handler);
         start_server(app).await
     });
 
@@ -246,7 +246,7 @@ fn bench_concurrent_tcp(c: &mut Criterion) {
     }
 
     let addr_json = rt.block_on(async {
-        let app = App::new().get("/echo", json_1kb_handler);
+        let app = || App::new().get("/echo", json_1kb_handler);
         start_server(app).await
     });
 
@@ -260,7 +260,7 @@ fn bench_concurrent_tcp(c: &mut Criterion) {
     // --- Simulated I/O: 100µs sleep per request (models DB query) ---
 
     let addr_io = rt.block_on(async {
-        let app = App::new().get("/echo", simulated_io_handler);
+        let app = || App::new().get("/echo", simulated_io_handler);
         start_server(app).await
     });
 
@@ -274,10 +274,12 @@ fn bench_concurrent_tcp(c: &mut Criterion) {
     // --- Mixed routes: health(text), /echo(json 1kb), /slow(sim I/O) ---
 
     let addr_mixed = rt.block_on(async {
-        let app = App::new()
-            .get("/health", text_handler)
-            .get("/echo", json_1kb_handler)
-            .get("/slow", simulated_io_handler);
+        let app = || {
+            App::new()
+                .get("/health", text_handler)
+                .get("/echo", json_1kb_handler)
+                .get("/slow", simulated_io_handler)
+        };
         start_server(app).await
     });
 
