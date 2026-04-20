@@ -20,7 +20,7 @@ impl Default for O11yConfig {
     fn default() -> Self {
         Self {
             service_name: "harrow".to_string(),
-            service_version: "0.1.0".to_string(),
+            service_version: env!("CARGO_PKG_VERSION").to_string(),
             environment: "development".to_string(),
             otlp_traces_endpoint: None,
             otlp_logs_endpoint: None,

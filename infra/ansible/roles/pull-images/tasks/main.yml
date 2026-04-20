@@ -102,19 +102,19 @@
 # Client: pull load testers
 - name: Pull spinr from ECR
   ansible.builtin.command:
-    cmd: "docker pull {{ ecr_registry }}/harrow/spinr:{{ spinr_version }}"
+    cmd: "docker pull {{ ecr_registry }}/harrow/load-generators:spinr-v{{ spinr_version }}"
   changed_when: true
   when: inventory_hostname in groups['client']
 
 - name: Tag spinr for local use
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/spinr:{{ spinr_version }} spinr:arm64-{{ spinr_version }}"
+    cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:spinr-v{{ spinr_version }} spinr:arm64-{{ spinr_version }}"
   changed_when: true
   when: inventory_hostname in groups['client']
 
 - name: Tag spinr as latest (orchestrator default)
   ansible.builtin.command:
-    cmd: "docker tag {{ ecr_registry }}/harrow/spinr:{{ spinr_version }} spinr:latest"
+    cmd: "docker tag {{ ecr_registry }}/harrow/load-generators:spinr-v{{ spinr_version }} spinr:latest"
   changed_when: true
   when: inventory_hostname in groups['client']
 

@@ -26,10 +26,10 @@
 //!
 //! ```toml
 //! # Tokio backend (cross-platform)
-//! harrow = { version = "0.9", features = ["tokio"] }
+//! harrow = { version = "0.10", features = ["tokio"] }
 //!
 //! # io_uring backend via Monoio (Linux 6.1+ only)
-//! harrow = { version = "0.9", features = ["monoio"] }
+//! harrow = { version = "0.10", features = ["monoio"] }
 //! ```
 //!
 //! The current runtime direction is documented in

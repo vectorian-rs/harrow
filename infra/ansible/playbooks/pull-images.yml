@@ -5,7 +5,7 @@
     aws_region: "eu-west-1"
     harrow_version: "{{ harrow_version }}"
     spinr_version: "{{ spinr_version }}"
-    wrk3_version: "{{ wrk3_version | default('0.2.0') }}"
+    wrk3_version: "0.2.0"
     sysalloc_tag: "{{ sysalloc_version | default(harrow_version) }}"
   roles:
     - role: ecr-login

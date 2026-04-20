@@ -1572,6 +1572,7 @@ dependencies = [
  "futures-util",
  "harrow-codec-h1",
  "harrow-core",
+ "harrow-io",
  "harrow-server",
  "http",
  "http-body",

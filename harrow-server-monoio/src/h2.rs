@@ -108,7 +108,7 @@ impl H2Connection {
             body_read_timeout,
             connection_timeout,
             max_concurrent_streams,
-            metrics,
+            mut metrics,
         } = config;
         let metrics_id = metrics.id;
         let connection_deadline =

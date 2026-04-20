@@ -48,7 +48,7 @@ impl ConnectionMetrics {
     }
 
     /// Record connection closed and return duration.
-    pub fn close(mut self) -> std::time::Duration {
+    pub fn close(&mut self) -> std::time::Duration {
         let duration = self.start_time.elapsed();
 
         // Decrement gauge and mark as already closed to prevent double-decrement in Drop
@@ -182,12 +182,12 @@ mod tests {
         let gauge = Rc::new(Cell::new(0));
 
         // Create first connection
-        let metrics1 = ConnectionMetrics::new(gauge.clone());
+        let mut metrics1 = ConnectionMetrics::new(gauge.clone());
         assert_eq!(gauge.get(), 1);
         let id1 = metrics1.id;
 
         // Create second connection
-        let metrics2 = ConnectionMetrics::new(gauge.clone());
+        let mut metrics2 = ConnectionMetrics::new(gauge.clone());
         assert_eq!(gauge.get(), 2);
         let id2 = metrics2.id;
 

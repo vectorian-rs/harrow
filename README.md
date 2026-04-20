@@ -42,12 +42,12 @@ Harrow requires you to explicitly select an HTTP server backend. There is no def
 ```toml
 # Tokio backend (cross-platform)
 [dependencies]
-harrow = { version = "0.9", features = ["tokio", "json"] }
+harrow = { version = "0.10", features = ["tokio", "json"] }
 tokio = { version = "1", features = ["full"] }  # Required for #[tokio::main] and tokio APIs
 
 # io_uring backend (Linux 6.1+ only)
 [dependencies]
-harrow = { version = "0.9", features = ["monoio", "json"] }
+harrow = { version = "0.10", features = ["monoio", "json"] }
 # Harrow bootstraps monoio worker threads internally via `harrow::runtime::monoio::run(...)`
 ```
 
@@ -69,7 +69,7 @@ See [`examples/monoio_hello.rs`](harrow/examples/monoio_hello.rs) for a complete
 
 ```toml
 [dependencies]
-harrow = { version = "0.9", features = ["tokio"] }
+harrow = { version = "0.10", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }  # Required for #[tokio::main]
 ```
 

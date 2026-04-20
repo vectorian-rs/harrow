@@ -37,6 +37,7 @@ const DEFAULT_PORT: u16 = 3090;
 const SSH_USER: &str = "alpine";
 const DEFAULT_SPINR_BIN: &str = "/usr/local/bin/spinr";
 const SLEEP_BETWEEN_RUNS: Duration = Duration::from_secs(2);
+const HARROW_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ---------------------------------------------------------------------------
 // Test Target Definition
@@ -178,6 +179,10 @@ enum Backend {
     Tokio,
     /// Monoio - io_uring-based runtime (Linux 6.1+ only)
     Monoio,
+    /// Meguri - direct io_uring runtime used by Harrow
+    Meguri,
+    /// Compio - io_uring-based runtime used by ntex-compio
+    Compio,
 }
 
 impl Backend {
@@ -185,6 +190,8 @@ impl Backend {
         match value {
             "tokio" => Some(Self::Tokio),
             "monoio" => Some(Self::Monoio),
+            "meguri" => Some(Self::Meguri),
+            "compio" => Some(Self::Compio),
             _ => None,
         }
     }
@@ -193,6 +200,8 @@ impl Backend {
         match self {
             Self::Tokio => "tokio",
             Self::Monoio => "monoio",
+            Self::Meguri => "meguri",
+            Self::Compio => "compio",
         }
     }
 }
@@ -217,14 +226,31 @@ impl Framework {
 
     fn image(self, backend: Backend, alloc: Allocator) -> String {
         match (self, backend) {
-            (Self::Harrow, Backend::Monoio) => "harrow-server-monoio".to_string(),
+            (Self::Harrow, Backend::Monoio) => {
+                format!("harrow-server-monoio:arm64-{HARROW_VERSION}")
+            }
+            (Self::Harrow, Backend::Meguri) => {
+                let alloc_tag = match alloc {
+                    Allocator::Mimalloc => "mimalloc",
+                    Allocator::System => "sysalloc",
+                };
+                format!("harrow-bench:prod-{alloc_tag}-{HARROW_VERSION}")
+            }
             (Self::Harrow, Backend::Tokio) => {
                 let suffix = alloc.suffix();
                 format!("harrow-perf-server{suffix}")
             }
+            (Self::Harrow, Backend::Compio) => unreachable!("harrow does not support compio"),
             (Self::Axum, _) => {
                 let suffix = alloc.suffix();
                 format!("axum-perf-server{suffix}")
+            }
+            (Self::Ntex, Backend::Compio) => {
+                let alloc_tag = match alloc {
+                    Allocator::Mimalloc => "mimalloc",
+                    Allocator::System => "sysalloc",
+                };
+                format!("harrow-bench:prod-{alloc_tag}-{HARROW_VERSION}")
             }
             (Self::Ntex, _) => {
                 let suffix = alloc.suffix();
@@ -236,14 +262,17 @@ impl Framework {
     fn container_name(self, backend: Backend, alloc: Allocator) -> String {
         match (self, backend) {
             (Self::Harrow, Backend::Monoio) => "harrow-server-monoio".to_string(),
+            (Self::Harrow, Backend::Meguri) => "harrow-server-meguri".to_string(),
             (Self::Harrow, Backend::Tokio) => {
                 let suffix = alloc.suffix();
                 format!("harrow-perf-server{suffix}")
             }
+            (Self::Harrow, Backend::Compio) => unreachable!("harrow does not support compio"),
             (Self::Axum, _) => {
                 let suffix = alloc.suffix();
                 format!("axum-perf-server{suffix}")
             }
+            (Self::Ntex, Backend::Compio) => "ntex-compio-perf-server".to_string(),
             (Self::Ntex, _) => {
                 let suffix = alloc.suffix();
                 format!("ntex-perf-server{suffix}")
@@ -256,10 +285,17 @@ impl Framework {
             (Self::Harrow, Backend::Monoio) => {
                 format!("/harrow-server-monoio --bind 0.0.0.0 --port {port}")
             }
+            (Self::Harrow, Backend::Meguri) => {
+                format!("/usr/local/bin/harrow-server-meguri --bind 0.0.0.0 --port {port}")
+            }
             (Self::Harrow, Backend::Tokio) => {
                 format!("/harrow-perf-server --bind 0.0.0.0 --port {port}")
             }
+            (Self::Harrow, Backend::Compio) => unreachable!("harrow does not support compio"),
             (Self::Axum, _) => format!("/axum-perf-server --bind 0.0.0.0 --port {port}"),
+            (Self::Ntex, Backend::Compio) => {
+                format!("/usr/local/bin/ntex-compio-perf-server --bind 0.0.0.0 --port {port}")
+            }
             (Self::Ntex, _) => format!("/ntex-perf-server --bind 0.0.0.0 --port {port}"),
         };
         if extra_flags.is_empty() {
@@ -271,11 +307,12 @@ impl Framework {
 
     fn supports_backend(self, backend: Backend) -> bool {
         match (self, backend) {
-            (Self::Harrow, _) => true,
-            (Self::Axum, Backend::Monoio) => false,
+            (Self::Harrow, Backend::Tokio | Backend::Monoio | Backend::Meguri) => true,
+            (Self::Harrow, Backend::Compio) => false,
+            (Self::Axum, Backend::Monoio | Backend::Meguri | Backend::Compio) => false,
             (Self::Axum, Backend::Tokio) => true,
-            (Self::Ntex, Backend::Monoio) => false,
-            (Self::Ntex, Backend::Tokio) => true,
+            (Self::Ntex, Backend::Monoio | Backend::Meguri) => false,
+            (Self::Ntex, Backend::Tokio | Backend::Compio) => true,
         }
     }
 }
@@ -284,6 +321,7 @@ impl Framework {
 enum CompareMode {
     Framework,
     Allocator,
+    Single,
 }
 
 impl CompareMode {
@@ -291,6 +329,7 @@ impl CompareMode {
         match value {
             "framework" => Some(Self::Framework),
             "allocator" => Some(Self::Allocator),
+            "single" => Some(Self::Single),
             _ => None,
         }
     }
@@ -299,6 +338,7 @@ impl CompareMode {
         match self {
             Self::Framework => "framework",
             Self::Allocator => "allocator",
+            Self::Single => "single",
         }
     }
 }
@@ -398,9 +438,9 @@ fn usage() -> ! {
          \x20 --perf                 Collect perf artifacts (default mode: stat)\n\
          \x20 --perf-mode MODE       Perf mode: stat|record|both\n\
          \x20 --allocator ALLOC      Allocator: mimalloc|system (default: mimalloc)\n\
-         \x20 --compare MODE         Comparison mode: framework|allocator\n\
+         \x20 --compare MODE         Comparison mode: framework|allocator|single\n\
          \x20 --framework FW         Framework: harrow|axum|ntex (default: harrow)\n\
-         \x20 --backend BACKEND      Runtime backend: tokio|monoio (default: tokio, harrow only)\n\
+         \x20 --backend BACKEND      Runtime backend: tokio|monoio|compio (default: tokio)\n\
          \n\
          EXAMPLES:\n\
          \n\
@@ -632,7 +672,7 @@ fn parse_args() -> Args {
             backend.as_str()
         );
         eprintln!(
-            "note: Axum only supports Tokio backend; use --backend tokio or --framework harrow"
+            "note: Axum only supports Tokio; Harrow supports Tokio/Monoio/Meguri; ntex supports Tokio/Compio"
         );
         usage();
     }
@@ -742,6 +782,11 @@ fn comparison_variants(args: &Args) -> Vec<Variant> {
                 allocator: Allocator::System,
             },
         ],
+        CompareMode::Single => vec![Variant {
+            label: args.framework.as_str().into(),
+            framework: args.framework,
+            allocator: args.allocator,
+        }],
     }
 }
 
@@ -795,7 +840,10 @@ fn start_server_container(
     );
 
     // io_uring requires unconfined seccomp (Docker blocks io_uring syscalls by default)
-    let seccomp = if args.backend == Backend::Monoio {
+    let seccomp = if matches!(
+        args.backend,
+        Backend::Monoio | Backend::Meguri | Backend::Compio
+    ) {
         " --security-opt seccomp=unconfined"
     } else {
         ""

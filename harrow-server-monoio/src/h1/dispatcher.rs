@@ -19,6 +19,7 @@ use bytes::BytesMut;
 use monoio::net::TcpStream;
 
 use harrow_core::dispatch::SharedState;
+use harrow_io::BufPool;
 use harrow_server::h1::{
     EarlyResponseMode, RequestBodyDecision, decide_request_body_progress, early_response_control,
 };
@@ -52,6 +53,7 @@ pub(crate) struct H1Connection {
     pub(crate) stream: TcpStream,
     pub(crate) config: H1Config,
     pub(crate) buf: BytesMut,
+    pub(crate) write_buf: BytesMut,
     pub(crate) connection_deadline: Option<Instant>,
 }
 
@@ -62,6 +64,7 @@ impl H1Connection {
             stream,
             config,
             buf: BytesMut::with_capacity(8192),
+            write_buf: BufPool::acquire_write(),
             connection_deadline: None,
         }
     }
@@ -80,6 +83,9 @@ impl H1Connection {
         if let Err(ref e) = result {
             tracing::debug!(error = %e, "h1 connection error");
         }
+
+        let write_buf = std::mem::take(&mut self.write_buf);
+        BufPool::release_write(write_buf);
 
         // Record connection close
         let _duration = self.config.metrics.close();
