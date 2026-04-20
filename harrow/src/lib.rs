@@ -64,7 +64,7 @@ compile_error!(
     "harrow requires a server backend feature. \
      Enable exactly one of: `tokio` for cross-platform compatibility, \
      or `monoio` for io_uring via Monoio (Linux 6.1+). \
-     Example: harrow = {{ version = \"0.9\", features = [\"tokio\"] }}"
+     Example: harrow = {{ version = \"0.10\", features = [\"tokio\"] }}"
 );
 
 /// Runtime-specific server APIs.
