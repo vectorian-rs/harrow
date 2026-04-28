@@ -8,7 +8,7 @@ runtime architecture, and opt-in observability.
 - **No macros, no magic** -- handlers are plain `async fn(Request) -> Response` functions. No extractors, no trait bounds, no `#[debug_handler]`.
 - **Route introspection** -- the route table is a first-class data structure you can enumerate at startup for OpenAPI generation, health checks, or monitoring config.
 - **Opt-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
-- **Feature-gated middleware** -- request-id, CORS, catch-panic, compression, session, rate-limit, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
+- **Feature-gated middleware** -- request-id, CORS, catch-panic, compression, session, rate-limit, security headers, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
 - **Fast** -- custom HTTP/1 transport with shared codec/dispatcher pieces, `matchit` routing, and no Tower or `BoxCloneService`.
 - **Pluggable server backends** -- choose between Tokio/custom HTTP/1 (cross-platform) or Monoio/io_uring (Linux high-performance).
 
@@ -133,13 +133,17 @@ let app = App::new()
 
 ## Documentation
 
-- [Harrow 1.0 PRD](docs/prds/harrow-1.0.md) -- current product scope, support policy, and release criteria
-- [Design rationale](docs/prds/harrow-http-framework.md) -- historical product/design rationale behind Harrow
-- [Local-worker runtime strategy](docs/strategy-local-workers.md) -- historical implementation strategy for the custom backend rewrite
-- [HTTP/1 dispatcher design](docs/h1-dispatcher-design.md) -- how the shared custom backend is structured
-- [Explicit extractors philosophy](docs/explicit-extractors.md) -- the design choice behind plain function signatures
-- [Performance notes](docs/performance.md) -- current benchmark workflow, current 0.10 conclusions, and preserved historical notes
-- [Performance journal](docs/article.md) -- historical engineering log of the rewrite and benchmark investigation
+- [Docs index](docs/index.md) -- current docs map and reading order
+- [What Harrow is](docs/what-is-harrow.md) -- short product identity, priorities, and non-goals
+- [Plan and status](docs/roadmap.md) -- current 0.10 -> 1.0 implementation plan
+- [Backend support](docs/backend-support.md) -- Tokio, Monoio, and Meguri support matrix
+- [Server lifecycle](docs/server-lifecycle.md) -- workers, limits, timeouts, and graceful shutdown
+- [Deployment](docs/deployment.md) -- production notes for Tokio and Monoio
+- [Request helpers](docs/request-helpers.md) -- explicit request-first model instead of extractor-heavy handlers
+- [Observability](docs/observability.md) -- request IDs, tracing, route labels, and metrics status
+- [Security](docs/security.md) -- security middleware and operational guidance
+- [Performance notes](docs/performance.md) -- benchmark workflow and current measured conclusions
+- [Progress article](docs/article.md) -- engineering log of the rewrite and benchmark investigation
 
 ## Workspace layout
 
@@ -147,7 +151,7 @@ let app = App::new()
 | ---------------------- | ---------------------------------------------------------------- |
 | `harrow`               | Public API -- re-exports core types and feature-gated middleware |
 | `harrow-core`          | Request, Response, routing, middleware trait, app builder        |
-| `harrow-middleware`    | Request-id, CORS, compression, session, rate-limit, o11y        |
+| `harrow-middleware`    | Request-id, CORS, compression, session, rate-limit, security headers, o11y |
 | `harrow-o11y`          | O11yConfig and rolly integration types                           |
 | `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, TLS, graceful shutdown |
 | `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux                |

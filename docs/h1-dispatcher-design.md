@@ -23,7 +23,7 @@ This is a protocol-boundary design, not a proposal to copy `ntex`'s full
 
 It is also only half of the architecture decision. The runtime side of that
 decision now lives in
-[`docs/strategy-local-workers.md`](./strategy-local-workers.md): Harrow is
+[`docs/old/strategy-local-workers.md`](./old/strategy-local-workers.md): Harrow is
 moving toward a local-worker model in the nginx/ntex sense, and this dispatcher
 split is the protocol shape that makes that model practical.
 

@@ -65,8 +65,9 @@ Use it to narrow the search space before opening files.
     - `harrow/src/lib.rs`
   - Useful docs:
     - `docs/middleware.md`
-    - `docs/auth-middleware.md`
-    - `docs/rate-limiting-middleware.md`
+    - `docs/security.md`
+    - `docs/old/auth-middleware.md`
+    - `docs/old/rate-limiting-middleware.md`
 
 - Server lifecycle, connection handling, shutdown, timeouts
   - Read: `harrow-server-tokio/src/lib.rs`
@@ -96,11 +97,14 @@ Use it to narrow the search space before opening files.
 
 - Strategy or architecture discussions
   - Read selectively:
-    - `docs/prds/harrow-http-framework.md`
+    - `docs/prds/harrow-1.0.md`
+    - `docs/what-is-harrow.md`
+    - `docs/roadmap.md`
     - `docs/explicit-extractors.md`
-    - `docs/strategy-tpc.md`
-    - `docs/strategy-io-uring.md`
-    - `docs/opus-review.md`
+    - `docs/old/prds/harrow-http-framework.md`
+    - `docs/old/strategy-tpc.md`
+    - `docs/old/strategy-io-uring.md`
+    - `docs/old/opus-review.md`
 
 - Infra or remote benchmarking
   - Read:
@@ -119,7 +123,8 @@ Use it to narrow the search space before opening files.
 - `harrow-core/src/lib.rs`
 - `harrow-server-tokio/src/lib.rs`
 - `harrow-server-tokio/tests/integration.rs`
-- `docs/prds/harrow-http-framework.md`
+- `docs/index.md`
+- `docs/prds/harrow-1.0.md`
 - `docs/verification.md`
 - `docs/middleware.md`
 

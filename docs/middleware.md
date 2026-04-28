@@ -611,6 +611,7 @@ Harrow's shipped middleware modules are currently:
 - `compression`
 - `rate-limit`
 - `session`
+- `security-headers`
 
 This list is useful, but the more important question is whether each item is:
 
@@ -639,6 +640,8 @@ That classification should drive the next cleanup.
 - `harrow-middleware/src/timeout.rs`
 - `harrow-middleware/src/rate_limit.rs`
 - `harrow-middleware/src/session.rs`
-- `docs/strategy-tpc.md`
-- `docs/auth-middleware.md`
+- `harrow-middleware/src/security_headers.rs`
+- `docs/security.md`
 - `docs/connection-safety.md`
+- `docs/old/strategy-tpc.md`
+- `docs/old/auth-middleware.md`

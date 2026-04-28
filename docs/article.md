@@ -198,7 +198,7 @@ local profile. That was a real win, but it was also a warning: once route
 lookup is down in the tens of nanoseconds, it is no longer where to spend your
 attention.
 
-![Local baseline dashboard](./performance.svg)
+![Local baseline dashboard](./old/performance.svg)
 
 ### Local TCP Comparison Against Axum
 
@@ -1185,7 +1185,7 @@ style.
 WebSocket/SSE today, or your team is invested in the extractor pattern.
 
 The full migration reference with additional examples is in
-[`docs/migration-from-axum.md`](./migration-from-axum.md).
+[`docs/old/migration-from-axum.md`](./old/migration-from-axum.md).
 
 ## 2026-04-05: WebSocket Support and First crates.io Release
 

@@ -9,7 +9,7 @@ malicious TCP clients at the transport layer.
 The important architectural point is that these controls now live in Harrow's
 own HTTP/1 connection loops, not in Hyper builder configuration. The relevant
 runtime shape is documented in
-[`docs/strategy-local-workers.md`](./strategy-local-workers.md), and the
+[`docs/old/strategy-local-workers.md`](./old/strategy-local-workers.md), and the
 dispatcher split is documented in
 [`docs/h1-dispatcher-design.md`](./h1-dispatcher-design.md).
 
