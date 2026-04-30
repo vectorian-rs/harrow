@@ -14,6 +14,11 @@
 //!   Use for cross-platform compatibility, development on macOS/Windows,
 //!   or deployment in containers/Lambda where io_uring is unavailable.
 //!
+//! - **`tokio-hyper`**: Hyper-owned HTTP/1 protocol handling with Harrow's
+//!   app/router model and an optional thread-per-core worker topology.
+//!   Use for comparing a lower-maintenance stable Tokio path against the
+//!   custom H1 backend.
+//!
 //! - **`monoio`**: High-performance io_uring backend with thread-per-core.
 //!   Use for maximum throughput on Linux 6.1+ bare metal or EC2.
 //!   Requires custom seccomp profile in containers.
@@ -30,6 +35,9 @@
 //! ```toml
 //! # Tokio backend (cross-platform)
 //! harrow = { version = "0.10", features = ["tokio"] }
+//!
+//! # Hyper-based Tokio backend prototype
+//! harrow = { version = "0.10", features = ["tokio-hyper"] }
 //!
 //! # io_uring backend via Monoio (Linux 6.1+ only)
 //! harrow = { version = "0.10", features = ["monoio"] }
@@ -51,12 +59,26 @@ pub use harrow_core::route::{App, Group, Route, RouteMetadata, RouteSummary, Rou
 pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
 
 // Root-level re-exports for single-backend mode.
-#[cfg(all(feature = "tokio", not(feature = "monoio")))]
+#[cfg(all(
+    feature = "tokio",
+    not(any(feature = "tokio-hyper", feature = "monoio"))
+))]
 pub use harrow_server_tokio::{
     ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
 };
 
-#[cfg(all(feature = "monoio", not(feature = "tokio")))]
+#[cfg(all(
+    feature = "tokio-hyper",
+    not(any(feature = "tokio", feature = "monoio"))
+))]
+pub use harrow_server_tokio_hyper::{
+    ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
+};
+
+#[cfg(all(
+    feature = "monoio",
+    not(any(feature = "tokio", feature = "tokio-hyper"))
+))]
 pub use harrow_server_monoio::{ServerConfig, run, run_with_config};
 
 /// Runtime-specific server APIs.
@@ -71,6 +93,17 @@ pub mod runtime {
     #[cfg(feature = "tokio")]
     pub mod tokio {
         pub use harrow_server_tokio::{
+            ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
+        };
+    }
+
+    /// Tokio + Hyper server. Hyper owns HTTP protocol handling while Harrow owns
+    /// app dispatch and worker topology.
+    ///
+    /// Available when the `tokio-hyper` feature is enabled.
+    #[cfg(feature = "tokio-hyper")]
+    pub mod tokio_hyper {
+        pub use harrow_server_tokio_hyper::{
             ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
         };
     }

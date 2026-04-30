@@ -10,8 +10,9 @@ description = "A thin, macro-free HTTP framework with custom HTTP/1 backends and
 [features]
 default = []
 
-# Server backends (pick exactly one)
+# Server backends (pick exactly one for root-level serve re-exports)
 tokio = ["dep:harrow-server-tokio"]
+tokio-hyper = ["dep:harrow-server-tokio-hyper"]
 monoio = ["dep:harrow-server-monoio"]
 # meguri = ["dep:harrow-server-meguri", "harrow-server-meguri/io-uring"]  # Linux only — not yet on crates.io
 
@@ -42,6 +43,7 @@ harrow-core = { workspace = true }
 harrow-middleware = { workspace = true, optional = true }
 harrow-o11y = { workspace = true, optional = true }
 harrow-server-tokio = { workspace = true, optional = true }
+harrow-server-tokio-hyper = { workspace = true, optional = true }
 harrow-server-monoio = { workspace = true, optional = true }
 # harrow-server-meguri = { workspace = true, optional = true }  # not yet on crates.io
 rolly-tokio = { workspace = true, optional = true }
@@ -59,6 +61,10 @@ http = { workspace = true }
 [[example]]
 name = "hello"
 required-features = ["tokio", "o11y", "json"]
+
+[[example]]
+name = "hello_hyper"
+required-features = ["tokio-hyper"]
 
 [[example]]
 name = "monoio_hello"

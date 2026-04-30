@@ -23,6 +23,7 @@ COPY harrow-o11y/Cargo.toml harrow-o11y/Cargo.toml
 COPY harrow-serde/Cargo.toml harrow-serde/Cargo.toml
 COPY harrow-server/Cargo.toml harrow-server/Cargo.toml
 COPY harrow-server-tokio/Cargo.toml harrow-server-tokio/Cargo.toml
+COPY harrow-server-tokio-hyper/Cargo.toml harrow-server-tokio-hyper/Cargo.toml
 COPY harrow-server-monoio/Cargo.toml harrow-server-monoio/Cargo.toml
 COPY harrow-server-meguri/Cargo.toml harrow-server-meguri/Cargo.toml
 COPY meguri/Cargo.toml meguri/Cargo.toml
@@ -39,6 +40,7 @@ COPY harrow-o11y/src/lib.rs harrow-o11y/src/lib.rs
 COPY harrow-serde/src/lib.rs harrow-serde/src/lib.rs
 COPY harrow-server/src/lib.rs harrow-server/src/lib.rs
 COPY harrow-server-tokio/src/lib.rs harrow-server-tokio/src/lib.rs
+COPY harrow-server-tokio-hyper/src/lib.rs harrow-server-tokio-hyper/src/lib.rs
 COPY harrow-server-monoio/src/lib.rs harrow-server-monoio/src/lib.rs
 COPY harrow-server-meguri/src/lib.rs harrow-server-meguri/src/lib.rs
 COPY meguri/src/lib.rs meguri/src/lib.rs
@@ -60,6 +62,7 @@ COPY harrow-o11y/src harrow-o11y/src
 COPY harrow-serde/src harrow-serde/src
 COPY harrow-server/src harrow-server/src
 COPY harrow-server-tokio/src harrow-server-tokio/src
+COPY harrow-server-tokio-hyper/src harrow-server-tokio-hyper/src
 COPY harrow-server-monoio/src harrow-server-monoio/src
 COPY harrow-server-meguri/src harrow-server-meguri/src
 COPY meguri/src meguri/src

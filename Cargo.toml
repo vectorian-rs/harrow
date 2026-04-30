@@ -9,6 +9,7 @@ members = [
     "harrow-serde",
     "harrow-server",
     "harrow-server-tokio",
+    "harrow-server-tokio-hyper",
     "harrow-server-monoio",
     "harrow-codec-h1",
     "harrow-io",
@@ -33,6 +34,7 @@ harrow-o11y = { path = "harrow-o11y", version = "0.10.0" }
 harrow-middleware = { path = "harrow-middleware", version = "0.10.0" }
 harrow-serde = { path = "harrow-serde", version = "0.10.0" }
 harrow-server-tokio = { path = "harrow-server-tokio", version = "0.10.0" }
+harrow-server-tokio-hyper = { path = "harrow-server-tokio-hyper", version = "0.10.0" }
 harrow-server-monoio = { path = "harrow-server-monoio", version = "0.10.0" }
 harrow-server-meguri = { path = "harrow-server-meguri", version = "0.10.0" }
 meguri = { path = "meguri", version = "0.1.0" }

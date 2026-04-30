@@ -8,10 +8,10 @@ us control over local-worker scheduling, request-body backpressure, and runtime
 experiments, but it also makes Harrow responsible for protocol correctness that
 mature servers normally delegate to Hyper or another battle-tested HTTP engine.
 
-This document records the tradeoff and the next validation step: keep the custom
-codec/dispatcher work as a reference path, but prototype a Hyper-based Tokio
-thread-per-core backend before committing to the custom H1 stack as the stable
-1.0 production path.
+This document records the tradeoff and validation path: keep the custom
+codec/dispatcher work as a reference path, and evaluate the additive
+`harrow-server-tokio-hyper` prototype before committing to the custom H1 stack
+as the stable 1.0 production path.
 
 ## Current Custom H1 Surface
 
@@ -97,9 +97,10 @@ minimal hot-path refcount churn
 ```
 
 Harrow can evaluate that topology without giving up the custom codec reference
-path. A `harrow-server-tokio-hyper` backend can combine Hyper's protocol
-correctness with Harrow's explicit server lifecycle and per-worker deployment
-model.
+path. The `harrow-server-tokio-hyper` prototype combines Hyper's protocol correctness
+with Harrow's explicit server lifecycle and per-worker deployment model. The
+first version is HTTP/1-focused; HTTP/2 and TLS/ALPN are follow-up work for the
+same backend family.
 
 ## 1.0 Strategy Decision
 
@@ -125,15 +126,15 @@ valuable as:
 
 ## Hyper Backend Prototype Acceptance Criteria
 
-Before changing the public support policy, Harrow should prototype and measure a
+Before changing the public support policy, Harrow should finish and measure the
 Tokio Hyper backend with at least:
 
 - Harrow `App`/router/middleware dispatch;
-- HTTP/1 support;
+- HTTP/1 support; **first prototype implemented**
 - HTTP/2 support plan or direct implementation path;
-- current-thread/thread-per-core mode;
-- optional `SO_REUSEPORT` on supported Unix platforms;
-- graceful shutdown and drain timeout;
+- current-thread/thread-per-core mode; **first prototype implemented**
+- optional `SO_REUSEPORT` on supported Unix platforms; **first prototype implemented**
+- graceful shutdown and drain timeout; **first prototype implemented**
 - connection limits or a documented first prototype gap;
 - request/response body mapping compatible with Harrow's public APIs;
 - basic observability hooks;

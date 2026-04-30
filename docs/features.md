@@ -20,7 +20,7 @@ platform. Its strongest implemented path today is:
 > Tokio and Monoio support, opt-in middleware, observability hooks, and lifecycle
 > hardening.
 
-Before 1.0, Harrow will also prototype a Hyper-based Tokio backend so the stable
+Harrow also includes a first Hyper-based Tokio backend prototype so the stable
 production path can be chosen with benchmark data and maintenance risk in view.
 
 ## Transports and Protocols
@@ -29,7 +29,7 @@ production path can be chosen with benchmark data and maintenance risk in view.
 | --- | --- | --- |
 | HTTP/1.1 | ✅ | Implemented through custom Harrow H1 path across Tokio, Monoio, and experimental Meguri. Stable-by-default support level is under review pending Hyper comparison and hardening evidence. |
 | REST-style HTTP APIs | ✅ | Strong fit for JSON/text API backends. |
-| HTTP/2 | 🟡 | Required before 1.0 across Harrow server backends. Monoio has partial H2 code/tests today; Tokio may use the planned Hyper backend rather than extending the custom H1 path. |
+| HTTP/2 | 🟡 | Required before 1.0 across Harrow server backends. Monoio has partial H2 code/tests today; Tokio may use the Hyper backend rather than extending the custom H1 path. |
 | HTTP/3 / QUIC | ❌ | Not implemented. |
 | WebSocket | 🟡 | Tokio-side `ws` feature exists. Not backend-universal. |
 | Streaming responses | ✅ | `Response::streaming` exists. Needs more examples/helpers. |
@@ -46,13 +46,13 @@ production path can be chosen with benchmark data and maintenance risk in view.
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Tokio custom H1 backend | ✅ | Public backend today; stable 1.0 status under review because Harrow owns protocol correctness. |
-| Tokio Hyper backend | ❌ | Planned prototype to compare Hyper + thread-per-core against custom H1 before the 1.0 backend decision. |
+| Tokio Hyper backend | 🟡 | First HTTP/1 prototype implemented with single-runtime and thread-per-core modes; HTTP/2/TLS/bench parity still pending. |
 | Monoio backend | ✅ | Public Linux/io_uring backend; final stable label depends on parity evidence. |
 | Meguri backend | 🟡 | Experimental direct io_uring workspace backend, not re-exported from root `harrow`. |
 | Compio backend | ❌ | Not supported. |
 | Same app mental model across runtimes | ✅ | `App`, `Request`, `Response`, middleware, and request helpers are shared across Tokio and Monoio. |
 | TLS | 🟡 | Tokio-oriented feature surface exists; final support wording should be audited before 1.0. |
-| HTTP/2 on all server backends | 🟡 | 1.0 target. Monoio is partial; Tokio Hyper prototype may become the preferred path; Meguri needs a stabilization decision. |
+| HTTP/2 on all server backends | 🟡 | 1.0 target. Monoio is partial; Tokio Hyper backend may become the preferred path; Meguri needs a stabilization decision. |
 
 ## Application Primitives
 
@@ -123,7 +123,7 @@ handler signatures. See [Request Helpers](./request-helpers.md) and
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Custom HTTP/1 transport | ✅ | Implemented and retained as a reference/advanced-performance path; production-stable status depends on hardening, fuzzing, and benchmark evidence. |
-| Hyper + thread-per-core backend | ❌ | Planned prototype to test whether worker topology gets close to target performance with lower protocol maintenance risk. |
+| Hyper + thread-per-core backend | 🟡 | First prototype implemented; benchmark harness integration and optimization still pending. |
 | JSON buffer reuse | ✅ | Harrow has thread-local JSON buffer/capacity work. |
 | SIMD JSON | ❌ | Not implemented. Evaluate only with benchmarks. |
 | Zero-copy extractors | ❌ | Not implemented. |

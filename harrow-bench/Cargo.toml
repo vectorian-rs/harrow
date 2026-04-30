@@ -13,7 +13,7 @@ mimalloc = ["dep:mimalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
-harrow = { path = "../harrow", features = ["tokio", "monoio", "json", "msgpack", "request-id", "cors", "compression", "compression-br", "catch-panic", "o11y", "body-limit", "rate-limit", "session"] }
+harrow = { path = "../harrow", features = ["tokio", "tokio-hyper", "monoio", "json", "msgpack", "request-id", "cors", "compression", "compression-br", "catch-panic", "o11y", "body-limit", "rate-limit", "session"] }
 harrow-core = { workspace = true, features = ["json", "msgpack"] }
 harrow-o11y = { workspace = true }
 axum = { workspace = true }
@@ -91,6 +91,10 @@ path = "src/bin/profile_session.rs"
 [[bin]]
 name = "harrow-perf-server"
 path = "src/bin/harrow_perf_server.rs"
+
+[[bin]]
+name = "harrow-hyper-perf-server"
+path = "src/bin/harrow_hyper_perf_server.rs"
 
 [[bin]]
 name = "harrow-server-monoio"

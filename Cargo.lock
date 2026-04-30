@@ -1273,6 +1273,7 @@ dependencies = [
  "harrow-o11y",
  "harrow-server-monoio",
  "harrow-server-tokio",
+ "harrow-server-tokio-hyper",
  "http",
  "monoio",
  "rolly-tokio",
@@ -1488,6 +1489,24 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "harrow-server-tokio-hyper"
+version = "0.10.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "harrow-core",
+ "harrow-middleware",
+ "harrow-server",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

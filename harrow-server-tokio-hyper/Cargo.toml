@@ -1,0 +1,32 @@
+[package]
+name = "harrow-server-tokio-hyper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Tokio Hyper server backend for Harrow: protocol handling via Hyper with optional thread-per-core workers"
+
+[features]
+default = []
+profiling = ["harrow-core/profiling"]
+
+[dependencies]
+harrow-core = { workspace = true }
+harrow-server = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+harrow-middleware = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["client"] }
+hyper-util = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
