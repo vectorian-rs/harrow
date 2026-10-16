@@ -8,7 +8,7 @@ Use it to narrow the search space before opening files.
 - Start with the smallest relevant surface, not a full-repo read.
 - Read `README.md` and the target crate's `src/lib.rs` before opening deeper files.
 - Prefer source files, tests, and high-signal design docs over large artifact directories.
-- Use `rg --files` and `rg -n` for navigation. Do not browse `docs/perf/**` unless the task is explicitly about recorded benchmark runs.
+- Use `rg --files` and `rg -n` for navigation. Do not browse `perf/**` (local benchmark output, git-ignored) unless the task is explicitly about recorded benchmark runs.
 
 ## Repo Shape
 
@@ -19,11 +19,22 @@ Use it to narrow the search space before opening files.
   - Core framework behavior: routing, dispatch, request/response wrappers, middleware trait, state.
   - Most correctness-sensitive changes land here.
 - `harrow-middleware/`
-  - Feature-gated middleware implementations: timeout, request-id, cors, o11y, catch-panic, body-limit, compression, rate-limit, session.
+  - Feature-gated middleware implementations: request-id, cors, o11y, catch-panic, body-limit, compression, rate-limit, session, security-headers.
+- `harrow-codec-h1/`
+  - HTTP/1.1 codec shared by the custom backends: request parsing, response serialization, chunked encoding.
+  - Protocol-correctness and request-smuggling fixes land here. Has fuzz targets and proptests.
+- `harrow-io/`
+  - Runtime-agnostic I/O primitives: buffer pool and I/O traits.
+- `harrow-server/`
+  - Shared server primitives used by every backend: listener, workers, shutdown, config, shared H1 lifecycle.
 - `harrow-server-tokio/`
-  - Hyper server binding, connection lifecycle, graceful shutdown, concurrency limits.
+  - Tokio backend on the custom HTTP/1 codec: local workers, connection lifecycle, graceful shutdown, concurrency limits, TLS.
+- `harrow-server-tokio-hyper/`
+  - Prototype Tokio backend where Hyper owns HTTP parsing and framing. Used to compare against the custom codec.
 - `harrow-server-monoio/`
   - Monoio/io_uring server for high-performance Linux deployments.
+- `harrow-server-meguri/` and `meguri/`
+  - Experimental io_uring backend, and the Tokio-free io_uring library it runs on.
 - `harrow-o11y/`
   - `O11yConfig` and observability-facing configuration types.
 - `harrow-serde/`
@@ -71,7 +82,12 @@ Use it to narrow the search space before opening files.
 
 - Server lifecycle, connection handling, shutdown, timeouts
   - Read: `harrow-server-tokio/src/lib.rs`
+  - Also check: `harrow-server/src/h1_lifecycle.rs` (shared across backends)
   - Validate with: `harrow-server-tokio/tests/integration.rs`
+
+- HTTP/1 parsing, framing, chunked bodies, header limits
+  - Read: `harrow-codec-h1/src/lib.rs`
+  - Validate with: `harrow-codec-h1` tests, `mise run fuzz:check`, and `harrow-server-tokio/tests/integration.rs`
 
 - Observability
   - Read: `harrow-o11y/src/lib.rs`
@@ -89,7 +105,7 @@ Use it to narrow the search space before opening files.
     - relevant files in `harrow-bench/src/bin/`
     - `docs/operations/performance.md`
     - `docs/middleware/middleware.md`
-  - Only read `docs/perf/**` when the task is about a recorded benchmark run or artifact comparison.
+  - Only read `perf/**` when the task is about a recorded benchmark run or artifact comparison.
 
 - Verification or correctness strategy
   - Read: `docs/operations/verification.md`
@@ -133,8 +149,8 @@ Use it to narrow the search space before opening files.
 ## Retrieval Rules
 
 - Default exclude:
-  - `docs/perf/**`
-  - `docs/flamegraphs/**`
+  - `perf/**`
+  - `docs/history/old/flamegraphs/**`
   - `*.svg`
   - large benchmark logs and generated artifacts
 - Default exclude `infra/**` unless the task mentions deployment, AWS, Terraform, Ansible, or remote perf runs.
@@ -154,6 +170,7 @@ Use it to narrow the search space before opening files.
 - Full verification: `mise run verify`
 - Targeted crate tests:
   - `cargo test -p harrow-core`
+  - `cargo test -p harrow-codec-h1`
   - `cargo test -p harrow-middleware`
   - `cargo test -p harrow-server-tokio`
   - `cargo test -p harrow-server-monoio`

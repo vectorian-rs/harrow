@@ -96,8 +96,8 @@ Low-Medium - useful for production tuning, but defaults work for most cases
 
 ## Related Files
 - `harrow-server-tokio/src/lib.rs`
-- `docs/connection-safety.md`
-- `docs/performance.md`
+- `docs/server/connection-safety.md`
+- `docs/operations/performance.md`
 
 ## Notes
 This should maintain backward compatibility - all new configuration fields should be optional with sensible defaults.

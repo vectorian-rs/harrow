@@ -38,7 +38,7 @@ The tokio server uses `tracing` for structured logging. We should:
 - [ ] All metrics above are emitted via `tracing` events
 - [ ] Zero-allocation fast path when tracing level is disabled
 - [ ] Integration test verifying metrics output
-- [ ] Documentation update in `docs/o11y.md` (if exists)
+- [ ] Documentation update in `docs/middleware/observability.md`
 
 ## Priority
 **High** — Blocks meaningful performance comparison work.

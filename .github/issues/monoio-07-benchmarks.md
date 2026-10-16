@@ -105,7 +105,7 @@ pub struct IoUringStats {
 
 - [ ] `cargo bench -p harrow-bench` includes monoio variants
 - [ ] CI job runs monoio benchmarks (on Linux only)
-- [ ] Benchmark results stored in `docs/perf/monoio/`
+- [ ] Benchmark results stored in `perf/monoio/`
 - [ ] Comparison table: tokio vs monoio vs monoio+optimizations
 - [ ] Flamegraph generation works with monoio
 
@@ -117,7 +117,7 @@ pub struct IoUringStats {
 
 ## Related
 - `harrow-bench/` directory
-- `docs/strategy-io-uring.md` Section 9 (next steps)
+- `docs/history/old/strategy-io-uring.md` Section 9 (next steps)
 - Blocked by: Issue #1 (observability — need metrics to benchmark)
 
 ## Notes

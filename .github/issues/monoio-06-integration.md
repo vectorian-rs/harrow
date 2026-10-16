@@ -115,4 +115,4 @@ Ensure `ServerConfig` options have consistent semantics:
 ## Related
 - `harrow-server-monoio/src/lib.rs` (current API)
 - `harrow/src/lib.rs` (integration point)
-- `docs/strategy-io-uring.md` Section 6 (operational constraints)
+- `docs/history/old/strategy-io-uring.md` Section 6 (operational constraints)

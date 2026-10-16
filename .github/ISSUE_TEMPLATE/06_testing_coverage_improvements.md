@@ -1,16 +1,16 @@
 # Issue: Implement Proposed Verification Strategies and Expand Test Coverage
 
 ## Summary
-While the verification strategy is solid (documented in `docs/verification.md`), actual implementation of some proposed tests (like fuzzing targets) should be verified. Integration tests could cover more edge cases in middleware interactions.
+While the verification strategy is solid (documented in `docs/operations/verification.md`), actual implementation of some proposed tests (like fuzzing targets) should be verified. Integration tests could cover more edge cases in middleware interactions.
 
 ## Current State
-- `docs/verification.md` outlines comprehensive testing strategy
+- `docs/operations/verification.md` outlines comprehensive testing strategy
 - Unit tests exist throughout the codebase
 - Property-based testing with `proptest` proposed but partially implemented
 - Fuzzing targets (`cargo-fuzz`) proposed but need verification
 - Kani bounded verification proposed for specific functions
 
-## From `docs/verification.md`
+## From `docs/operations/verification.md`
 
 ### Areas needing implementation:
 
@@ -82,7 +82,7 @@ While the verification strategy is solid (documented in `docs/verification.md`),
 High - correctness critical for production use
 
 ## Related Files
-- `docs/verification.md`
+- `docs/operations/verification.md`
 - `harrow-core/fuzz/` (create if not exists)
 - `harrow-core/src/` (add proptest tests)
 - `.github/workflows/` (CI integration)

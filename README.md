@@ -8,7 +8,7 @@ runtime architecture, and opt-in observability.
 - **No macros, no magic** -- handlers are plain `async fn(Request) -> Response` functions. No extractors, no trait bounds, no `#[debug_handler]`.
 - **Route introspection** -- the route table is a first-class data structure you can enumerate at startup for OpenAPI generation, health checks, or monitoring config.
 - **Opt-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
-- **Feature-gated middleware** -- request-id, CORS, catch-panic, compression, session, rate-limit, security headers, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
+- **Feature-gated middleware** -- request-id, CORS, catch-panic, body-limit, compression, session, rate-limit, security headers, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
 - **Fast** -- `matchit` routing, no Tower or `BoxCloneService`, and backend work focused on local-worker/thread-per-core performance.
 - **Pluggable server backends** -- choose between Tokio/custom HTTP/1 (cross-platform today), Tokio/Hyper (`tokio-hyper`, prototype), or Monoio/io_uring (Linux high-performance).
 
@@ -152,11 +152,17 @@ let app = App::new()
 | ---------------------- | ---------------------------------------------------------------- |
 | `harrow`               | Public API -- re-exports core types and feature-gated middleware |
 | `harrow-core`          | Request, Response, routing, middleware trait, app builder        |
-| `harrow-middleware`    | Request-id, CORS, compression, session, rate-limit, security headers, o11y |
+| `harrow-middleware`    | Request-id, CORS, catch-panic, body-limit, compression, session, rate-limit, security headers, o11y |
 | `harrow-o11y`          | O11yConfig and rolly integration types                           |
+| `harrow-serde`         | JSON and MessagePack helpers behind feature flags                |
+| `harrow-codec-h1`      | HTTP/1.1 codec: request parsing, response serialization, chunked encoding |
+| `harrow-io`            | Runtime-agnostic I/O primitives: buffer pool and I/O traits      |
+| `harrow-server`        | Shared server primitives: listener, workers, shutdown, config    |
 | `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, TLS, graceful shutdown |
+| `harrow-server-tokio-hyper` | Prototype Tokio backend with Hyper owning HTTP/1 parsing and framing |
 | `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux                |
 | `harrow-server-meguri` | Experimental direct io_uring backend                             |
+| `meguri`               | Tokio-free io_uring library used by `harrow-server-meguri`       |
 | `harrow-bench`         | Criterion benchmarks and load testing tools                      |
 
 ## License

@@ -6,7 +6,7 @@ The middleware system is powerful but could benefit from more comprehensive exam
 ## Current State
 - `Middleware` trait and `Next` type exist in `harrow-core/src/middleware.rs`
 - Basic unit tests show usage patterns
-- `docs/middleware.md` compares available middleware
+- `docs/middleware/middleware.md` compares available middleware
 - The `Next::run(req)` pattern is not immediately obvious to newcomers
 
 ## Concerns
@@ -64,5 +64,5 @@ High - improves onboarding and reduces support burden
 
 ## Related Files
 - `harrow-core/src/middleware.rs`
-- `docs/middleware.md`
+- `docs/middleware/middleware.md`
 - `harrow/examples/` (location for new examples)
