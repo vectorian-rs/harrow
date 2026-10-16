@@ -71,7 +71,7 @@ reference, and existing external baselines.
 
 ## Current Benchmark Workflow
 
-Use the benchmark surface in [mise.toml](/Users/l1x/code/home/vectorian-rs/harrow/mise.toml:1) for the current workflow. There is no single `bench:run` task anymore.
+Use the benchmark surface in [mise.toml](../../mise.toml) for the current workflow. There is no single `bench:run` task anymore.
 
 ### Local Microbenchmarks
 
@@ -145,10 +145,10 @@ mise run bench:run:all
 
 These tasks use:
 
-- [harrow-bench/implementations.toml](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/implementations.toml:1)
-- [harrow-bench/suites/framework-comparison.toml](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/suites/framework-comparison.toml:1)
-- [harrow-bench/src/bin/bench_single.rs](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/src/bin/bench_single.rs:1)
-- [harrow-bench/src/bin/bench_compare.rs](/Users/l1x/code/home/vectorian-rs/harrow/harrow-bench/src/bin/bench_compare.rs:1)
+- [harrow-bench/implementations.toml](../../harrow-bench/implementations.toml)
+- [harrow-bench/suites/framework-comparison.toml](../../harrow-bench/suites/framework-comparison.toml)
+- [harrow-bench/src/bin/bench_single.rs](../../harrow-bench/src/bin/bench_single.rs)
+- [harrow-bench/src/bin/bench_compare.rs](../../harrow-bench/src/bin/bench_compare.rs)
 
 ### Results And Re-rendering
 

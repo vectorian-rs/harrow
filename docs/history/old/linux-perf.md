@@ -26,7 +26,7 @@ Without both sides, you cannot tell whether `harrow` is saturated or `spinr` is 
 
 ## Scope
 
-The primary target is **Phase A** from the SSH-driven benchmark orchestrator in [harrow_remote_perf_test.rs](/Users/l1x/code/home/projectz/harrow/harrow-bench/src/bin/harrow_remote_perf_test.rs#L615), because it is the head-to-head comparison:
+The primary target is **Phase A** from the SSH-driven benchmark orchestrator in [harrow_remote_perf_test.rs](../../../harrow-bench/src/bin/harrow_remote_perf_test.rs#L615), because it is the head-to-head comparison:
 
 - Harrow bare
 - Axum bare
@@ -209,7 +209,7 @@ Container requirements for `perf`:
 
 ## Orchestration model
 
-The correct place to integrate this is the SSH-driven orchestrator in [harrow_remote_perf_test.rs](/Users/l1x/code/home/projectz/harrow/harrow-bench/src/bin/harrow_remote_perf_test.rs#L345), not the long-running Ansible monitor playbook in [monitor.yml](/Users/l1x/code/home/projectz/harrow/infra/ansible/playbooks/monitor.yml#L1).
+The correct place to integrate this is the SSH-driven orchestrator in [harrow_remote_perf_test.rs](../../../harrow-bench/src/bin/harrow_remote_perf_test.rs#L345), not the long-running Ansible monitor playbook in [monitor.yml](../../../infra/ansible/playbooks/monitor.yml#L1).
 
 Reason:
 
@@ -471,7 +471,7 @@ Then compare flamegraphs between:
 
 ### Server node
 
-The benchmark role already installs the necessary packages in [roles/bench/tasks/main.yml](/Users/l1x/code/home/projectz/harrow/infra/ansible/roles/bench/tasks/main.yml#L35):
+The benchmark role already installs the necessary packages in `infra/ansible/roles/bench/tasks/main.yml` (since removed):
 
 - `perf`
 - `sysstat`
