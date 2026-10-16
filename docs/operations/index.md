@@ -5,6 +5,7 @@ This folder contains deployment, performance, and verification docs.
 - [Deployment](./deployment.md): production deployment notes for Tokio and Monoio.
 - [Performance](./performance.md): benchmark workflow, current measured conclusions, and comparison commands.
 - [Verification](./verification.md): test, fuzz, and model-checking strategy.
+- [Testing](./testing.md): day-to-day commands for unit tests, examples, local load tests, and Criterion benches.
 - [Implementation Verification Prompt](./implementation-verification-prompt.md): prompt/checklist for implementation verification work.
 - [Implementation Verification Status](./implementation-verification-status-20260429.md): dated verification status snapshot.
 

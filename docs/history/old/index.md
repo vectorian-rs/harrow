@@ -11,6 +11,8 @@ Useful historical docs include:
 - [Middleware Plan](./middleware-plan.md): historical middleware architecture plan.
 - [Migration From Axum](./migration-from-axum.md): old migration guide.
 - [Old PRDs](./prds/): previous product requirement drafts.
+- [Docker Optimization](./docker-optimization.md): March 2026 review of the Docker build setup, from before the move to `docker/` and wrk3.
+- [Bench Comparison](./bench_comparison.svg): March 2026 framework comparison chart.
 
 Reviews and profiling docs in this folder may mention paths or behavior that no
 longer match the current codebase.
