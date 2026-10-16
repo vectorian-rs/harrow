@@ -95,8 +95,8 @@ production path can be chosen with benchmark data and maintenance risk in view.
 ## Request Helpers / Extraction Model
 
 Harrow intentionally uses explicit request helpers rather than extractor-heavy
-handler signatures. See [Request Helpers](./request-helpers.md) and
-[Explicit Extractors](./explicit-extractors.md).
+handler signatures. See [Request Helpers](../architecture/api/request-helpers.md) and
+[Explicit Extractors](../architecture/api/explicit-extractors.md).
 
 | Feature | Status | Notes |
 | --- | --- | --- |
@@ -149,16 +149,17 @@ handler signatures. See [Request Helpers](./request-helpers.md) and
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Docs index | ✅ | `docs/index.md`. |
-| Product identity | ✅ | `docs/what-is-harrow.md`. |
-| Roadmap/status | ✅ | `docs/roadmap.md`. |
-| Backend support matrix | ✅ | `docs/backend-support.md`. |
-| Lifecycle docs | ✅ | `docs/server-lifecycle.md`. |
-| Deployment docs | ✅ | `docs/deployment.md`. |
-| Request helper docs | ✅ | `docs/request-helpers.md`. |
-| Observability docs | ✅ | `docs/observability.md`. |
-| Security docs | ✅ | `docs/security.md`. |
-| Performance docs | ✅ | `docs/performance.md`. |
-| Verification docs | ✅ | `docs/verification.md`. |
+| Product identity | ✅ | `docs/overview/what-is-harrow.md`. |
+| Roadmap/status | ✅ | `docs/overview/roadmap.md`. |
+| Backend support matrix | ✅ | `docs/server/backend-support.md`. |
+| Lifecycle docs | ✅ | `docs/server/lifecycle.md`. |
+| Runtime model docs | ✅ | `docs/architecture/runtime-model/local-worker-webservers.md`. |
+| Deployment docs | ✅ | `docs/operations/deployment.md`. |
+| Request helper docs | ✅ | `docs/architecture/api/request-helpers.md`. |
+| Observability docs | ✅ | `docs/middleware/observability.md`. |
+| Security docs | ✅ | `docs/middleware/security.md`. |
+| Performance docs | ✅ | `docs/operations/performance.md`. |
+| Verification docs | ✅ | `docs/operations/verification.md`. |
 | OpenAPI | 🟡 | Route metadata/OpenAPI feature exists, but not a complete utoipa/vespera story. |
 | GraphiQL | ❌ | Not implemented. |
 | Example suite | 🟡 | Examples exist; more production-pattern examples are needed. |

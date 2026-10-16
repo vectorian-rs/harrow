@@ -68,7 +68,7 @@ use harrow::runtime::monoio::run;
 
 See [`examples/monoio_hello.rs`](harrow/examples/monoio_hello.rs) for a complete Monoio example.
 
-The custom H1 stack remains an important reference and performance path. Harrow also includes a Hyper-based Tokio prototype (`tokio-hyper`) to reduce protocol maintenance risk if performance is close enough. See [`docs/protocol-backend-strategy.md`](docs/protocol-backend-strategy.md).
+The custom H1 stack remains an important reference and performance path. Harrow also includes a Hyper-based Tokio prototype (`tokio-hyper`) to reduce protocol maintenance risk if performance is close enough. See [Protocol Backend Strategy](./docs/architecture/protocol/backend-strategy.md).
 
 For advanced Monoio lifecycle control (`start`, `ServerHandle`, async `serve*`
 entrypoints), depend on `harrow-server-monoio` directly. The root `harrow`
@@ -136,18 +136,15 @@ let app = App::new()
 
 ## Documentation
 
-- [Docs index](docs/index.md) -- current docs map and reading order
-- [What Harrow is](docs/what-is-harrow.md) -- short product identity, priorities, and non-goals
-- [Plan and status](docs/roadmap.md) -- current 0.10 -> 1.0 implementation plan
-- [Feature status](docs/features.md) -- implemented, partial, and missing functionality matrix
-- [Backend support](docs/backend-support.md) -- Tokio, Monoio, and Meguri support matrix
-- [Server lifecycle](docs/server-lifecycle.md) -- workers, limits, timeouts, and graceful shutdown
-- [Deployment](docs/deployment.md) -- production notes for Tokio and Monoio
-- [Request helpers](docs/request-helpers.md) -- explicit request-first model instead of extractor-heavy handlers
-- [Observability](docs/observability.md) -- request IDs, tracing, route labels, and metrics status
-- [Security](docs/security.md) -- security middleware and operational guidance
-- [Performance notes](docs/performance.md) -- benchmark workflow and current measured conclusions
-- [Progress article](docs/article.md) -- engineering log of the rewrite and benchmark investigation
+- [Docs index](./docs/) -- current docs map and reading order
+- [Overview](./docs/overview/) -- product identity, feature status, and roadmap
+- [Product](./docs/product/) -- Harrow 1.0 product scope and release criteria
+- [Architecture](./docs/architecture/) -- runtime model, protocol strategy, and public API design
+- [Local-worker webservers](./docs/architecture/runtime-model/local-worker-webservers.md) -- Harrow's nginx/`ntex`-inspired async/runtime direction
+- [Server](./docs/server/) -- backend support, lifecycle, timeouts, limits, and connection safety
+- [Middleware](./docs/middleware/) -- middleware model, security, and observability
+- [Operations](./docs/operations/) -- deployment, performance workflow, and verification
+- [History](./docs/history/) -- engineering journal and historical design archaeology
 
 ## Workspace layout
 

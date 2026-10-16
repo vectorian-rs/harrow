@@ -99,6 +99,6 @@ connect them to your collector stack.
 
 See also:
 
-- [Deployment](./deployment.md)
-- [Server Lifecycle](./server-lifecycle.md)
+- [Deployment](../operations/deployment.md)
+- [Server Lifecycle](../server/lifecycle.md)
 - [Middleware](./middleware.md)

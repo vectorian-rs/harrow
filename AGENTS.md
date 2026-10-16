@@ -64,10 +64,10 @@ Use it to narrow the search space before opening files.
     - `harrow/Cargo.toml`
     - `harrow/src/lib.rs`
   - Useful docs:
-    - `docs/middleware.md`
-    - `docs/security.md`
-    - `docs/old/auth-middleware.md`
-    - `docs/old/rate-limiting-middleware.md`
+    - `docs/middleware/middleware.md`
+    - `docs/middleware/security.md`
+    - `docs/history/old/auth-middleware.md`
+    - `docs/history/old/rate-limiting-middleware.md`
 
 - Server lifecycle, connection handling, shutdown, timeouts
   - Read: `harrow-server-tokio/src/lib.rs`
@@ -87,24 +87,25 @@ Use it to narrow the search space before opening files.
     - `harrow-bench/Cargo.toml`
     - relevant files in `harrow-bench/benches/`
     - relevant files in `harrow-bench/src/bin/`
-    - `docs/performance.md`
-    - `docs/middleware.md`
+    - `docs/operations/performance.md`
+    - `docs/middleware/middleware.md`
   - Only read `docs/perf/**` when the task is about a recorded benchmark run or artifact comparison.
 
 - Verification or correctness strategy
-  - Read: `docs/verification.md`
+  - Read: `docs/operations/verification.md`
   - Then inspect the corresponding crate tests and fuzz targets.
 
 - Strategy or architecture discussions
   - Read selectively:
-    - `docs/prds/harrow-1.0.md`
-    - `docs/what-is-harrow.md`
-    - `docs/roadmap.md`
-    - `docs/explicit-extractors.md`
-    - `docs/old/prds/harrow-http-framework.md`
-    - `docs/old/strategy-tpc.md`
-    - `docs/old/strategy-io-uring.md`
-    - `docs/old/opus-review.md`
+    - `docs/product/harrow-1.0.md`
+    - `docs/overview/what-is-harrow.md`
+    - `docs/overview/roadmap.md`
+    - `docs/architecture/runtime-model/local-worker-webservers.md`
+    - `docs/architecture/api/explicit-extractors.md`
+    - `docs/history/old/prds/harrow-http-framework.md`
+    - `docs/history/old/strategy-tpc.md`
+    - `docs/history/old/strategy-io-uring.md`
+    - `docs/history/old/opus-review.md`
 
 - Infra or remote benchmarking
   - Read:
@@ -124,9 +125,10 @@ Use it to narrow the search space before opening files.
 - `harrow-server-tokio/src/lib.rs`
 - `harrow-server-tokio/tests/integration.rs`
 - `docs/index.md`
-- `docs/prds/harrow-1.0.md`
-- `docs/verification.md`
-- `docs/middleware.md`
+- `docs/product/harrow-1.0.md`
+- `docs/architecture/runtime-model/local-worker-webservers.md`
+- `docs/operations/verification.md`
+- `docs/middleware/middleware.md`
 
 ## Retrieval Rules
 

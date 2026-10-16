@@ -1,7 +1,7 @@
 # Harrow: A Thin, Macro-Free HTTP Framework
 
 > Historical product/design document. For the current product scope and support
-> policy, see [harrow-1.0.md](./harrow-1.0.md).
+> policy, see [Harrow 1.0 PRD](../../../product/harrow-1.0.md).
 
 **Status:** Draft
 **Date:** 2026-02-19
@@ -83,10 +83,10 @@ Harrow aims to be the framework you reach for when you want top-tier Rust HTTP p
                         └──────────────────────────┘
 ```
 
-Detailed transport/backend architecture is documented separately in
-[`docs/h1-dispatcher-design.md`](../h1-dispatcher-design.md). The runtime
+Detailed transport/backend architecture is now documented in
+[HTTP/1 Dispatcher Design](../../../architecture/protocol/h1-dispatcher-design.md). The runtime
 direction is documented in
-[`docs/strategy-local-workers.md`](../strategy-local-workers.md).
+[Local-Worker Webservers](../../../architecture/runtime-model/local-worker-webservers.md).
 
 ### 4.1 Core Types
 

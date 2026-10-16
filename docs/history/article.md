@@ -4,7 +4,7 @@
 **Last updated:** 2026-04-21
 
 > Historical engineering log. For the current product scope and support
-> policy, see [docs/prds/harrow-1.0.md](./prds/harrow-1.0.md).
+> policy, see [Harrow 1.0 PRD](../product/harrow-1.0.md).
 
 This is not a launch post and not a benchmark victory lap. It is a dated
 engineering log for Harrow's performance work: what we measured, what moved the
@@ -362,9 +362,7 @@ At 500K+ RPS across 48 cores, that meant a lot of traffic through Tokio's timer
 machinery and its internal locks. Axum's default server path was not paying the
 same cost.
 
-![Initial remote throughput dashboard](./perf/c8g.12xlarge/2026-03-19T07-36-57Z/summary.svg)
-
-![Initial `/text` server telemetry](./perf/c8g.12xlarge/2026-03-19T07-36-57Z/text-c128.server.telemetry.svg)
+Historical artifact paths: `docs/perf/c8g.12xlarge/2026-03-19T07-36-57Z/summary.svg` and `docs/perf/c8g.12xlarge/2026-03-19T07-36-57Z/text-c128.server.telemetry.svg`.
 
 ### The Fix
 
@@ -398,9 +396,7 @@ And the matched comparison against Axum moved to:
 For `/text`, Harrow was effectively at parity. The old "Harrow is 2x slower"
 statement stopped being true the moment the timer issue was removed.
 
-![Post-fix remote throughput dashboard](./perf/c8g.12xlarge/2026-03-19T13-34-49Z/summary.svg)
-
-![Post-fix `/text` server telemetry](./perf/c8g.12xlarge/2026-03-19T13-34-49Z/text-c128.server.telemetry.svg)
+Historical artifact paths: `docs/perf/c8g.12xlarge/2026-03-19T13-34-49Z/summary.svg` and `docs/perf/c8g.12xlarge/2026-03-19T13-34-49Z/text-c128.server.telemetry.svg`.
 
 ### Important Lesson
 
@@ -601,7 +597,7 @@ allocator change helps, we want to know that separately.
 
 Performance work is easy to cargo-cult unless it sits next to correctness work.
 
-We now keep a separate verification strategy in `docs/verification.md`. The
+We now keep a separate verification strategy in `docs/operations/verification.md`. The
 short version:
 
 - `proptest` for path matching, middleware ordering, compression round-trips,
@@ -736,7 +732,7 @@ Harrow ships **safer defaults** than Axum's default serving path. That is
 a deliberate choice. The penalty is measurable at extreme throughput. The
 defense is real.
 
-Full details are in `docs/connection-safety.md`.
+Full details are in `docs/server/connection-safety.md`.
 
 ## 2026-03-31: Monoio Backend — Thread-Per-Core and io_uring Reality Check
 
@@ -1185,7 +1181,7 @@ style.
 WebSocket/SSE today, or your team is invested in the extractor pattern.
 
 The full migration reference with additional examples is in
-[`docs/old/migration-from-axum.md`](./old/migration-from-axum.md).
+[historical migration-from-axum notes](./old/migration-from-axum.md).
 
 ## 2026-04-05: WebSocket Support and First crates.io Release
 

@@ -13,7 +13,7 @@
 This document describes the target HTTP/1 dispatcher architecture for Harrow's
 custom H1 stack. It remains useful as a reference design, but it is no longer
 the only candidate for the stable 1.0 Tokio backend. See
-[Protocol Backend Strategy](./protocol-backend-strategy.md) for the current
+[Protocol Backend Strategy](./backend-strategy.md) for the current
 Hyper-vs-custom-H1 decision checkpoint.
 
 The main goal is to move Harrow's server backends closer to the split that makes
@@ -31,9 +31,9 @@ but it needs adversarial tests, fuzzing, lifecycle parity, and benchmark evidenc
 before it should be treated as the default production-stable path.
 
 It is also only half of the architecture decision. The runtime side of that
-decision now lives in
-[`docs/old/strategy-local-workers.md`](./old/strategy-local-workers.md): Harrow is
-moving toward a local-worker model in the nginx/ntex sense, and this dispatcher
+decision lives in
+[Local-Worker Webservers](../runtime-model/local-worker-webservers.md): Harrow is
+moving toward a local-worker model in the nginx/`ntex` sense, and this dispatcher
 split is the protocol shape that makes that model practical.
 
 ---

@@ -11,11 +11,11 @@ For the custom H1 backends, these controls live in Harrow's own HTTP/1
 connection loops, not in Hyper builder configuration. Harrow is now also
 planning a Hyper-based Tokio prototype; that path should provide equivalent
 operator-facing controls while delegating protocol parsing/framing to Hyper. The
-tradeoff is tracked in [Protocol Backend Strategy](./protocol-backend-strategy.md).
-The relevant custom-backend runtime shape is documented in
-[`docs/old/strategy-local-workers.md`](./old/strategy-local-workers.md), and the
-dispatcher split is documented in
-[`docs/h1-dispatcher-design.md`](./h1-dispatcher-design.md).
+tradeoff is tracked in [Protocol Backend Strategy](../architecture/protocol/backend-strategy.md).
+The relevant runtime shape is documented in
+[Local-Worker Webservers](../architecture/runtime-model/local-worker-webservers.md), and the
+custom H1 dispatcher split is documented in
+[HTTP/1 Dispatcher Design](../architecture/protocol/h1-dispatcher-design.md).
 
 ## The Problem
 

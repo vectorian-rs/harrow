@@ -53,7 +53,7 @@ the stable production path. The first prototype supports Hyper HTTP/1 and the
 same Harrow app/router dispatch model; HTTP/2, TLS/ALPN, WebSocket parity, and
 benchmark harness integration still need follow-up work.
 
-See [Protocol Backend Strategy](./protocol-backend-strategy.md) for the
+See [Protocol Backend Strategy](../architecture/protocol/backend-strategy.md) for the
 maintenance tradeoff and decision gate.
 
 ## Monoio

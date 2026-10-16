@@ -87,5 +87,5 @@ At the request helper level, `Request::body_bytes`, `Request::body_json`, and
 See also:
 
 - [Connection Safety](./connection-safety.md)
-- [Verification](./verification.md)
-- [HTTP/1 Dispatcher Design](./h1-dispatcher-design.md)
+- [Verification](../operations/verification.md)
+- [HTTP/1 Dispatcher Design](../architecture/protocol/h1-dispatcher-design.md)

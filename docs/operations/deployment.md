@@ -5,7 +5,7 @@ backends: Tokio and Monoio.
 
 ## Choosing a Backend
 
-Use [Backend Support](./backend-support.md) as the source of truth. In short:
+Use [Backend Support](../server/backend-support.md) as the source of truth. In short:
 
 - choose **Tokio** for portability, containers, and general-purpose services;
 - choose **Monoio** for Linux deployments where io_uring/thread-per-core is a
@@ -74,7 +74,7 @@ for:
 ## Shutdown
 
 Use graceful shutdown so deploys and autoscaling events do not drop in-flight
-requests unnecessarily. See [Server Lifecycle](./server-lifecycle.md) for the
+requests unnecessarily. See [Server Lifecycle](../server/lifecycle.md) for the
 full model and timeout defaults.
 
 ## Observability
@@ -86,7 +86,7 @@ For production services, enable:
 - route labels where possible;
 - service/version/environment metadata.
 
-See [Observability](./observability.md).
+See [Observability](../middleware/observability.md).
 
 ## Bench Infrastructure vs Deployment
 

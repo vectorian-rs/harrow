@@ -2,7 +2,7 @@
 
 This document is the short product/implementation plan for the 0.10 -> 1.0
 line. The detailed product source of truth remains
-[prds/harrow-1.0.md](./prds/harrow-1.0.md).
+[Harrow 1.0 PRD](../product/harrow-1.0.md).
 
 ## Goal
 
@@ -35,9 +35,9 @@ Ship Harrow 1.0 as a small, explicit, production-ready HTTP framework with:
 ## Immediate Work
 
 1. **Consolidate docs**
-   - Keep a small current docs set.
-   - Move uncertain/historical docs to `docs/old/`.
-   - Link current docs from `README.md` and `docs/index.md`.
+   - Keep current docs organized by subject folders.
+   - Keep uncertain/historical docs under `docs/history/`.
+   - Link current docs from `README.md`, `docs/index.md`, and each subject `index.md`.
 
 2. **Clarify and complete backend support**
    - Finish and benchmark `harrow-server-tokio-hyper` before finalizing the stable 1.0 Tokio backend.
@@ -61,8 +61,8 @@ Ship Harrow 1.0 as a small, explicit, production-ready HTTP framework with:
 5. **Refresh performance evidence**
    - add a Hyper + thread-per-core Tokio backend profile;
    - rerun runtime matrix on clean bench infrastructure;
-   - update `docs/performance.md` only with trusted current measurements;
-   - keep old benchmark archaeology in `docs/old/` or `docs/article.md`.
+   - update `docs/operations/performance.md` only with trusted current measurements;
+   - keep old benchmark archaeology in `docs/history/`.
 
 ## Later / Research
 

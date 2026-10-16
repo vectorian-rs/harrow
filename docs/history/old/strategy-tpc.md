@@ -113,7 +113,7 @@ Dropping `Send + Sync + 'static` makes async Rust ["a pleasure to work with"](ht
 
 ## 5. Harrow Implementation Plan
 
-TPC builds on the same [driver abstraction](strategy-io-uring.md) as io_uring — the `IoDriver` trait is shared.
+TPC builds on the same [driver abstraction](./strategy-io-uring.md) as io_uring — the `IoDriver` trait is shared.
 
 ### Feature Flag
 

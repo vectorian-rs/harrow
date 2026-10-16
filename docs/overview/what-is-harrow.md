@@ -37,7 +37,7 @@ stack, and no default server runtime hidden behind the public API.
 The workspace also contains **Meguri**, a direct io_uring backend used for
 experimentation and benchmarks. It is not part of the stable root `harrow` API.
 
-See [Backend Support](./backend-support.md) for the full support matrix.
+See [Backend Support](../server/backend-support.md) for the full support matrix.
 
 ## Non-goals for the Current 1.0 Line
 

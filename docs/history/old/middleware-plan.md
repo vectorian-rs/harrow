@@ -2,10 +2,11 @@
 
 **Status:** draft plan, 2026-03-30
 
-This document is the implementation plan that follows from the analysis in
-[`docs/middleware.md`](./middleware.md).
+This document is a historical implementation plan that followed from older
+middleware analysis. The current middleware source of truth is
+[Middleware Architecture](../../middleware/middleware.md).
 
-`middleware.md` is the research and comparison document.
+`middleware.md` was the original research and comparison document.
 This file is the decision and execution document.
 
 ## Executive Summary

@@ -641,7 +641,7 @@ That classification should drive the next cleanup.
 - `harrow-middleware/src/rate_limit.rs`
 - `harrow-middleware/src/session.rs`
 - `harrow-middleware/src/security_headers.rs`
-- `docs/security.md`
-- `docs/connection-safety.md`
-- `docs/old/strategy-tpc.md`
-- `docs/old/auth-middleware.md`
+- [Security](./security.md)
+- [Connection Safety](../server/connection-safety.md)
+- [Historical TPC strategy](../history/old/strategy-tpc.md)
+- [Historical auth middleware notes](../history/old/auth-middleware.md)

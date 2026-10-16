@@ -5,9 +5,9 @@
 **Benchmark tools:** criterion 0.5; `spinr` + `harrow-bench` for remote perf runs
 
 > Product scope and backend support policy live in
-> [docs/prds/harrow-1.0.md](./prds/harrow-1.0.md). The Hyper-vs-custom-H1
+> [Harrow 1.0 PRD](../product/harrow-1.0.md). The Hyper-vs-custom-H1
 > backend decision gate lives in
-> [docs/protocol-backend-strategy.md](./protocol-backend-strategy.md).
+> [Protocol Backend Strategy](../architecture/protocol/backend-strategy.md).
 > This file is the current benchmark workflow plus preserved historical notes.
 
 ---

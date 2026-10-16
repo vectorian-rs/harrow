@@ -27,7 +27,7 @@ An [Alibaba OpenAnolis analysis](https://www.alibabacloud.com/blog/io-uring-vs--
 
 **TCP echo server** ([Seipp, 2024](https://ryanseipp.com/post/iouring-vs-epoll/)): io_uring achieved **~25% more throughput** and **~1ms better p99 latency** vs epoll on a Rust TCP echo server.
 
-**Monoio gateway** ([ByteDance benchmarks](https://github.com/bytedance/monoio/blob/master/docs/en/benchmark.md)): 1 core — marginal difference. 4 cores — **2x** Tokio. 16 cores — **close to 3x** Tokio. The scaling advantage comes from combining io_uring with [thread-per-core](strategy-tpc.md).
+**Monoio gateway** ([ByteDance benchmarks](https://github.com/bytedance/monoio/blob/master/docs/en/benchmark.md)): 1 core — marginal difference. 4 cores — **2x** Tokio. 16 cores — **close to 3x** Tokio. The scaling advantage comes from combining io_uring with [thread-per-core](./strategy-tpc.md).
 
 **Apache Iggy** ([migration blog, Feb 2026](https://iggy.apache.org/blogs/2026/02/27/thread-per-core-io_uring/)): Migrated from Tokio to compio (io_uring). Achieved **5,000 MB/s** throughput (5M messages/sec at 1KB each). WebSocket P9999 latency: ~9.5ms with fsync-per-message persistence.
 
@@ -38,7 +38,7 @@ An [Alibaba OpenAnolis analysis](https://www.alibabacloud.com/blog/io-uring-vs--
 | Project | I/O Backend | Stars | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tokio** (current) | `epoll` / `kqueue` | 28k+ | Stable | General-purpose, highly compatible |
-| **Monoio** (ByteDance) | `io_uring` / `epoll` | ~4,900 | Stable (0.2.4) | Production at ByteDance. Also TPC — see [strategy-tpc.md](strategy-tpc.md) |
+| **Monoio** (ByteDance) | `io_uring` / `epoll` | ~4,900 | Stable (0.2.4) | Production at ByteDance. Also TPC — see [strategy-tpc.md](./strategy-tpc.md) |
 | **Compio** | `io_uring` / IOCP / `kqueue` | Rising | Active (0.17) | Cross-platform. Chosen by Apache Iggy over monoio for broader io_uring feature coverage |
 | **tokio-uring** | `io_uring` on Tokio | ~1,400 | Young | Layered on Tokio (adds overhead). Slow development cadence |
 | **Glommio** (Datadog) | `io_uring` | — | **Largely unmaintained** | Historically significant but development stalled after Glauber Costa left |
@@ -62,7 +62,7 @@ pub trait IoDriver {
 }
 ```
 
-This trait is shared with the [TPC strategy](strategy-tpc.md) — both io_uring and TPC build on the same abstraction.
+This trait is shared with the [TPC strategy](./strategy-tpc.md) — both io_uring and TPC build on the same abstraction.
 
 ### Phase 2: Feature-Gated io_uring Backend
 
@@ -178,7 +178,7 @@ In practice, extend the default profile rather than starting from scratch.
 
 - **Default:** K8s pods use `Unconfined` seccomp — io_uring works but is a security risk.
 - **Best practice:** Use `RuntimeDefault` seccomp profile and selectively allow io_uring via a specific `SeccompProfile` in the pod `SecurityContext`.
-- Combine with `SO_REUSEPORT` for per-core listener sharding (see [TPC strategy](strategy-tpc.md)).
+- Combine with `SO_REUSEPORT` for per-core listener sharding (see [TPC strategy](./strategy-tpc.md)).
 
 ---
 

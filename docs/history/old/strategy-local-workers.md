@@ -4,8 +4,10 @@
 **Date:** 2026-04-15
 **Scope:** `feat/custom-http-backend`
 
-> Historical implementation strategy note. For the current product scope and
-> backend support policy, see [docs/prds/harrow-1.0.md](./prds/harrow-1.0.md).
+> Historical implementation strategy note. For the current runtime design, see
+> [Local-Worker Webservers](../../architecture/runtime-model/local-worker-webservers.md).
+> For product scope and backend support policy, see
+> [Harrow 1.0 PRD](../../product/harrow-1.0.md).
 
 ---
 
@@ -136,14 +138,14 @@ performance gains.
 
 ## 6. Relationship to Other Docs
 
-- [`docs/h1-dispatcher-design.md`](./h1-dispatcher-design.md) describes the
+- [HTTP/1 Dispatcher Design](../../architecture/protocol/h1-dispatcher-design.md) describes the
   protocol split and dispatcher shape.
 - [`docs/strategy-tpc.md`](./strategy-tpc.md) remains the broader research note
   on thread-per-core systems.
 - [`docs/strategy-io-uring.md`](./strategy-io-uring.md) remains the lower-level
   I/O strategy note. `io_uring` is important, but it is not the primary reason
   for the runtime direction.
-- [`docs/article.md`](./article.md) records the performance evidence that pushed
+- [Engineering Progress Article](../article.md) records the performance evidence that pushed
   Harrow toward this decision.
 
 ---

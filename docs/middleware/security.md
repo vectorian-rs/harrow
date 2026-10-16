@@ -65,7 +65,7 @@ cookie/session-backed APIs.
 ## Body Limits and Timeouts
 
 Body limits and read timeouts protect services from unbounded memory use and
-slow clients. See [Server Lifecycle](./server-lifecycle.md) for defaults.
+slow clients. See [Server Lifecycle](../server/lifecycle.md) for defaults.
 
 ## Rate Limiting
 
