@@ -23,7 +23,7 @@ crate directly.
 | HTTP/3 / QUIC | No | No | No | No |
 | WebSocket | Tokio feature (`ws`) | To evaluate | Not public root API | No |
 | SSE / streaming responses | Framework response API; backend support expected through normal responses | To evaluate through Hyper bodies | Framework response API; verify per use case | Experimental |
-| TLS | Tokio-oriented feature surface; reverse proxy termination also supported | To evaluate; likely Hyper + rustls/ALPN path | Prefer reverse proxy/load balancer termination unless documented otherwise | No public support |
+| TLS | Not in-process; terminate at a reverse proxy or load balancer | To evaluate; likely Hyper + rustls/ALPN path | Prefer reverse proxy/load balancer termination unless documented otherwise | No public support |
 | Graceful shutdown | Yes | Prototype implemented | Yes | Yes, experimental |
 | Multi-worker mode | Yes | Prototype implemented with thread-per-core/current-thread + `SO_REUSEPORT` | Yes | Yes |
 | Root crate re-export | Yes | No; not implemented | Yes | No |

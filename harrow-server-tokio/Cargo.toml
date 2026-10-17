@@ -9,7 +9,6 @@ description = "Tokio server backend for Harrow: custom HTTP codec, LocalSet per-
 
 [features]
 default = []
-tls = ["hyper-rustls", "rustls"]
 ws = ["harrow-core/ws", "dep:tokio-tungstenite", "dep:hyper", "dep:hyper-util", "dep:pin-project-lite"]
 profiling = []
 
@@ -30,10 +29,6 @@ tracing = { workspace = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }
-
-# Optional TLS
-hyper-rustls = { version = "0.27", optional = true }
-rustls = { version = "0.23", optional = true }
 
 # Optional WebSocket
 tokio-tungstenite = { version = "0.29", optional = true }

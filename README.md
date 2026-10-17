@@ -30,7 +30,6 @@ server entrypoints appear when you enable one:
 
 - Cross-platform development (macOS, Windows)
 - Container deployments (Docker, ECS Fargate, Lambda)
-- When you need TLS support (`tls` feature)
 - General-purpose HTTP services with the same local-worker/runtime direction as
   Harrow's other backends
 
@@ -158,7 +157,7 @@ let app = App::new()
 | `harrow-codec-h1`      | HTTP/1.1 codec: request parsing, response serialization, chunked encoding |
 | `harrow-io`            | Runtime-agnostic I/O primitives: buffer pool and I/O traits      |
 | `harrow-server`        | Shared server primitives: listener, workers, shutdown, config    |
-| `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, TLS, graceful shutdown |
+| `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, graceful shutdown |
 | `harrow-server-tokio-hyper` | Prototype Tokio backend with Hyper owning HTTP/1 parsing and framing |
 | `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux                |
 | `harrow-server-meguri` | Experimental direct io_uring backend                             |
