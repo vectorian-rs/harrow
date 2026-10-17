@@ -108,4 +108,4 @@ impl UringFeatures {
 
 ## Related
 - Blocked by: Issue #3 (buffer pool)
-- Related: `docs/strategy-io-uring.md` Section 3
+- Related: `docs/history/old/strategy-io-uring.md` Section 3

@@ -8,7 +8,7 @@ runtime architecture, and opt-in observability.
 - **No macros, no magic** -- handlers are plain `async fn(Request) -> Response` functions. No extractors, no trait bounds, no `#[debug_handler]`.
 - **Route introspection** -- the route table is a first-class data structure you can enumerate at startup for OpenAPI generation, health checks, or monitoring config.
 - **Opt-in observability** -- structured logging, OTLP trace export, and request-id propagation are wired in with one call, powered by [rolly](https://github.com/l1x/rolly).
-- **Feature-gated middleware** -- request-id, CORS, catch-panic, compression, session, rate-limit, security headers, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
+- **Feature-gated middleware** -- request-id, CORS, catch-panic, body-limit, compression, session, rate-limit, security headers, and o11y are opt-in via Cargo features. Nothing compiles unless you ask for it.
 - **Fast** -- `matchit` routing, no Tower or `BoxCloneService`, and backend work focused on local-worker/thread-per-core performance.
 - **Pluggable server backends** -- choose between Tokio/custom HTTP/1 (cross-platform today), Tokio/Hyper (`tokio-hyper`, prototype), or Monoio/io_uring (Linux high-performance).
 
@@ -30,7 +30,6 @@ server entrypoints appear when you enable one:
 
 - Cross-platform development (macOS, Windows)
 - Container deployments (Docker, ECS Fargate, Lambda)
-- When you need TLS support (`tls` feature)
 - General-purpose HTTP services with the same local-worker/runtime direction as
   Harrow's other backends
 
@@ -68,7 +67,7 @@ use harrow::runtime::monoio::run;
 
 See [`examples/monoio_hello.rs`](harrow/examples/monoio_hello.rs) for a complete Monoio example.
 
-The custom H1 stack remains an important reference and performance path. Harrow also includes a Hyper-based Tokio prototype (`tokio-hyper`) to reduce protocol maintenance risk if performance is close enough. See [`docs/protocol-backend-strategy.md`](docs/protocol-backend-strategy.md).
+The custom H1 stack remains an important reference and performance path. Harrow also includes a Hyper-based Tokio prototype (`tokio-hyper`) to reduce protocol maintenance risk if performance is close enough. See [Protocol Backend Strategy](./docs/architecture/protocol/backend-strategy.md).
 
 For advanced Monoio lifecycle control (`start`, `ServerHandle`, async `serve*`
 entrypoints), depend on `harrow-server-monoio` directly. The root `harrow`
@@ -136,18 +135,15 @@ let app = App::new()
 
 ## Documentation
 
-- [Docs index](docs/index.md) -- current docs map and reading order
-- [What Harrow is](docs/what-is-harrow.md) -- short product identity, priorities, and non-goals
-- [Plan and status](docs/roadmap.md) -- current 0.10 -> 1.0 implementation plan
-- [Feature status](docs/features.md) -- implemented, partial, and missing functionality matrix
-- [Backend support](docs/backend-support.md) -- Tokio, Monoio, and Meguri support matrix
-- [Server lifecycle](docs/server-lifecycle.md) -- workers, limits, timeouts, and graceful shutdown
-- [Deployment](docs/deployment.md) -- production notes for Tokio and Monoio
-- [Request helpers](docs/request-helpers.md) -- explicit request-first model instead of extractor-heavy handlers
-- [Observability](docs/observability.md) -- request IDs, tracing, route labels, and metrics status
-- [Security](docs/security.md) -- security middleware and operational guidance
-- [Performance notes](docs/performance.md) -- benchmark workflow and current measured conclusions
-- [Progress article](docs/article.md) -- engineering log of the rewrite and benchmark investigation
+- [Docs index](./docs/) -- current docs map and reading order
+- [Overview](./docs/overview/) -- product identity, feature status, and roadmap
+- [Product](./docs/product/) -- Harrow 1.0 product scope and release criteria
+- [Architecture](./docs/architecture/) -- runtime model, protocol strategy, and public API design
+- [Local-worker webservers](./docs/architecture/runtime-model/local-worker-webservers.md) -- Harrow's nginx/`ntex`-inspired async/runtime direction
+- [Server](./docs/server/) -- backend support, lifecycle, timeouts, limits, and connection safety
+- [Middleware](./docs/middleware/) -- middleware model, security, and observability
+- [Operations](./docs/operations/) -- deployment, performance workflow, and verification
+- [History](./docs/history/) -- engineering journal and historical design archaeology
 
 ## Workspace layout
 
@@ -155,11 +151,17 @@ let app = App::new()
 | ---------------------- | ---------------------------------------------------------------- |
 | `harrow`               | Public API -- re-exports core types and feature-gated middleware |
 | `harrow-core`          | Request, Response, routing, middleware trait, app builder        |
-| `harrow-middleware`    | Request-id, CORS, compression, session, rate-limit, security headers, o11y |
+| `harrow-middleware`    | Request-id, CORS, catch-panic, body-limit, compression, session, rate-limit, security headers, o11y |
 | `harrow-o11y`          | O11yConfig and rolly integration types                           |
-| `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, TLS, graceful shutdown |
+| `harrow-serde`         | JSON and MessagePack helpers behind feature flags                |
+| `harrow-codec-h1`      | HTTP/1.1 codec: request parsing, response serialization, chunked encoding |
+| `harrow-io`            | Runtime-agnostic I/O primitives: buffer pool and I/O traits      |
+| `harrow-server`        | Shared server primitives: listener, workers, shutdown, config    |
+| `harrow-server-tokio`  | Tokio custom HTTP/1 backend, local-worker runtime, graceful shutdown |
+| `harrow-server-tokio-hyper` | Prototype Tokio backend with Hyper owning HTTP/1 parsing and framing |
 | `harrow-server-monoio` | Monoio/io_uring server for high-performance Linux                |
 | `harrow-server-meguri` | Experimental direct io_uring backend                             |
+| `meguri`               | Tokio-free io_uring library used by `harrow-server-meguri`       |
 | `harrow-bench`         | Criterion benchmarks and load testing tools                      |
 
 ## License

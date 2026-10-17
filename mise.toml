@@ -13,11 +13,10 @@ BENCH_SERVER_PRIVATE_IP = "172.31.13.46"
 experimental = true
 
 [tools]
-rust = "1.91.1"
-python = "3.13.7"
+rust = "1.99.1"
+python = "3.13.10"
 terraform = "latest"
 uv = "0.8.19"
-"github:can1357/oh-my-pi" = "latest"
 
 [tasks.fmt]
 description = "Check formatting"

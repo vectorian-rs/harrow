@@ -115,7 +115,7 @@ async fn test_cancel_safety() {
 - [ ] All `select!` and timeout points audited
 - [ ] Miri test passes on cancel-heavy workload
 - [ ] No fd leaks detected under load test
-- [ ] Documentation on cancellation safety in `docs/monoio.md`
+- [ ] Documentation on cancellation safety in `docs/server/backend-support.md`
 
 ## Priority
 **Critical** — Safety issue before any production use.

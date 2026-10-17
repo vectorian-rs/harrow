@@ -1,79 +1,97 @@
-# Documentation Index
+# Harrow Documentation
 
-This is the docs entrypoint for Harrow. Start here, then open the smallest set
-of documents needed for the task.
+This is the entrypoint for Harrow's current documentation. The docs are arranged
+by subject. Each subject folder has its own `index.md` with a short map and links
+to the documents in that area.
 
-## Current Docs Set
+If a document is in [History](./history/), treat it as archaeology unless a
+current doc links to it as supporting evidence.
 
-- [What Harrow Is](./what-is-harrow.md): short product identity and non-goals.
-- [Plan and Status](./roadmap.md): current 0.10 -> 1.0 implementation plan.
-- [Feature Status](./features.md): current implemented/partial/missing feature matrix.
-- [Harrow 1.0 PRD](./prds/harrow-1.0.md): detailed product/support source of truth.
-- [Backend Support](./backend-support.md): Tokio, Monoio, and Meguri support matrix.
-- [Protocol Backend Strategy](./protocol-backend-strategy.md): Hyper vs custom H1 tradeoff and 1.0 backend decision gate.
-- [Server Lifecycle](./server-lifecycle.md): startup, workers, timeouts, limits, graceful shutdown.
-- [Deployment](./deployment.md): production deployment notes for Tokio and Monoio.
-- [Request Helpers](./request-helpers.md): explicit request-first handler model.
-- [Observability](./observability.md): tracing, request IDs, route labels, metrics status.
-- [Security](./security.md): security-related middleware and operational guidance.
-- [Middleware](./middleware.md): middleware architecture and available middleware.
-- [Performance](./performance.md): benchmark workflow and current measured conclusions.
-- [Verification](./verification.md): test/fuzz/model-checking strategy.
-- [Connection Safety](./connection-safety.md): transport-level timeout/limit design.
-- [HTTP/1 Dispatcher Design](./h1-dispatcher-design.md): current H1 backend architecture.
-- [Article](./article.md): engineering progress journal and historical narrative.
+## Subject Areas
+
+- [Overview](./overview/): product identity, feature status, and roadmap.
+- [Product](./product/): product requirements and release scope.
+- [Architecture](./architecture/): runtime model, protocol design, and public API design.
+- [Server](./server/): backend support, lifecycle, timeouts, limits, and connection safety.
+- [Middleware](./middleware/): middleware model, security middleware, and observability.
+- [Operations](./operations/): deployment, performance workflow, and verification strategy.
+- [History](./history/): engineering journal, old strategy notes, reviews, and benchmark archaeology.
+
+## High-Signal Current Docs
+
+Start here for the most important current docs:
+
+1. [What Harrow Is](./overview/what-is-harrow.md)
+2. [Harrow 1.0 PRD](./product/harrow-1.0.md)
+3. [Local-Worker Webservers](./architecture/runtime-model/local-worker-webservers.md)
+4. [Protocol Backend Strategy](./architecture/protocol/backend-strategy.md)
+5. [Server Lifecycle](./server/lifecycle.md)
+6. [Backend Support](./server/backend-support.md)
+7. [Performance](./operations/performance.md)
+8. [Verification](./operations/verification.md)
 
 ## Recommended Reading By Task
 
 ### Understand Harrow
 
-1. [What Harrow Is](./what-is-harrow.md)
-2. [Feature Status](./features.md)
-3. [Plan and Status](./roadmap.md)
-4. [Backend Support](./backend-support.md)
+1. [Overview](./overview/)
+2. [What Harrow Is](./overview/what-is-harrow.md)
+3. [Feature Status](./overview/features.md)
+4. [Roadmap](./overview/roadmap.md)
 5. [README](../README.md)
 
-### Backend or server lifecycle work
+### Runtime, async, or server architecture
 
-1. [Backend Support](./backend-support.md)
-2. [Protocol Backend Strategy](./protocol-backend-strategy.md)
-3. [Server Lifecycle](./server-lifecycle.md)
-4. [Connection Safety](./connection-safety.md)
-5. [HTTP/1 Dispatcher Design](./h1-dispatcher-design.md)
-6. [Verification](./verification.md)
+1. [Architecture](./architecture/)
+2. [Local-Worker Webservers](./architecture/runtime-model/local-worker-webservers.md)
+3. [Server Lifecycle](./server/lifecycle.md)
+4. [Protocol Backend Strategy](./architecture/protocol/backend-strategy.md)
+5. [HTTP/1 Dispatcher Design](./architecture/protocol/h1-dispatcher-design.md)
+6. [Connection Safety](./server/connection-safety.md)
 
-### Public API / handler model work
+### Backend or lifecycle work
 
-1. [Request Helpers](./request-helpers.md)
-2. [Explicit Extractors](./explicit-extractors.md)
-3. [README](../README.md)
+1. [Server](./server/)
+2. [Backend Support](./server/backend-support.md)
+3. [Server Lifecycle](./server/lifecycle.md)
+4. [Connection Safety](./server/connection-safety.md)
+5. [Verification](./operations/verification.md)
 
-### Middleware or security work
+### Public API or handler model work
 
-1. [Middleware](./middleware.md)
-2. [Security](./security.md)
-3. [Observability](./observability.md) if tracing/request IDs are involved
+1. [API Architecture](./architecture/api/)
+2. [Request Helpers](./architecture/api/request-helpers.md)
+3. [Explicit Extractors](./architecture/api/explicit-extractors.md)
+4. [README](../README.md)
+
+### Middleware, security, or observability work
+
+1. [Middleware](./middleware/)
+2. [Middleware Architecture](./middleware/middleware.md)
+3. [Security](./middleware/security.md)
+4. [Observability](./middleware/observability.md)
 
 ### Deployment or operations work
 
-1. [Deployment](./deployment.md)
-2. [Server Lifecycle](./server-lifecycle.md)
-3. [Observability](./observability.md)
-4. [Security](./security.md)
+1. [Operations](./operations/)
+2. [Deployment](./operations/deployment.md)
+3. [Server Lifecycle](./server/lifecycle.md)
+4. [Observability](./middleware/observability.md)
+5. [Security](./middleware/security.md)
 
 ### Performance work
 
-1. [Performance](./performance.md)
-2. [Backend Support](./backend-support.md)
-3. [Protocol Backend Strategy](./protocol-backend-strategy.md)
-4. [Connection Safety](./connection-safety.md)
-5. Historical profiling docs in [old](./old/) only if needed
+1. [Performance](./operations/performance.md)
+2. [Local-Worker Webservers](./architecture/runtime-model/local-worker-webservers.md)
+3. [Protocol Backend Strategy](./architecture/protocol/backend-strategy.md)
+4. [Backend Support](./server/backend-support.md)
+5. [History](./history/) only when investigating old benchmark runs or design archaeology.
 
-## Historical / Uncertain Docs
+## Documentation Rules
 
-Docs that are useful for archaeology but not current source-of-truth have been
-moved to [docs/old](./old/). They include old strategy notes, external review
-notes, old H2 design notes, profiling setup notes, and visual assets.
-
-Do not treat files in `docs/old/` as current product commitments unless a
-current doc explicitly references them.
+- Current source-of-truth docs live under the subject folders above.
+- Historical docs live under [History](./history/).
+- Do not treat historical docs as current product commitments unless a current
+  doc explicitly says so.
+- Large generated benchmark or flamegraph artifacts should stay out of the
+  default reading path.

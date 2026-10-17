@@ -27,6 +27,7 @@ impl std::fmt::Debug for IoCanceller {
 
 impl IoCanceller {
     /// Create a new canceller.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             inner: Canceller::new(),

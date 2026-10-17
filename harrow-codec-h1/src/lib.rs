@@ -686,16 +686,11 @@ pub fn encode_chunk(data: &[u8]) -> Vec<u8> {
 fn find_crlf(buf: &[u8]) -> Option<usize> {
     let mut start = 0;
     while start < buf.len() {
-        match memchr::memchr(b'\r', &buf[start..]) {
-            Some(pos) => {
-                let abs = start + pos;
-                if abs + 1 < buf.len() && buf[abs + 1] == b'\n' {
-                    return Some(abs);
-                }
-                start = abs + 1;
-            }
-            None => return None,
+        let abs = start + memchr::memchr(b'\r', &buf[start..])?;
+        if abs + 1 < buf.len() && buf[abs + 1] == b'\n' {
+            return Some(abs);
         }
+        start = abs + 1;
     }
     None
 }
