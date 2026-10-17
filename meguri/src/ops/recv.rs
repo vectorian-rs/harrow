@@ -1,43 +1,54 @@
-//! Recv operation.
+//! Recv operation (`IORING_OP_RECV`).
 
-use std::future::Future;
 use std::os::fd::RawFd;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 use bytes::BytesMut;
 
+use super::{Op, Operation, Recv, sealed, sqe_len};
+use crate::driver::Driver;
 use crate::error::MeguriResult;
+use crate::sq::SubmissionQueue;
 
-/// A pending recv operation.
-pub struct Recv {
+/// Receives into the buffer's spare capacity and appends what arrived.
+/// Output: `(bytes received, buffer)`; `0` means the peer closed. The
+/// buffer comes back on error too.
+pub struct RecvOp {
     fd: RawFd,
     buf: BytesMut,
     flags: u32,
-    user_data: Option<u64>,
-    result: Option<MeguriResult<(BytesMut, usize)>>,
 }
 
 impl Recv {
-    pub fn new(fd: RawFd, buf: BytesMut, flags: u32) -> Self {
-        Self {
-            fd,
-            buf,
-            flags,
-            user_data: None,
-            result: None,
-        }
+    /// Receive from socket `fd` with `recv(2)` `flags`.
+    pub fn new(driver: &Driver, fd: RawFd, buf: BytesMut, flags: u32) -> Self {
+        Op::submit_later(driver, RecvOp { fd, buf, flags })
     }
 }
 
-impl Future for Recv {
-    type Output = MeguriResult<(BytesMut, usize)>;
+impl sealed::Sealed for RecvOp {}
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if let Some(result) = this.result.take() {
-            return Poll::Ready(result);
-        }
-        Poll::Pending
+impl Operation for RecvOp {
+    type Output = (MeguriResult<usize>, BytesMut);
+
+    fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
+        let spare = self.buf.spare_capacity_mut();
+        sq.push_recv(
+            user_data,
+            self.fd,
+            spare.as_mut_ptr().cast(),
+            sqe_len(spare.len()),
+            self.flags,
+        )
+    }
+
+    fn complete(mut self, result: MeguriResult<u32>) -> Self::Output {
+        let result = result.map(|n| {
+            let n = n as usize;
+            // SAFETY: the kernel initialized `n` bytes of spare capacity,
+            // and `n` is at most the length we passed in `push`.
+            unsafe { self.buf.set_len(self.buf.len() + n) };
+            n
+        });
+        (result, self.buf)
     }
 }

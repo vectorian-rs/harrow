@@ -6,9 +6,9 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::syscall::{
-    IORING_OP_ACCEPT, IORING_OP_ASYNC_CANCEL, IORING_OP_CLOSE, IORING_OP_LINK_TIMEOUT,
-    IORING_OP_NOP, IORING_OP_READ, IORING_OP_RECV, IORING_OP_SEND, IORING_OP_TIMEOUT,
-    IORING_OP_WRITE, IOSQE_IO_LINK, IoUringParams, IoUringSqe,
+    IORING_OP_ACCEPT, IORING_OP_ASYNC_CANCEL, IORING_OP_CLOSE, IORING_OP_CONNECT,
+    IORING_OP_LINK_TIMEOUT, IORING_OP_NOP, IORING_OP_READ, IORING_OP_RECV, IORING_OP_SEND,
+    IORING_OP_TIMEOUT, IORING_OP_WRITE, IOSQE_IO_LINK, IoUringParams, IoUringSqe,
 };
 
 /// The submission queue.
@@ -26,7 +26,6 @@ pub struct SubmissionQueue {
     ring_mask: u32,
     ring_entries: u32,
     flags: *const AtomicU32,
-    array: *mut u32,
 
     // Pointer to the separately-mapped SQE array.
     sqes: *mut IoUringSqe,
@@ -60,7 +59,8 @@ impl SubmissionQueue {
             let array = sq_ring_base.add(params.sq_off.array as usize) as *mut u32;
 
             // Initialize the SQ array with direct mapping: array[i] = i.
-            // This means ring position i always maps to SQE index i.
+            // Ring position i always maps to SQE index i, so the array is
+            // never touched again and needs no field.
             for i in 0..ring_entries {
                 *array.add(i as usize) = i;
             }
@@ -74,7 +74,6 @@ impl SubmissionQueue {
                 ring_mask,
                 ring_entries,
                 flags,
-                array,
                 sqes,
                 sq_tail,
             }
@@ -257,7 +256,31 @@ impl SubmissionQueue {
         true
     }
 
+    /// Build and push a `Connect` SQE.
+    ///
+    /// `addr` must stay valid and unmoved until the CQE is consumed.
+    pub fn push_connect(
+        &mut self,
+        user_data: u64,
+        fd: i32,
+        addr: *const libc::sockaddr,
+        addrlen: libc::socklen_t,
+    ) -> bool {
+        let Some(sqe) = self.next_sqe() else {
+            return false;
+        };
+        sqe.opcode = IORING_OP_CONNECT;
+        sqe.fd = fd;
+        sqe.addr = addr as u64;
+        sqe.off = addrlen as u64;
+        sqe.user_data = user_data;
+        true
+    }
+
     /// Build and push a `Timeout` SQE.
+    ///
+    /// Completes with `-ETIME` when `ts` elapses, or with `0` once `count`
+    /// other completions have been posted (`count = 0`: time only).
     ///
     /// # Safety contract (caller must uphold)
     ///
@@ -281,7 +304,10 @@ impl SubmissionQueue {
         sqe.opcode = IORING_OP_TIMEOUT;
         sqe.fd = -1;
         sqe.addr = ts as u64;
-        sqe.len = count;
+        // The kernel requires len == 1 (one timespec) and takes the
+        // completion count from `off`; anything else is -EINVAL.
+        sqe.len = 1;
+        sqe.off = u64::from(count);
         sqe.rw_flags = flags;
         sqe.user_data = user_data;
         true

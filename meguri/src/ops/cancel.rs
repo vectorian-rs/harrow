@@ -1,42 +1,60 @@
-//! Async cancel operation.
+//! Async cancel operation (`IORING_OP_ASYNC_CANCEL`).
+//!
+//! Dropping an [`Op`](super::Op) already cancels it. Use `Cancel` to stop an
+//! operation you keep awaiting, e.g. to end a read early: the cancelled
+//! operation then resolves with [`MeguriError::Cancelled`].
 
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use super::{Cancel, Op, Operation, sealed};
+use crate::driver::Driver;
+use crate::error::{MeguriError, MeguriResult};
+use crate::sq::SubmissionQueue;
 
-use crate::error::MeguriResult;
-
-/// Cancel result.
-#[derive(Debug, PartialEq)]
+/// What happened to the target operation.
+#[derive(Debug, PartialEq, Eq)]
 pub enum CancelResult {
+    /// The target was cancelled; it completes with `Cancelled`.
     Cancelled,
+    /// The target was already running and could not be stopped.
     AlreadyStarted,
+    /// No operation with that `user_data` is in flight.
     NotFound,
 }
 
-/// A pending cancel operation.
-pub struct Cancel {
-    target_user_data: u64,
-    result: Option<MeguriResult<CancelResult>>,
+/// Cancels the in-flight operation with a given `user_data`.
+pub struct CancelOp {
+    target: u64,
 }
 
 impl Cancel {
-    pub fn new(target_user_data: u64) -> Self {
-        Self {
-            target_user_data,
-            result: None,
-        }
+    /// Cancel the operation whose [`Op::user_data`] is `target_user_data`.
+    pub fn new(driver: &Driver, target_user_data: u64) -> Self {
+        Op::submit_later(
+            driver,
+            CancelOp {
+                target: target_user_data,
+            },
+        )
     }
 }
 
-impl Future for Cancel {
+impl sealed::Sealed for CancelOp {}
+
+impl Operation for CancelOp {
     type Output = MeguriResult<CancelResult>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if let Some(result) = this.result.take() {
-            return Poll::Ready(result);
+    fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
+        sq.push_cancel(user_data, self.target)
+    }
+
+    fn complete(self, result: MeguriResult<u32>) -> Self::Output {
+        match result {
+            Ok(_) => Ok(CancelResult::Cancelled),
+            Err(MeguriError::Io(err)) => match err.raw_os_error() {
+                Some(libc::ENOENT) => Ok(CancelResult::NotFound),
+                Some(libc::EALREADY) => Ok(CancelResult::AlreadyStarted),
+                _ => Err(MeguriError::Io(err)),
+            },
+            Err(err) => Err(err),
         }
-        Poll::Pending
     }
 }

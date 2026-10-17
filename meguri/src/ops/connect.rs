@@ -1,40 +1,48 @@
-//! Connect operation.
+//! Connect operation (`IORING_OP_CONNECT`).
 
-use std::future::Future;
 use std::net::SocketAddr;
 use std::os::fd::RawFd;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
+use super::addr::RawAddr;
+use super::{Connect, Op, Operation, sealed};
+use crate::driver::Driver;
 use crate::error::MeguriResult;
+use crate::sq::SubmissionQueue;
 
-/// A pending connect operation.
-pub struct Connect {
+/// Connects a socket to a peer.
+pub struct ConnectOp {
     fd: RawFd,
-    addr: SocketAddr,
-    user_data: Option<u64>,
-    result: Option<MeguriResult<()>>,
+    addr: Box<RawAddr>,
 }
 
 impl Connect {
-    pub fn new(fd: RawFd, addr: SocketAddr) -> Self {
-        Self {
-            fd,
-            addr,
-            user_data: None,
-            result: None,
-        }
+    /// Connect socket `fd` (matching `addr`'s family) to `addr`.
+    pub fn new(driver: &Driver, fd: RawFd, addr: SocketAddr) -> Self {
+        Op::submit_later(
+            driver,
+            ConnectOp {
+                fd,
+                addr: RawAddr::from_std(addr),
+            },
+        )
     }
 }
 
-impl Future for Connect {
+impl sealed::Sealed for ConnectOp {}
+
+impl Operation for ConnectOp {
     type Output = MeguriResult<()>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if let Some(result) = this.result.take() {
-            return Poll::Ready(result);
-        }
-        Poll::Pending
+    fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
+        sq.push_connect(
+            user_data,
+            self.fd,
+            (&raw const self.addr.storage).cast(),
+            self.addr.len,
+        )
+    }
+
+    fn complete(self, result: MeguriResult<u32>) -> Self::Output {
+        result.map(|_| ())
     }
 }

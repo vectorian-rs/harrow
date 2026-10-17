@@ -1,92 +1,55 @@
-//! Read operation.
-//!
-//! Owns the read buffer. On completion, returns the buffer and bytes read.
+//! Read operation (`IORING_OP_READ`).
 
-use std::future::Future;
 use std::os::fd::RawFd;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 use bytes::BytesMut;
 
-use crate::dispatcher::Dispatcher;
+use super::{Op, Operation, Read, sealed, sqe_len};
+use crate::driver::Driver;
 use crate::error::MeguriResult;
-use crate::ring::Ring;
+use crate::sq::SubmissionQueue;
 
-/// A pending read operation.
-///
-/// # Buffer ownership
-/// The operation owns the read buffer. If the future is dropped before
-/// completion, the buffer is registered with the reclaim pool and will
-/// not be freed until the kernel finishes.
-pub struct Read {
+/// Reads into the buffer's spare capacity (`capacity - len`) and appends
+/// what was read. Output: `(bytes read, buffer)`; the buffer comes back on
+/// error too. Reserve capacity first: a full buffer reads 0 bytes.
+pub struct ReadOp {
     fd: RawFd,
     buf: BytesMut,
     offset: u64,
-    user_data: Option<u64>,
-    submitted: bool,
-    result: Option<MeguriResult<(BytesMut, usize)>>,
 }
 
 impl Read {
-    /// Create a new read operation.
-    pub fn new(fd: RawFd, buf: BytesMut, offset: u64) -> Self {
-        Self {
-            fd,
-            buf,
-            offset,
-            user_data: None,
-            submitted: false,
-            result: None,
-        }
-    }
-
-    /// Submit the read to the ring.
-    pub fn submit(&mut self, ring: &mut Ring) -> MeguriResult<()> {
-        let ud = ring.dispatcher().register(None);
-        self.user_data = Some(ud);
-
-        let buf_ptr = self.buf.as_mut_ptr();
-        let buf_len = self.buf.len() as u32;
-
-        if !ring
-            .sq()
-            .push_read(ud, self.fd, buf_ptr, buf_len, self.offset)
-        {
-            return Err(crate::error::MeguriError::SqFull);
-        }
-
-        self.submitted = true;
-        Ok(())
+    /// Read from `fd` at `offset`. Use `u64::MAX` for the current file
+    /// position; pipes and sockets need `0` or `u64::MAX`.
+    pub fn new(driver: &Driver, fd: RawFd, buf: BytesMut, offset: u64) -> Self {
+        Op::submit_later(driver, ReadOp { fd, buf, offset })
     }
 }
 
-impl Future for Read {
-    type Output = MeguriResult<(BytesMut, usize)>;
+impl sealed::Sealed for ReadOp {}
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
+impl Operation for ReadOp {
+    type Output = (MeguriResult<usize>, BytesMut);
 
-        // Check if result is already available (set by dispatcher).
-        if let Some(result) = this.result.take() {
-            return Poll::Ready(result);
-        }
-
-        // Register or update waker.
-        if let Some(ud) = this.user_data {
-            this.dispatcher_mut().update_waker(ud, cx.waker());
-        }
-
-        Poll::Pending
+    fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
+        let spare = self.buf.spare_capacity_mut();
+        sq.push_read(
+            user_data,
+            self.fd,
+            spare.as_mut_ptr().cast(),
+            sqe_len(spare.len()),
+            self.offset,
+        )
     }
-}
 
-// Helper to access dispatcher from within the future.
-// In a full implementation, this would be handled via a shared reference.
-impl Read {
-    fn dispatcher_mut(&mut self) -> &mut Dispatcher {
-        // Placeholder: in production, this holds a reference to the ring's
-        // dispatcher. The skeleton uses a thread-local for now.
-        unimplemented!("dispatcher access — requires ring reference")
+    fn complete(mut self, result: MeguriResult<u32>) -> Self::Output {
+        let result = result.map(|n| {
+            let n = n as usize;
+            // SAFETY: the kernel initialized `n` bytes of spare capacity,
+            // and `n` is at most the length we passed in `push`.
+            unsafe { self.buf.set_len(self.buf.len() + n) };
+            n
+        });
+        (result, self.buf)
     }
 }

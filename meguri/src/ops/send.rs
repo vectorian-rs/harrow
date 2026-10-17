@@ -1,43 +1,46 @@
-//! Send operation.
+//! Send operation (`IORING_OP_SEND`).
 
-use std::future::Future;
 use std::os::fd::RawFd;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 use bytes::Bytes;
 
+use super::{Op, Operation, Send, sealed, sqe_len};
+use crate::driver::Driver;
 use crate::error::MeguriResult;
+use crate::sq::SubmissionQueue;
 
-/// A pending send operation.
-pub struct Send {
+/// Sends the buffer. Output: `(bytes sent, buffer)`; a short send is
+/// possible, so check the count.
+pub struct SendOp {
     fd: RawFd,
     buf: Bytes,
     flags: u32,
-    user_data: Option<u64>,
-    result: Option<MeguriResult<usize>>,
 }
 
 impl Send {
-    pub fn new(fd: RawFd, buf: Bytes, flags: u32) -> Self {
-        Self {
-            fd,
-            buf,
-            flags,
-            user_data: None,
-            result: None,
-        }
+    /// Send on socket `fd` with `send(2)` `flags`. Pass `MSG_NOSIGNAL` to
+    /// get `EPIPE` instead of `SIGPIPE` when the peer is gone.
+    pub fn new(driver: &Driver, fd: RawFd, buf: Bytes, flags: u32) -> Self {
+        Op::submit_later(driver, SendOp { fd, buf, flags })
     }
 }
 
-impl Future for Send {
-    type Output = MeguriResult<usize>;
+impl sealed::Sealed for SendOp {}
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if let Some(result) = this.result.take() {
-            return Poll::Ready(result);
-        }
-        Poll::Pending
+impl Operation for SendOp {
+    type Output = (MeguriResult<usize>, Bytes);
+
+    fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
+        sq.push_send(
+            user_data,
+            self.fd,
+            self.buf.as_ptr(),
+            sqe_len(self.buf.len()),
+            self.flags,
+        )
+    }
+
+    fn complete(self, result: MeguriResult<u32>) -> Self::Output {
+        (result.map(|n| n as usize), self.buf)
     }
 }
