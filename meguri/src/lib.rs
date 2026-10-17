@@ -4,31 +4,42 @@
 //!
 //! - **Safety**: Correct buffer lifetime management. Operations own their buffers;
 //!   dropping a future before completion never causes use-after-free.
-//! - **Performance**: Exposes advanced io_uring features (registered buffers, fixed
-//!   files, buffer rings, zero-copy send, multishot recv) that other runtimes omit.
-//! - **Runtime independence**: No Tokio dependency. Uses eventfd + `Waker` for
-//!   async integration. Works standalone or with any async runtime.
+//! - **Performance**: Direct access to the mmap'd rings with no runtime in
+//!   between. Advanced features (registered buffers, fixed files, buffer rings,
+//!   zero-copy send, multishot recv) are the goal, not yet implemented.
+//! - **Runtime independence**: No Tokio dependency. Operations are plain
+//!   futures woken through `Waker`; drive them with `Driver::block_on`, or call
+//!   `Driver::turn` from any single-threaded event loop.
 //! - **Linux-only**: io_uring is a Linux kernel feature. No kqueue/epoll pretense.
 //!
 //! ## Quick Start
 //!
 //! ```ignore
-//! use meguri::Ring;
+//! use bytes::BytesMut;
+//! use meguri::{Driver, ops::{Accept, Recv}};
 //!
-//! let mut ring = Ring::new(256)?;
-//! // Submit operations, poll completions, wake tasks.
+//! let driver = Driver::new(256)?;
+//! driver.block_on(async {
+//!     let (socket, peer) = Accept::new(&driver, listener_fd).await?;
+//!     let (n, buf) = Recv::new(&driver, socket.as_raw_fd(), BytesMut::with_capacity(4096), 0).await;
+//!     // ...
+//! });
 //! ```
 //!
 //! ## Design
 //!
-//! Meguri has three layers:
+//! Meguri has two layers:
 //!
 //! 1. **Raw Ring** (`Ring`, `SubmissionQueue`, `CompletionQueue`) — direct access
-//!    to io_uring primitives with safe wrappers around unsafe syscalls.
-//! 2. **Safe Operations** (`ops::*`) — typed I/O operations (`Read`, `Write`,
-//!    `Accept`, etc.) that own their buffers and are cancellation-safe.
-//! 3. **Advanced Features** (`BufRing`, `FixedFileRegistry`, `RegisteredBufferPool`)
-//!    — registered resources for maximum throughput.
+//!    to io_uring primitives with safe wrappers around unsafe syscalls. Use it
+//!    to run your own event loop (as `harrow-server-meguri` does).
+//! 2. **Operations** (`Driver`, `ops::*`) — `Accept`, `Connect`, `Recv`, `Send`,
+//!    `Read`, `Write`, `Timeout` and `Cancel` as futures that own their buffers
+//!    and are cancellation-safe. A `Driver` is the shared handle they submit
+//!    through; `Driver::block_on` or `Driver::turn` drives completions.
+//!
+//! Registered resources (buffer rings, fixed files, registered buffers) are
+//! planned but not implemented.
 //!
 //! ## Buffer Safety
 //!
@@ -36,10 +47,11 @@
 //! reading/writing a buffer after the `Future` that submitted it has been dropped.
 //! Meguri solves this by:
 //!
-//! 1. Every operation **owns** its buffer.
-//! 2. On `drop()` before completion, the operation registers a **reclaim callback**.
-//! 3. When the completion arrives, the buffer is returned to a reclaim pool.
-//! 4. The reclaim pool holds buffers until the ring is destroyed.
+//! 1. Every operation **owns** its buffer and returns it with the result.
+//! 2. On `drop()` before completion, the buffer moves to the ring's
+//!    **reclaim pool** and an `ASYNC_CANCEL` is queued for the operation.
+//! 3. When the completion arrives, the buffer is released (an accepted socket
+//!    is closed).
 //!
 //! This guarantees: **buffers are never freed while the kernel is using them**.
 
