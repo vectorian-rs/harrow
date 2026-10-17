@@ -1197,9 +1197,19 @@ mod tests {
 
     #[test]
     fn stream_response_fixed_length_mismatch_reports_error() {
-        let response = harrow_core::response::Response::text("hello")
-            .header("content-length", "10")
-            .into_inner();
+        // A buffered body with a wrong content-length is rejected earlier, in
+        // `prepare_response`; only a streaming body can end short mid-write.
+        let response = harrow_core::response::Response::streaming(
+            http::StatusCode::OK,
+            futures_util::stream::iter(vec![Ok::<
+                Frame<Bytes>,
+                Box<dyn std::error::Error + Send + Sync>,
+            >(Frame::data(Bytes::from_static(
+                b"hello",
+            )))]),
+        )
+        .header("content-length", "10")
+        .into_inner();
 
         let (response, saw_done) = collect_response_stream(response, true, false);
         let response = String::from_utf8_lossy(&response);
