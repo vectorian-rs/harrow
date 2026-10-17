@@ -53,11 +53,28 @@ Graceful shutdown follows this shape:
 4. close remaining connections;
 5. join worker threads/runtimes.
 
-Tokio exposes async server functions and a shutdown-aware entrypoint:
+Tokio exposes async server functions and a shutdown-aware entrypoint for a
+single runtime:
 
 ```rust,ignore
 harrow::runtime::tokio::serve_with_shutdown(app, addr, shutdown_future).await?;
 ```
+
+For one runtime per core, start the workers and keep the handle. `start*`
+returns once every worker is accepting; `shutdown()` runs the steps above and
+joins the workers:
+
+```rust,ignore
+let server = harrow::runtime::tokio::start_with_config(make_app, addr, config)?;
+wait_for_sigterm(); // e.g. block_on(tokio::signal::ctrl_c()) on the main thread
+server.shutdown()?;
+```
+
+`serve_multi_worker(make_app, addr, config)` is `start_with_config(..)?.wait()`:
+it blocks until a worker exits and cannot be stopped from outside.
+
+Tokio, Monoio, and Meguri build these handles with the same
+`harrow_server::start_workers`, so startup and shutdown behave the same.
 
 Monoio's root API exposes high-level blocking bootstraps:
 
