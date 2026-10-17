@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Security headers middleware (`security-headers` feature)
+- `harrow-server-tokio-hyper`: prototype Tokio backend where Hyper owns HTTP/1 parsing and framing, with one `current_thread` runtime per worker (`tokio-hyper` feature). Used to compare Hyper against the custom codec before 1.0.
+
+### Fixed
+- HTTP/1 codec enforces the header size limit
+- Stricter `Transfer-Encoding` parsing
+- Response framing headers are normalized, so a response never carries both `Content-Length` and `Transfer-Encoding`
+
+### Changed
+- Shared H1 connection lifecycle and threaded worker control moved into `harrow-server`
+
+## [0.10.0] - 2026-04-20
+
+### Added
+- `harrow-codec-h1`: Harrow's own HTTP/1.1 codec (request parsing, response serialization, chunked encoding, incremental `PayloadDecoder`), with cargo-fuzz targets and proptest round-trip tests
+- `harrow-io`: runtime-agnostic buffer pool and I/O traits
+- `harrow-server`: shared listener, worker, shutdown and config primitives for all backends
+- Request bodies are streamed through dispatch with backpressure on the Tokio, Monoio and meguri backends
+- Per-worker app factories for local-worker runtimes
+- TLA+ model of the connection state machine and deterministic simulation tests for the connection handler
+
+### Changed
+- `harrow-server-tokio` now runs on `harrow-codec-h1` instead of Hyper. Hyper is no longer a default dependency of `harrow-core`.
+- `harrow-server-monoio` migrated to `harrow-codec-h1`
+- Fully buffered responses set `Content-Length` instead of being sent chunked (about 2x throughput on small responses)
+- Lower allocation overhead when writing response heads
+- Bumped rolly to 0.16
+
+### Fixed
+- Request smuggling hardening: reject any `Content-Length` + `Transfer-Encoding` combination and unsupported transfer codings, enforce cumulative body limits, fix meguri body boundaries with pipelined requests
+
+## [0.9.6] - 2026-04-11
+
+### Added
+- meguri HTTP/1.1 server: completion-driven io_uring event loop with slab-indexed connections, `SO_REUSEPORT`, timeout sweeping and 100-continue support
+- `.o11y_middleware()` for apps that set up their own tracing subscriber; `.o11y()` remains the one-call setup
+- Public `init_telemetry` / `try_init_telemetry` helpers
+
+## [0.9.5] - 2026-04-10
+
+### Added
+- `serve_multi_worker()`: one `current_thread` Tokio runtime per CPU core, with `SO_REUSEPORT` for kernel-level connection distribution
+
+### Changed
+- Bumped rolly to 0.14 (split into `rolly-tokio` and `rolly-monoio`)
+
 ## [0.9.3] - 2026-04-05
 
 ### Fixed
