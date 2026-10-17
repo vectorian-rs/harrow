@@ -494,8 +494,19 @@ async fn fixed_length_mismatch_closes_connection_without_serving_next_request() 
 
     let app = || {
         App::new()
+            // Streaming, so the short body is only detected mid-write; a
+            // buffered body with a wrong content-length is rejected earlier.
             .get("/bad", |_req: Request| async move {
-                Response::text("oops").header("content-length", "10")
+                Response::streaming(
+                    StatusCode::OK,
+                    futures_util::stream::iter(vec![Ok::<
+                        http_body::Frame<bytes::Bytes>,
+                        Box<dyn std::error::Error + Send + Sync>,
+                    >(http_body::Frame::data(
+                        bytes::Bytes::from_static(b"oops"),
+                    ))]),
+                )
+                .header("content-length", "10")
             })
             .get("/hello", hello)
     };
