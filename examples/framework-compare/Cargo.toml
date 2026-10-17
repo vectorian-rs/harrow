@@ -1,0 +1,46 @@
+# Standalone workspace: Tako 2.x needs a newer Rust than the Harrow workspace
+# pins, and ntex/Tako versions here must not leak into Harrow's Cargo.lock.
+[workspace]
+
+[package]
+name = "framework-compare"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The same celeratax-shaped API written in Harrow, axum, ntex, and Tako, for a code comparison"
+
+[dependencies]
+harrow = { path = "../../harrow", features = ["tokio", "json"] }
+# axum
+axum = "0.8"
+tower-http = { version = "0.6.11", features = ["timeout"] }
+ntex = { version = "4", default-features = false, features = ["tokio", "ws"] } # "ws" works around a 4.3.0 build failure without it
+tako-rs = "2.4"
+tokio = { version = "1", features = ["full"] }
+http = "1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+getrandom = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[[bin]]
+name = "compare-harrow"
+path = "src/bin/harrow.rs"
+
+[[bin]]
+name = "compare-axum"
+path = "src/bin/axum.rs"
+
+[[bin]]
+name = "compare-ntex"
+path = "src/bin/ntex.rs"
+
+[[bin]]
+name = "compare-tako"
+path = "src/bin/tako.rs"
