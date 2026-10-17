@@ -358,6 +358,24 @@ mod tests {
         assert_eq!(completed, count as usize);
     }
 
+    /// A pure timer (count 0) must fire with -ETIME, not be rejected.
+    #[test]
+    fn timeout_fires_with_etime() {
+        let mut ring = Ring::new(8).expect("failed to create ring");
+        let ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000,
+        };
+
+        assert!(ring.sq().push_timeout(7, &ts, 0, 0));
+        ring.submit_and_wait(1).expect("submit_and_wait failed");
+
+        let cqe = ring.cq.peek().expect("expected one CQE");
+        assert_eq!(cqe.user_data, 7);
+        assert_eq!(cqe.res, -libc::ETIME, "timeout SQE rejected or misfired");
+        ring.cq.advance();
+    }
+
     /// Verify SQE and CQE struct sizes match kernel expectations.
     #[test]
     fn struct_sizes() {

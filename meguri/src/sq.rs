@@ -279,6 +279,9 @@ impl SubmissionQueue {
 
     /// Build and push a `Timeout` SQE.
     ///
+    /// Completes with `-ETIME` when `ts` elapses, or with `0` once `count`
+    /// other completions have been posted (`count = 0`: time only).
+    ///
     /// # Safety contract (caller must uphold)
     ///
     /// `ts` must point to a valid `libc::timespec` that remains alive and
@@ -301,7 +304,10 @@ impl SubmissionQueue {
         sqe.opcode = IORING_OP_TIMEOUT;
         sqe.fd = -1;
         sqe.addr = ts as u64;
-        sqe.len = count;
+        // The kernel requires len == 1 (one timespec) and takes the
+        // completion count from `off`; anything else is -EINVAL.
+        sqe.len = 1;
+        sqe.off = u64::from(count);
         sqe.rw_flags = flags;
         sqe.user_data = user_data;
         true
