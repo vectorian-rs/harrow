@@ -44,16 +44,18 @@ pub mod timeout;
 pub mod write;
 
 pub use accept::AcceptOp;
-pub use cancel::Cancel;
+pub use cancel::{CancelOp, CancelResult};
 pub use connect::ConnectOp;
 pub use read::ReadOp;
 pub use recv::RecvOp;
 pub use send::SendOp;
-pub use timeout::Timeout;
+pub use timeout::TimeoutOp;
 pub use write::WriteOp;
 
 /// Accept a connection; see [`AcceptOp`].
 pub type Accept = Op<AcceptOp>;
+/// Cancel another operation; see [`CancelOp`].
+pub type Cancel = Op<CancelOp>;
 /// Connect a socket; see [`ConnectOp`].
 pub type Connect = Op<ConnectOp>;
 /// Read into a buffer's spare capacity; see [`ReadOp`].
@@ -62,6 +64,8 @@ pub type Read = Op<ReadOp>;
 pub type Recv = Op<RecvOp>;
 /// Send a buffer; see [`SendOp`].
 pub type Send = Op<SendOp>;
+/// Kernel timer; see [`TimeoutOp`].
+pub type Timeout = Op<TimeoutOp>;
 /// Write a buffer; see [`WriteOp`].
 pub type Write = Op<WriteOp>;
 
@@ -396,5 +400,59 @@ mod tests {
         }
         assert!(driver.ring().reclaim().is_empty());
         assert!(driver.ring().dispatcher().is_empty());
+    }
+
+    #[test]
+    fn timeout_completes_after_its_duration() {
+        let driver = Driver::new(8).expect("ring");
+        let started = std::time::Instant::now();
+        driver
+            .block_on(Timeout::new(&driver, std::time::Duration::from_millis(20)))
+            .expect("timeout");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(20));
+    }
+
+    #[test]
+    fn dropping_a_long_timeout_cancels_it_promptly() {
+        let driver = Driver::new(8).expect("ring");
+        let started = std::time::Instant::now();
+
+        driver.block_on(poll_once_then_drop(Timeout::new(
+            &driver,
+            std::time::Duration::from_secs(30),
+        )));
+        while driver.ring().dispatcher().in_flight() > 0 {
+            driver.turn(true).expect("turn");
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(driver.ring().reclaim().is_empty());
+    }
+
+    #[test]
+    fn cancel_stops_an_operation_that_is_still_awaited() {
+        let driver = Driver::new(8).expect("ring");
+        let (r, w) = pipe();
+
+        driver.block_on(async {
+            let mut read = Read::new(&driver, r, BytesMut::with_capacity(16), 0);
+            std::future::poll_fn(|cx| {
+                assert!(Pin::new(&mut read).poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            let target = read.user_data().expect("submitted");
+
+            let outcome = Cancel::new(&driver, target).await.expect("cancel");
+            assert_eq!(outcome, CancelResult::Cancelled);
+            let (res, _) = read.await;
+            assert!(matches!(res, Err(MeguriError::Cancelled)), "{res:?}");
+        });
+
+        let missing = driver
+            .block_on(Cancel::new(&driver, 9_999))
+            .expect("cancel");
+        assert_eq!(missing, CancelResult::NotFound);
+        close(r);
+        close(w);
     }
 }
