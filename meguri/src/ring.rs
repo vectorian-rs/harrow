@@ -262,6 +262,30 @@ impl Ring {
         &mut self.reclaim
     }
 
+    /// Release an operation whose future was dropped.
+    ///
+    /// If the kernel is still working on it, `resources` move to the reclaim
+    /// pool and an `ASYNC_CANCEL` is queued so the kernel stops early (an idle
+    /// `accept` or `recv` would otherwise hold its buffers until the ring is
+    /// destroyed). The cancel's own completion is discarded.
+    pub(crate) fn release_op(
+        &mut self,
+        user_data: u64,
+        resources: impl crate::reclaim::Reclaimable,
+    ) {
+        if self
+            .dispatcher
+            .release(user_data, resources, &mut self.reclaim)
+        {
+            let cancel_ud = self.dispatcher.register_internal();
+            if !self.sq.push_cancel(cancel_ud, user_data) {
+                // SQ full: the operation still completes on its own; the
+                // resources are reclaimed then.
+                self.dispatcher.unregister(cancel_ud);
+            }
+        }
+    }
+
     /// The kernel-reported parameters for this ring.
     pub fn params(&self) -> &IoUringParams {
         &self.params

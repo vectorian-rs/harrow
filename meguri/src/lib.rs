@@ -61,6 +61,8 @@ pub mod cq;
 #[cfg(target_os = "linux")]
 pub mod dispatcher;
 #[cfg(target_os = "linux")]
+pub mod driver;
+#[cfg(target_os = "linux")]
 pub mod error;
 #[cfg(target_os = "linux")]
 pub mod ops;
@@ -77,6 +79,8 @@ pub mod syscall;
 pub use cq::CompletionQueue;
 #[cfg(target_os = "linux")]
 pub use dispatcher::Dispatcher;
+#[cfg(target_os = "linux")]
+pub use driver::Driver;
 #[cfg(target_os = "linux")]
 pub use error::{MeguriError, MeguriResult};
 #[cfg(target_os = "linux")]

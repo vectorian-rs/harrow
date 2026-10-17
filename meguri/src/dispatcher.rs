@@ -32,6 +32,8 @@ pub enum OpState {
 /// on the hot completion path.
 pub struct Dispatcher {
     pending: Slab<OpState>,
+    /// Entries still waiting for a CQE (everything except `Completed`).
+    in_flight: usize,
 }
 
 impl Default for Dispatcher {
@@ -44,18 +46,31 @@ impl Dispatcher {
     pub fn new() -> Self {
         Self {
             pending: Slab::with_capacity(256),
+            in_flight: 0,
         }
     }
 
     /// Allocate a new user_data and register the operation as pending.
     /// Returns the user_data (slab key) to attach to the SQE.
     pub fn register(&mut self, waker: Option<Waker>) -> u64 {
+        self.in_flight += 1;
         self.pending.insert(OpState::Pending { waker }) as u64
     }
 
     /// Allocate a user_data whose completion is discarded.
     pub fn register_internal(&mut self) -> u64 {
+        self.in_flight += 1;
         self.pending.insert(OpState::Internal) as u64
+    }
+
+    /// Remove a registration whose SQE was never pushed.
+    pub fn unregister(&mut self, user_data: u64) {
+        let key = user_data as usize;
+        if let Some(state) = self.pending.try_remove(key)
+            && !matches!(state, OpState::Completed { .. })
+        {
+            self.in_flight -= 1;
+        }
     }
 
     /// Mark an operation as dropped (future dropped before completion).
@@ -109,6 +124,7 @@ impl Dispatcher {
             OpState::Pending { waker } => {
                 let waker = waker.take();
                 *state = OpState::Completed { res, flags };
+                self.in_flight -= 1;
                 if let Some(w) = waker {
                     w.wake();
                 }
@@ -116,10 +132,12 @@ impl Dispatcher {
             OpState::Dropped { reclaim_key } => {
                 let reclaim_key = *reclaim_key;
                 self.pending.remove(key);
+                self.in_flight -= 1;
                 reclaim.reclaim(reclaim_key, res);
             }
             OpState::Internal => {
                 self.pending.remove(key);
+                self.in_flight -= 1;
             }
             // A second CQE for the same user_data (multishot); not used yet.
             OpState::Completed { .. } => {}
@@ -157,6 +175,11 @@ impl Dispatcher {
         self.pending.contains(user_data as usize)
     }
 
+    /// Number of operations still waiting for a completion from the kernel.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight
+    }
+
     /// Number of registered operations.
     pub fn len(&self) -> usize {
         self.pending.len()
@@ -189,7 +212,9 @@ mod tests {
         let ud = dispatcher.register(None);
 
         assert_eq!(dispatcher.take_completion(ud), None);
+        assert_eq!(dispatcher.in_flight(), 1);
         dispatcher.complete(ud, 7, 1, &mut reclaim);
+        assert_eq!(dispatcher.in_flight(), 0);
         assert_eq!(dispatcher.take_completion(ud), Some((7, 1)));
         assert!(dispatcher.is_empty());
     }
