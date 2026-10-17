@@ -26,7 +26,6 @@ pub struct SubmissionQueue {
     ring_mask: u32,
     ring_entries: u32,
     flags: *const AtomicU32,
-    array: *mut u32,
 
     // Pointer to the separately-mapped SQE array.
     sqes: *mut IoUringSqe,
@@ -60,7 +59,8 @@ impl SubmissionQueue {
             let array = sq_ring_base.add(params.sq_off.array as usize) as *mut u32;
 
             // Initialize the SQ array with direct mapping: array[i] = i.
-            // This means ring position i always maps to SQE index i.
+            // Ring position i always maps to SQE index i, so the array is
+            // never touched again and needs no field.
             for i in 0..ring_entries {
                 *array.add(i as usize) = i;
             }
@@ -74,7 +74,6 @@ impl SubmissionQueue {
                 ring_mask,
                 ring_entries,
                 flags,
-                array,
                 sqes,
                 sq_tail,
             }
