@@ -51,20 +51,20 @@ each:
 
 | | Harrow | axum | Tako | ntex |
 |---|---:|---:|---:|---:|
-| Code lines (no comments, blanks, tests) | **176** | 191 | 236 | 243 |
-| Trait impls you write | **0** | 4 | 6 | 9 |
+| Code lines (no comments, blanks, tests) | **163** | 191 | 236 | 243 |
+| Trait impls you write | **1** | 4 | 6 | 9 |
 | Contract test | pass | pass | pass | pass |
 
 ### How each one reads
 
 **Harrow.** Handlers are `async fn(Request) -> Result<Response, ApiError>`.
 Session and origin checks are group middleware that put an
-`AuthenticatedSession` into request extensions; handlers read it back. This is
-the same shape celeratax already hand-rolls on top of axum, so a port is
-mostly mechanical. Weak spots: handlers fetch state and session with
-`expect()`, so forgetting a middleware is a runtime panic, not a compile
-error; and errors need a small `api_fn` wrapper to get the request id (see
-gaps below).
+`AuthenticatedSession` into request extensions; handlers read it back. Errors
+tag their response with `Response::set_ext` and one middleware renders the
+envelope, the same pattern the other three use. This is the shape celeratax
+already hand-rolls on top of axum, so a port is mostly mechanical. Weak spot:
+handlers fetch state and session with `expect()`, so forgetting a middleware
+is a runtime panic, not a compile error.
 
 **axum.** The most self-documenting signatures: a handler that takes
 `session: AuthenticatedSession` cannot be called without one. Errors are
@@ -104,21 +104,18 @@ Measured October 2026.
 | Version | 0.10 | 0.8 | 2.4 (2.0 in May 2026) | 4.3 (4.0 on 2026-10-08) |
 | Maintainers | us | tokio-rs team | 1 (506 of 508 commits) | 1 main (4,694 commits; next has 57) |
 | Downloads | small | very high | ~5k total | ~1.1M total |
-| Issues hit while building this | 405 status, no response extensions | none | no test client, shutdown waits forever if the server dies | 4.3.0 fails to build without `ws`; docs name a method that was renamed |
+| Issues hit while building this | no response extensions (since fixed) | none | no test client, shutdown waits forever if the server dies | 4.3.0 fails to build without `ws`; docs name a method that was renamed |
 
 ## Harrow gaps found
 
-These blocked a clean port or forced a workaround. Fix them before migrating
-production services.
+These blocked a clean port or forced a workaround.
 
-1. **`Response` has no extensions.** axum, Tako, and ntex all solve "the error
-   body needs the request id" by tagging the error response and rendering it
-   in one middleware. Harrow cannot, so every handler goes through an
-   `api_fn` adapter that boxes the future. Adding
-   `Response::extensions()`/`extensions_mut()` removes the adapter.
-2. **Custom 405 handler cannot choose its status.** `dispatch.rs` forces 405
-   onto whatever `method_not_allowed_handler` returns. celeratax answers a
-   wrong method with 404.
+1. **`Response` had no extensions.** Fixed: `Response::set_ext` /
+   `Response::ext` let an error tag its response so one middleware renders
+   the envelope with the request id, as in the other three frameworks.
+2. **Custom 404/405 handlers cannot choose their status.** Not a gap after
+   (1): the handlers return a tagged `ApiError`, and the rendering middleware
+   uses the error's own status, so the app answers a wrong method with 404.
 3. **`serve_multi_worker` has no shutdown hook.** Only the single-worker
    `serve_with_config` can drain on SIGTERM, so multi-core deployment and
    graceful shutdown are currently exclusive.
@@ -129,9 +126,8 @@ production services.
    needs a full `http::Request` builder. A `.get(path).header(..)` style
    builder would match celeratax's `TestCtx`.
 
-The `tls` feature on `harrow-server-tokio` is declared but not wired into the
-custom HTTP/1 server. celeratax does not need it (CloudFront terminates TLS),
-but the feature should either work or be removed.
+The unused `tls` feature on `harrow-server-tokio` has been removed. No
+backend terminates TLS in-process; celeratax terminates it at CloudFront.
 
 ## Migrating celeratax and datadeft-auth
 
@@ -147,7 +143,7 @@ one to one:
 | `authenticate(&request, state).await?` in handlers | `require_session` group middleware, or keep the explicit call |
 | `read_limited_body` + timeout | `App::max_body_size` + `ServerConfig::body_read_timeout`, then `req.body_bytes()` |
 | custom hyper accept loop, `Semaphore(512)`, 5 s header timeout | `ServerConfig { max_connections, header_read_timeout, .. }` (needs gap 4 for the 503) |
-| `PublicError::into_response(request_id)` | same, until gap 1 lands |
+| `PublicError::into_response(request_id)` | tag the error with `Response::set_ext`; render it in the request-id middleware |
 | `router(state).oneshot(req)` tests | `app(state).client().request(req)` |
 
 **datadeft-auth** is already mostly framework-neutral. `authenticate_session`
@@ -163,7 +159,7 @@ becomes a few lines per function.
 
 ### Suggested order
 
-1. Fix Harrow gaps 1 to 4 (each is small; 3 is the largest).
+1. Fix Harrow gaps 3 and 4 (1 is done; 2 needs no framework change).
 2. Add the framework-neutral core to datadeft-auth and a Harrow adapter crate.
 3. Port celeratax's `backends/api` route group by group behind the existing
    insta snapshot tests, which already pin the response contract.

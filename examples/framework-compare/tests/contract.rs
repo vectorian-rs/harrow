@@ -111,10 +111,7 @@ fn contract(addr: SocketAddr) {
     let r = send(addr, "GET", "/nope", &[], b"");
     r.status(404).error("not_found").no_store();
     assert!(r.header("x-request-id").is_some());
-    // Wrong method: celeratax answers 404. Harrow forces 405 on its custom
-    // method-not-allowed handler, so either is accepted.
-    let r = send(addr, "DELETE", "/api/v1/companies", &[ALICE], b"");
-    assert!(matches!(r.code, 404 | 405), "wrong method: got {}", r.code);
+    send(addr, "DELETE", "/api/v1/companies", &[ALICE], b"").status(404).error("not_found");
 
     // Logout: 303, two Set-Cookie headers, session revoked.
     send(addr, "POST", "/api/v1/session/logout", &[BOB], b"").status(403);

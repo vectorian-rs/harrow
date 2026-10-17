@@ -59,7 +59,7 @@ four servers over real TCP. An implementation is done when it passes.
 | GET | `/api/v1/usage?period=YYYY-MM` | session | `period` query param required and valid (`validate_month`), else 400; 200 JSON `domain::Usage` |
 | POST | `/api/v1/session/logout` | session + origin | `store.revoke`; 303 `location: /`; **two** `set-cookie` headers: `domain::CLEAR_SESSION_COOKIE` and `domain::CLEAR_POW_COOKIE` |
 | GET | `/api/v1/admin/users` | session + admin | `domain::is_admin(email)` else 404 `not_found` (hide the route); 200 JSON list of emails |
-| any | anything else | no | 404 `not_found` envelope (a wrong method on a known path may be 404 or 405) |
+| any | anything else, including a wrong method on a known path | no | 404 `not_found` envelope |
 
 "Private headers" means `cache-control: no-store` and `vary: cookie` on the
 success response (`domain::PRIVATE_HEADERS`).

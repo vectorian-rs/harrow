@@ -5,16 +5,16 @@
 //! `serve_multi_worker` would spread load over all cores, but in Harrow 0.10
 //! it has no external shutdown hook, so it cannot drain on SIGTERM yet.
 //!
-//! Shape: plain `async fn(Request)` handlers; cross-cutting concerns are
-//! middleware that put typed values into request extensions (`RequestId`,
-//! `AuthenticatedSession`), and handlers read them back.
+//! Shape: plain `async fn(Request) -> Result<Response, ApiError>` handlers;
+//! cross-cutting concerns are middleware that put typed values into request
+//! extensions (`AuthenticatedSession`), and handlers read them back. Errors
+//! only tag their response (`Response::set_ext`); `request_context` is the one
+//! place that renders the error envelope, because it knows the request id.
 
-use std::future::Future;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::time::{Duration, Instant};
 
-use harrow::{App, Next, Request, Response, ServerConfig};
+use harrow::{App, IntoResponse, Next, Request, Response, ServerConfig};
 use http::{Method, StatusCode};
 
 use crate::domain::{self, ApiError, AuthenticatedSession, SessionView, Store};
@@ -43,18 +43,19 @@ pub fn app(store: Store) -> App {
         .group("/api/v1", |api| {
             api.middleware(same_origin_for_posts)
                 .middleware(require_session)
-                .get("/session/current", api_fn(current_session))
-                .post("/session/logout", api_fn(logout))
-                .get("/companies", api_fn(list_companies))
-                .post("/companies", api_fn(create_company))
-                .get("/companies/:company_id/months/:month/state", api_fn(month_state))
-                .get("/companies/:company_id/documents/:file_id/content", api_fn(document_content))
-                .get("/usage", api_fn(usage))
-                .group("/admin", |admin| admin.middleware(require_admin).get("/users", api_fn(admin_users)))
+                .get("/session/current", current_session)
+                .post("/session/logout", logout)
+                .get("/companies", list_companies)
+                .post("/companies", create_company)
+                .get("/companies/:company_id/months/:month/state", month_state)
+                .get("/companies/:company_id/documents/:file_id/content", document_content)
+                .get("/usage", usage)
+                .group("/admin", |admin| admin.middleware(require_admin).get("/users", admin_users))
         })
-        .not_found_handler(api_fn(not_found))
-        // celeratax answers a wrong method with the same 404 as an unknown path.
-        .method_not_allowed_handler(|req, _allowed| api_fn(not_found)(req))
+        .not_found_handler(|_req| async { ApiError::NotFound })
+        // celeratax answers a wrong method with the same 404 as an unknown
+        // path; `request_context` renders the error with its own status.
+        .method_not_allowed_handler(|_req, _allowed| async { ApiError::NotFound })
 }
 
 // ---------------------------------------------------------------------------
@@ -119,28 +120,24 @@ async fn admin_users(req: Request) -> Result<Response, ApiError> {
     Ok(private(Response::json(&store(&req).admin_list_users().await?)))
 }
 
-async fn not_found(_req: Request) -> Result<Response, ApiError> {
-    Err(ApiError::NotFound)
-}
-
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
-struct RequestId(String);
-
-/// Request id, response header, and one access-log line per request.
-async fn request_context(mut req: Request, next: Next) -> Response {
+/// Request id, error envelope, `x-request-id`, and one access-log line.
+async fn request_context(req: Request, next: Next) -> Response {
     let started = Instant::now();
     let request_id = req
         .header(domain::CLOUDFRONT_REQUEST_ID)
         .map(str::to_owned)
         .unwrap_or_else(domain::new_request_id);
     let method = req.method().clone();
-    req.set_ext(RequestId(request_id.clone()));
 
-    let res = next.run(req).await.header("x-request-id", &request_id);
+    let mut res = next.run(req).await;
+    if let Some(&err) = res.ext::<ApiError>() {
+        res = render_error(err, &request_id);
+    }
+    let res = res.header("x-request-id", &request_id);
     tracing::info!(
         request_id,
         %method,
@@ -154,7 +151,7 @@ async fn request_context(mut req: Request, next: Next) -> Response {
 async fn same_origin_for_posts(req: Request, next: Next) -> Response {
     let origins = req.headers().get_all("origin").iter().map(|v| v.as_bytes());
     if req.method() == Method::POST && !domain::same_origin(origins) {
-        return error_response(ApiError::Forbidden, &req);
+        return ApiError::Forbidden.into_response();
     }
     next.run(req).await
 }
@@ -166,7 +163,7 @@ async fn require_session(mut req: Request, next: Next) -> Response {
             req.set_ext(session);
             next.run(req).await
         }
-        Err(err) => error_response(err, &req),
+        Err(err) => err.into_response(),
     }
 }
 
@@ -175,7 +172,7 @@ async fn require_admin(req: Request, next: Next) -> Response {
     if domain::is_admin(&session(&req).email) {
         next.run(req).await
     } else {
-        error_response(ApiError::NotFound, &req)
+        ApiError::NotFound.into_response()
     }
 }
 
@@ -183,33 +180,27 @@ async fn require_admin(req: Request, next: Next) -> Response {
 // Glue
 // ---------------------------------------------------------------------------
 
-/// Adapt a fallible handler: render `ApiError` with the request's id.
-fn api_fn<F, Fut>(handler: F) -> impl Fn(Request) -> Pin<Box<dyn Future<Output = Response>>> + 'static
-where
-    F: Fn(Request) -> Fut + Copy + 'static,
-    Fut: Future<Output = Result<Response, ApiError>> + 'static,
-{
-    move |req| {
-        let request_id = request_id(&req).to_owned();
-        Box::pin(async move {
-            handler(req).await.unwrap_or_else(|err| render_error(err, &request_id))
-        })
+/// Tags the response; `request_context` renders the envelope with the request id.
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let mut res = Response::new(status(self), "");
+        res.set_ext(self);
+        res
     }
 }
 
-fn error_response(err: ApiError, req: &Request) -> Response {
-    render_error(err, request_id(req))
-}
-
 fn render_error(err: ApiError, request_id: &str) -> Response {
-    let status = StatusCode::from_u16(err.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let res = Response::new(status, err.body(request_id))
+    let res = Response::new(status(err), err.body(request_id))
         .header("content-type", "application/json")
         .header("cache-control", "no-store");
     match err.www_authenticate() {
         Some(scheme) => res.header("www-authenticate", scheme),
         None => res,
     }
+}
+
+fn status(err: ApiError) -> StatusCode {
+    StatusCode::from_u16(err.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn private(res: Response) -> Response {
@@ -222,10 +213,6 @@ fn store(req: &Request) -> &Store {
 
 fn session(req: &Request) -> &AuthenticatedSession {
     req.ext::<AuthenticatedSession>().expect("require_session runs before this handler")
-}
-
-fn request_id(req: &Request) -> &str {
-    req.ext::<RequestId>().map_or("", |id| id.0.as_str())
 }
 
 #[cfg(test)]
