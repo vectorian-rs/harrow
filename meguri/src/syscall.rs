@@ -28,20 +28,23 @@ unsafe fn raw_syscall(
     a6: libc::c_ulong,
 ) -> libc::c_long {
     let ret: libc::c_long;
-    std::arch::asm!(
-        "syscall",
-        in("rax") n,
-        in("rdi") a1,
-        in("rsi") a2,
-        in("rdx") a3,
-        in("r10") a4,
-        in("r8") a5,
-        in("r9") a6,
-        out("rcx") _,  // syscall clobbers rcx
-        out("r11") _,  // syscall clobbers r11
-        lateout("rax") ret,
-        options(nostack),
-    );
+    // SAFETY: the caller upholds the syscall's contract (see `# Safety`).
+    unsafe {
+        std::arch::asm!(
+            "syscall",
+            in("rax") n,
+            in("rdi") a1,
+            in("rsi") a2,
+            in("rdx") a3,
+            in("r10") a4,
+            in("r8") a5,
+            in("r9") a6,
+            out("rcx") _,  // syscall clobbers rcx
+            out("r11") _,  // syscall clobbers r11
+            lateout("rax") ret,
+            options(nostack),
+        );
+    }
     ret
 }
 
