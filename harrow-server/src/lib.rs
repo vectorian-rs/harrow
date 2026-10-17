@@ -315,16 +315,20 @@ mod tests {
 
     #[test]
     fn config_per_worker_max_connections() {
-        let mut config = ServerConfig::default();
-        config.workers = Some(4);
+        let config = ServerConfig {
+            workers: Some(4),
+            ..ServerConfig::default()
+        };
         assert_eq!(config.per_worker_max_connections(), 2048);
     }
 
     #[test]
     fn per_worker_max_connections_rounds_up() {
-        let mut config = ServerConfig::default();
-        config.max_connections = 8192;
-        config.workers = Some(3);
+        let config = ServerConfig {
+            max_connections: 8192,
+            workers: Some(3),
+            ..ServerConfig::default()
+        };
         assert_eq!(config.per_worker_max_connections(), 2731);
         assert!(config.per_worker_max_connections() * 3 >= config.max_connections);
     }
