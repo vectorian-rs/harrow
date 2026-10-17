@@ -607,4 +607,55 @@ mod tests {
         let resp = client.post("/users", "").await;
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
+
+    /// The pattern response extensions exist for: a handler error only tags
+    /// its response, and an outer middleware renders it with request-scoped
+    /// data the error type cannot see.
+    #[tokio::test]
+    async fn global_middleware_reads_response_ext_set_by_handler() {
+        #[derive(Clone, Copy)]
+        struct AppError;
+
+        impl crate::response::IntoResponse for AppError {
+            fn into_response(self) -> Response {
+                let mut resp = Response::new(StatusCode::NOT_FOUND, "");
+                resp.set_ext(self);
+                resp
+            }
+        }
+
+        async fn render_errors(req: Request, next: Next) -> Response {
+            let request_id = req.header("x-request-id").unwrap_or("none").to_owned();
+            let resp = next.run(req).await;
+            match resp.ext::<AppError>() {
+                Some(_) => Response::new(resp.status_code(), format!("error in {request_id}")),
+                None => resp,
+            }
+        }
+
+        async fn passthrough(req: Request, next: Next) -> Response {
+            next.run(req).await
+        }
+
+        let client = App::new()
+            .middleware(render_errors)
+            .group("/api", |g| {
+                g.middleware(passthrough)
+                    .get("/missing", |_req| async { Err::<Response, _>(AppError) })
+                    .get("/ok", |_req| async { Response::text("fine") })
+            })
+            .client();
+
+        let req = http::Request::get("/api/missing")
+            .header("x-request-id", "req-1")
+            .body(Default::default())
+            .unwrap();
+        let resp = client.request(req).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.text(), "error in req-1");
+
+        let resp = client.get("/api/ok").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "fine");
+    }
 }

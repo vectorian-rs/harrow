@@ -108,6 +108,7 @@ handler signatures. See [Request Helpers](../architecture/api/request-helpers.md
 | MessagePack body | ✅ | `msgpack` feature, `req.body_msgpack`. |
 | Application state | ✅ | `req.require_state`, `req.try_state`. |
 | Request extensions | ✅ | `set_ext`, `ext`, `require_ext`. |
+| Response extensions | ✅ | `Response::set_ext`, `Response::ext`; never written to the wire. |
 | Form helper | ❌ | Not implemented. |
 | Cookies helper | ❌ | Not implemented. |
 | Multipart | ❌ | Not implemented. |
