@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
-use harrow::{App, Response, serve};
+use harrow::runtime::tokio_hyper::serve;
+use harrow::{App, Response};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
