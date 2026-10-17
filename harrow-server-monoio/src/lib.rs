@@ -99,9 +99,7 @@ use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
 use monoio::net::{ListenerOpts, TcpListener};
@@ -231,104 +229,17 @@ where
 
     let worker_count = harrow_server::resolve_worker_count(config.workers).map_err(Box::new)?;
     let worker_config = per_worker_config(config, worker_count);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let mut workers = Vec::with_capacity(worker_count);
-
-    let (completion_tx, completion_rx) = mpsc::channel();
-    let first_worker = spawn_worker(
-        make_app.clone(),
+    let inner = harrow_server::start_workers(
         addr,
-        worker_config,
-        Arc::clone(&shutdown),
-        completion_tx.clone(),
-        true,
-    );
-    let bound_addr = match first_worker.startup.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(bound_addr)) => bound_addr,
-        Ok(Err(err)) => {
-            shutdown.store(true, Ordering::Release);
-            let _ = harrow_server::ThreadedServerHandle::new(
-                addr,
-                shutdown,
-                completion_rx,
-                vec![first_worker.handle],
-                harrow_server::noop_wake_workers,
-            )
-            .shutdown();
-            return Err(into_public_error(err));
-        }
-        Err(err) => {
-            shutdown.store(true, Ordering::Release);
-            let _ = harrow_server::ThreadedServerHandle::new(
-                addr,
-                shutdown,
-                completion_rx,
-                vec![first_worker.handle],
-                harrow_server::noop_wake_workers,
-            )
-            .shutdown();
-            return Err(Box::new(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("worker startup failed before reporting a bound address: {err}"),
-            )));
-        }
-    };
-    workers.push(first_worker.handle);
+        worker_count,
+        harrow_server::noop_wake_workers as fn(SocketAddr, usize),
+        move |ctx| run_worker(&make_app, worker_config, ctx),
+    )
+    .map_err(into_public_error)?;
 
-    for _ in 1..worker_count {
-        let worker = spawn_worker(
-            make_app.clone(),
-            bound_addr,
-            worker_config,
-            Arc::clone(&shutdown),
-            completion_tx.clone(),
-            false,
-        );
-        match worker.startup.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok(_)) => workers.push(worker.handle),
-            Ok(Err(err)) => {
-                shutdown.store(true, Ordering::Release);
-                workers.push(worker.handle);
-                let _ = harrow_server::ThreadedServerHandle::new(
-                    bound_addr,
-                    shutdown,
-                    completion_rx,
-                    workers,
-                    harrow_server::noop_wake_workers,
-                )
-                .shutdown();
-                return Err(into_public_error(err));
-            }
-            Err(err) => {
-                shutdown.store(true, Ordering::Release);
-                workers.push(worker.handle);
-                let _ = harrow_server::ThreadedServerHandle::new(
-                    bound_addr,
-                    shutdown,
-                    completion_rx,
-                    workers,
-                    harrow_server::noop_wake_workers,
-                )
-                .shutdown();
-                return Err(Box::new(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("worker startup timed out: {err}"),
-                )));
-            }
-        }
-    }
+    o11y::record_server_start(inner.local_addr(), &config);
 
-    o11y::record_server_start(bound_addr, &config);
-
-    Ok(ServerHandle {
-        inner: harrow_server::ThreadedServerHandle::new(
-            bound_addr,
-            shutdown,
-            completion_rx,
-            workers,
-            harrow_server::noop_wake_workers,
-        ),
-    })
+    Ok(ServerHandle { inner })
 }
 
 /// Serve the application on the given address using HTTP/1.1.
@@ -486,8 +397,8 @@ async fn serve_listener(
     Ok(())
 }
 
-async fn wait_for_shutdown(shutdown: Arc<AtomicBool>) {
-    while !shutdown.load(Ordering::Acquire) {
+async fn wait_for_shutdown(shutdown: harrow_server::ShutdownSignal) {
+    while !shutdown.is_shutdown() {
         monoio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -509,71 +420,27 @@ fn into_public_error(err: BoxError) -> Box<dyn Error> {
     err
 }
 
-struct WorkerThread {
-    handle: thread::JoinHandle<Result<(), BoxError>>,
-    startup: mpsc::Receiver<Result<SocketAddr, BoxError>>,
-}
-
-fn spawn_worker<F>(
-    make_app: F,
-    addr: SocketAddr,
+/// One worker thread: its own monoio runtime and `SO_REUSEPORT` listener.
+fn run_worker<F>(
+    make_app: &F,
     config: ServerConfig,
-    shutdown: Arc<AtomicBool>,
-    completion: mpsc::Sender<Result<(), String>>,
-    print_routes: bool,
-) -> WorkerThread
+    ctx: harrow_server::WorkerContext,
+) -> Result<(), BoxError>
 where
-    F: Fn() -> App + Send + 'static,
+    F: Fn() -> App,
 {
-    let (startup_tx, startup_rx) = mpsc::channel::<Result<SocketAddr, BoxError>>();
-    let handle = thread::spawn(move || {
-        let app = make_app();
-        let shared = app.into_shared_state();
-        if print_routes {
-            shared.route_table.print_routes();
-        }
-
-        let mut runtime = match monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-            .enable_timer()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(err) => {
-                let err: BoxError = Box::new(err);
-                let _ = startup_tx.send(Err(Box::new(io::Error::other(err.to_string()))));
-                return Err(err);
-            }
-        };
-
-        let result = runtime.block_on(async move {
-            let listener = match TcpListener::bind_with_config(addr, &listener_options()) {
-                Ok(listener) => listener,
-                Err(err) => {
-                    let err: BoxError = Box::new(err);
-                    let _ = startup_tx.send(Err(Box::new(io::Error::other(err.to_string()))));
-                    return Err(err);
-                }
-            };
-
-            let local_addr = match listener.local_addr() {
-                Ok(local_addr) => local_addr,
-                Err(err) => {
-                    let err: BoxError = Box::new(err);
-                    let _ = startup_tx.send(Err(Box::new(io::Error::other(err.to_string()))));
-                    return Err(err);
-                }
-            };
-
-            let _ = startup_tx.send(Ok(local_addr));
-            serve_listener(shared, listener, wait_for_shutdown(shutdown), config).await
-        });
-
-        let _ = completion.send(result.as_ref().map(|_| ()).map_err(|err| err.to_string()));
-        result
-    });
-
-    WorkerThread {
-        handle,
-        startup: startup_rx,
+    let shared = make_app().into_shared_state();
+    if ctx.index == 0 {
+        shared.route_table.print_routes();
     }
+
+    let mut runtime = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()?;
+
+    runtime.block_on(async move {
+        let listener = TcpListener::bind_with_config(ctx.addr, &listener_options())?;
+        ctx.ready.listening(listener.local_addr()?);
+        serve_listener(shared, listener, wait_for_shutdown(ctx.shutdown), config).await
+    })
 }
