@@ -34,6 +34,7 @@ use crate::reclaim::Reclaimable;
 use crate::sq::SubmissionQueue;
 
 pub mod accept;
+mod addr;
 pub mod cancel;
 pub mod connect;
 pub mod read;
@@ -42,17 +43,25 @@ pub mod send;
 pub mod timeout;
 pub mod write;
 
-pub use accept::Accept;
+pub use accept::AcceptOp;
 pub use cancel::Cancel;
-pub use connect::Connect;
+pub use connect::ConnectOp;
 pub use read::ReadOp;
-pub use recv::Recv;
-pub use send::Send;
+pub use recv::RecvOp;
+pub use send::SendOp;
 pub use timeout::Timeout;
 pub use write::WriteOp;
 
+/// Accept a connection; see [`AcceptOp`].
+pub type Accept = Op<AcceptOp>;
+/// Connect a socket; see [`ConnectOp`].
+pub type Connect = Op<ConnectOp>;
 /// Read into a buffer's spare capacity; see [`ReadOp`].
 pub type Read = Op<ReadOp>;
+/// Receive into a buffer's spare capacity; see [`RecvOp`].
+pub type Recv = Op<RecvOp>;
+/// Send a buffer; see [`SendOp`].
+pub type Send = Op<SendOp>;
 /// Write a buffer; see [`WriteOp`].
 pub type Write = Op<WriteOp>;
 
@@ -278,5 +287,114 @@ mod tests {
         assert!(driver.ring().dispatcher().is_empty());
         close(r);
         close(w);
+    }
+
+    /// Polls two futures until both are ready.
+    async fn join<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
+        let (mut a, mut b) = (Box::pin(a), Box::pin(b));
+        let (mut out_a, mut out_b) = (None, None);
+        std::future::poll_fn(|cx| {
+            if out_a.is_none()
+                && let Poll::Ready(v) = a.as_mut().poll(cx)
+            {
+                out_a = Some(v);
+            }
+            if out_b.is_none()
+                && let Poll::Ready(v) = b.as_mut().poll(cx)
+            {
+                out_b = Some(v);
+            }
+            if out_a.is_some() && out_b.is_some() {
+                Poll::Ready((out_a.take().unwrap(), out_b.take().unwrap()))
+            } else {
+                Poll::Pending
+            }
+        })
+        .await
+    }
+
+    fn tcp_socket() -> std::os::fd::OwnedFd {
+        use std::os::fd::FromRawFd;
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+        assert!(fd >= 0);
+        unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) }
+    }
+
+    #[test]
+    fn accept_connect_send_recv_over_loopback() {
+        use std::os::fd::AsRawFd;
+
+        let driver = Driver::new(16).expect("ring");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tcp_socket();
+
+        driver.block_on(async {
+            let (accepted, connected) = join(
+                Accept::new(&driver, listener.as_raw_fd()),
+                Connect::new(&driver, client.as_raw_fd(), addr),
+            )
+            .await;
+            connected.expect("connect");
+            let (server, peer) = accepted.expect("accept");
+            assert!(peer.ip().is_loopback());
+
+            let (sent, _) = Send::new(
+                &driver,
+                client.as_raw_fd(),
+                Bytes::from_static(b"ping"),
+                libc::MSG_NOSIGNAL as u32,
+            )
+            .await;
+            assert_eq!(sent.expect("send"), 4);
+            let (got, buf) =
+                Recv::new(&driver, server.as_raw_fd(), BytesMut::with_capacity(16), 0).await;
+            assert_eq!(got.expect("recv"), 4);
+            assert_eq!(&buf[..], b"ping");
+
+            drop(server);
+            let (eof, _) =
+                Recv::new(&driver, client.as_raw_fd(), BytesMut::with_capacity(16), 0).await;
+            assert_eq!(eof.expect("recv after close"), 0, "peer closed");
+        });
+        assert!(driver.ring().dispatcher().is_empty());
+    }
+
+    #[test]
+    fn connect_to_a_closed_port_fails() {
+        use std::os::fd::AsRawFd;
+
+        let driver = Driver::new(8).expect("ring");
+        let addr = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let client = tcp_socket();
+
+        let Err(MeguriError::Io(err)) =
+            driver.block_on(Connect::new(&driver, client.as_raw_fd(), addr))
+        else {
+            panic!("connect should be refused");
+        };
+        assert_eq!(err.raw_os_error(), Some(libc::ECONNREFUSED));
+    }
+
+    #[test]
+    fn dropping_an_in_flight_accept_cancels_it() {
+        use std::os::fd::AsRawFd;
+
+        let driver = Driver::new(8).expect("ring");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+
+        driver.block_on(poll_once_then_drop(Accept::new(
+            &driver,
+            listener.as_raw_fd(),
+        )));
+        assert_eq!(driver.ring().reclaim().len(), 1);
+        while driver.ring().dispatcher().in_flight() > 0 {
+            driver.turn(true).expect("turn");
+        }
+        assert!(driver.ring().reclaim().is_empty());
+        assert!(driver.ring().dispatcher().is_empty());
     }
 }

@@ -6,9 +6,9 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::syscall::{
-    IORING_OP_ACCEPT, IORING_OP_ASYNC_CANCEL, IORING_OP_CLOSE, IORING_OP_LINK_TIMEOUT,
-    IORING_OP_NOP, IORING_OP_READ, IORING_OP_RECV, IORING_OP_SEND, IORING_OP_TIMEOUT,
-    IORING_OP_WRITE, IOSQE_IO_LINK, IoUringParams, IoUringSqe,
+    IORING_OP_ACCEPT, IORING_OP_ASYNC_CANCEL, IORING_OP_CLOSE, IORING_OP_CONNECT,
+    IORING_OP_LINK_TIMEOUT, IORING_OP_NOP, IORING_OP_READ, IORING_OP_RECV, IORING_OP_SEND,
+    IORING_OP_TIMEOUT, IORING_OP_WRITE, IOSQE_IO_LINK, IoUringParams, IoUringSqe,
 };
 
 /// The submission queue.
@@ -252,6 +252,27 @@ impl SubmissionQueue {
         sqe.addr = addr as u64;
         sqe.off = addrlen as u64;
         sqe.rw_flags = flags;
+        sqe.user_data = user_data;
+        true
+    }
+
+    /// Build and push a `Connect` SQE.
+    ///
+    /// `addr` must stay valid and unmoved until the CQE is consumed.
+    pub fn push_connect(
+        &mut self,
+        user_data: u64,
+        fd: i32,
+        addr: *const libc::sockaddr,
+        addrlen: libc::socklen_t,
+    ) -> bool {
+        let Some(sqe) = self.next_sqe() else {
+            return false;
+        };
+        sqe.opcode = IORING_OP_CONNECT;
+        sqe.fd = fd;
+        sqe.addr = addr as u64;
+        sqe.off = addrlen as u64;
         sqe.user_data = user_data;
         true
     }
