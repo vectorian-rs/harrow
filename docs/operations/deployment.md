@@ -54,10 +54,9 @@ server handles.
 
 ## TLS
 
-Harrow can be deployed either with in-process TLS where supported or behind a
-TLS-terminating proxy/load balancer. For most deployments, external TLS
-termination keeps backend behavior simpler and lets the platform own certificate
-rotation.
+No Harrow backend terminates TLS in-process today. Deploy behind a
+TLS-terminating proxy or load balancer; this keeps backend behavior simpler and
+lets the platform own certificate rotation.
 
 Document the chosen TLS boundary in service docs, especially if enabling HSTS
 through security headers.

@@ -28,7 +28,7 @@ Use it to narrow the search space before opening files.
 - `harrow-server/`
   - Shared server primitives used by every backend: listener, workers, shutdown, config, shared H1 lifecycle.
 - `harrow-server-tokio/`
-  - Tokio backend on the custom HTTP/1 codec: local workers, connection lifecycle, graceful shutdown, concurrency limits, TLS.
+  - Tokio backend on the custom HTTP/1 codec: local workers, connection lifecycle, graceful shutdown, concurrency limits.
 - `harrow-server-tokio-hyper/`
   - Prototype Tokio backend where Hyper owns HTTP parsing and framing. Used to compare against the custom codec.
 - `harrow-server-monoio/`

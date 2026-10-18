@@ -51,7 +51,7 @@ production path can be chosen with benchmark data and maintenance risk in view.
 | Meguri backend | 🟡 | Experimental direct io_uring workspace backend, not re-exported from root `harrow`. |
 | Compio backend | ❌ | Not supported. |
 | Same app mental model across runtimes | ✅ | `App`, `Request`, `Response`, middleware, and request helpers are shared across Tokio and Monoio. |
-| TLS | 🟡 | Tokio-oriented feature surface exists; final support wording should be audited before 1.0. |
+| TLS | ❌ | No backend terminates TLS in-process. Terminate at a reverse proxy or load balancer. |
 | HTTP/2 on all server backends | 🟡 | 1.0 target. Monoio is partial; Tokio Hyper backend may become the preferred path; Meguri needs a stabilization decision. |
 
 ## Application Primitives
@@ -108,6 +108,7 @@ handler signatures. See [Request Helpers](../architecture/api/request-helpers.md
 | MessagePack body | ✅ | `msgpack` feature, `req.body_msgpack`. |
 | Application state | ✅ | `req.require_state`, `req.try_state`. |
 | Request extensions | ✅ | `set_ext`, `ext`, `require_ext`. |
+| Response extensions | ✅ | `Response::set_ext`, `Response::ext`; never written to the wire. |
 | Form helper | ❌ | Not implemented. |
 | Cookies helper | ❌ | Not implemented. |
 | Multipart | ❌ | Not implemented. |

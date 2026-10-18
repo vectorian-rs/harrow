@@ -64,7 +64,8 @@ pub use harrow_core::state::{MissingExtError, MissingStateError, TypeMap};
     not(any(feature = "tokio-hyper", feature = "monoio"))
 ))]
 pub use harrow_server_tokio::{
-    ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
+    ServerConfig, ServerHandle, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
+    start, start_with_config,
 };
 
 #[cfg(all(
@@ -93,7 +94,8 @@ pub mod runtime {
     #[cfg(feature = "tokio")]
     pub mod tokio {
         pub use harrow_server_tokio::{
-            ServerConfig, serve, serve_multi_worker, serve_with_config, serve_with_shutdown,
+            ServerConfig, ServerHandle, serve, serve_multi_worker, serve_with_config,
+            serve_with_shutdown, start, start_with_config,
         };
     }
 

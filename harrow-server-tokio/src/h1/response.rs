@@ -692,9 +692,19 @@ mod tests {
 
     #[tokio::test]
     async fn fixed_length_response_shorter_than_declared_errors() {
-        let response = harrow_core::response::Response::text("hello")
-            .header("content-length", "10")
-            .into_inner();
+        // A buffered body with a wrong content-length is rejected earlier, in
+        // `prepare_response`; only a streaming body can end short mid-write.
+        let response = harrow_core::response::Response::streaming(
+            http::StatusCode::OK,
+            futures_util::stream::iter(vec![Ok::<
+                http_body::Frame<Bytes>,
+                Box<dyn std::error::Error + Send + Sync>,
+            >(http_body::Frame::data(
+                Bytes::from_static(b"hello"),
+            ))]),
+        )
+        .header("content-length", "10")
+        .into_inner();
         let mut stream = CountingWriter::default();
         let mut state = WriteState::new();
 

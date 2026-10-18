@@ -12,7 +12,10 @@ mod h1;
 mod server;
 
 pub use harrow_server::ServerConfig;
-pub use server::{serve, serve_multi_worker, serve_with_config, serve_with_shutdown};
+pub use server::{
+    ServerHandle, serve, serve_multi_worker, serve_with_config, serve_with_shutdown, start,
+    start_with_config,
+};
 
 #[doc(hidden)]
 pub use connection::handle_connection;

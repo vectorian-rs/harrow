@@ -200,6 +200,144 @@ fn join_panic_error(panic: Box<dyn std::any::Any + Send + 'static>) -> std::io::
     std::io::Error::other(message)
 }
 
+/// How long [`start_workers`] waits for each worker to report its address.
+const WORKER_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// What a worker thread receives from [`start_workers`].
+pub struct WorkerContext {
+    /// Address to bind: the requested address for worker 0, and the address
+    /// worker 0 actually bound for the others (so port 0 works).
+    pub addr: SocketAddr,
+    /// Worker index, `0..worker_count`.
+    pub index: usize,
+    /// Set when the server should stop accepting and drain.
+    pub shutdown: ShutdownSignal,
+    /// Report the bound address once the worker is accepting connections.
+    pub ready: WorkerReady,
+}
+
+/// Startup handshake for one worker; see [`WorkerContext::ready`].
+pub struct WorkerReady(mpsc::Sender<Result<SocketAddr, String>>);
+
+impl WorkerReady {
+    /// Report that the worker is listening on `addr`.
+    pub fn listening(self, addr: SocketAddr) {
+        let _ = self.0.send(Ok(addr));
+    }
+}
+
+/// Start `worker_count` worker threads that each run `run_worker`, one at a
+/// time: each must call `ctx.ready.listening(addr)` within 5 s before the
+/// next starts. A worker that returns an error before that fails startup;
+/// all started workers are then shut down and joined.
+///
+/// Backends own what runs inside a worker (runtime, listener, accept loop);
+/// this owns thread lifecycle, startup, and shutdown coordination.
+pub fn start_workers<E, W, F>(
+    addr: SocketAddr,
+    worker_count: usize,
+    wake_workers: W,
+    run_worker: F,
+) -> Result<ThreadedServerHandle<E, W>, E>
+where
+    E: From<std::io::Error> + std::fmt::Display + Send + 'static,
+    W: Fn(SocketAddr, usize) + Copy,
+    F: Fn(WorkerContext) -> Result<(), E> + Send + Clone + 'static,
+{
+    let shutdown = ShutdownSignal::new();
+    let (completion_tx, completion_rx) = mpsc::channel();
+    let mut workers = Vec::with_capacity(worker_count);
+    let mut bind_addr = addr;
+
+    for index in 0..worker_count {
+        let started = spawn_worker(
+            index,
+            bind_addr,
+            &shutdown,
+            &completion_tx,
+            run_worker.clone(),
+        )
+        .and_then(|(handle, ready)| {
+            workers.push(handle);
+            wait_for_worker(index, &ready)
+        });
+
+        match started {
+            Ok(bound) if index == 0 => bind_addr = bound,
+            Ok(_) => {}
+            Err(err) => {
+                let _ = ThreadedServerHandle::new(
+                    bind_addr,
+                    shutdown,
+                    completion_rx,
+                    workers,
+                    wake_workers,
+                )
+                .shutdown();
+                return Err(E::from(err));
+            }
+        }
+    }
+
+    Ok(ThreadedServerHandle::new(
+        bind_addr,
+        shutdown,
+        completion_rx,
+        workers,
+        wake_workers,
+    ))
+}
+
+type WorkerReadyRx = mpsc::Receiver<Result<SocketAddr, String>>;
+
+fn spawn_worker<E, F>(
+    index: usize,
+    addr: SocketAddr,
+    shutdown: &ShutdownSignal,
+    completion: &mpsc::Sender<Result<(), String>>,
+    run_worker: F,
+) -> std::io::Result<(thread::JoinHandle<Result<(), E>>, WorkerReadyRx)>
+where
+    E: std::fmt::Display + Send + 'static,
+    F: FnOnce(WorkerContext) -> Result<(), E> + Send + 'static,
+{
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let ctx = WorkerContext {
+        addr,
+        index,
+        shutdown: shutdown.clone(),
+        ready: WorkerReady(ready_tx.clone()),
+    };
+    let completion = completion.clone();
+
+    let handle = thread::Builder::new()
+        .name(format!("harrow-worker-{index}"))
+        .spawn(move || {
+            let result = run_worker(ctx);
+            if let Err(err) = &result {
+                // Ignored once the worker has already reported its address.
+                let _ = ready_tx.send(Err(err.to_string()));
+            }
+            let _ = completion.send(result.as_ref().map(|_| ()).map_err(ToString::to_string));
+            result
+        })?;
+    Ok((handle, ready_rx))
+}
+
+fn wait_for_worker(index: usize, ready: &WorkerReadyRx) -> std::io::Result<SocketAddr> {
+    match ready.recv_timeout(WORKER_STARTUP_TIMEOUT) {
+        Ok(Ok(addr)) => Ok(addr),
+        Ok(Err(message)) => Err(std::io::Error::other(message)),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("worker {index} did not report a bound address within 5s"),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::other(format!(
+            "worker {index} exited before reporting a bound address"
+        ))),
+    }
+}
+
 /// Shared handle for backends that run one blocking worker thread per core.
 pub struct ThreadedServerHandle<E, W = fn(SocketAddr, usize)>
 where
@@ -207,7 +345,7 @@ where
     W: Fn(SocketAddr, usize) + Copy,
 {
     addr: SocketAddr,
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownSignal,
     completion: mpsc::Receiver<Result<(), String>>,
     workers: Vec<thread::JoinHandle<Result<(), E>>>,
     wake_workers: W,
@@ -218,9 +356,9 @@ where
     E: From<std::io::Error>,
     W: Fn(SocketAddr, usize) + Copy,
 {
-    pub fn new(
+    fn new(
         addr: SocketAddr,
-        shutdown: Arc<AtomicBool>,
+        shutdown: ShutdownSignal,
         completion: mpsc::Receiver<Result<(), String>>,
         workers: Vec<thread::JoinHandle<Result<(), E>>>,
         wake_workers: W,
@@ -250,7 +388,7 @@ where
     }
 
     fn signal_shutdown(&self) {
-        self.shutdown.store(true, Ordering::Release);
+        self.shutdown.shutdown();
         (self.wake_workers)(self.addr, self.workers.len());
     }
 
@@ -258,7 +396,7 @@ where
         let mut first_error: Option<E> = None;
         let addr = self.addr;
         let worker_count = self.workers.len();
-        let shutdown = Arc::clone(&self.shutdown);
+        let shutdown = self.shutdown.clone();
         let wake_workers = self.wake_workers;
 
         for worker in self.workers.drain(..) {
@@ -266,14 +404,14 @@ where
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => {
                     if first_error.is_none() {
-                        shutdown.store(true, Ordering::Release);
+                        shutdown.shutdown();
                         wake_workers(addr, worker_count);
                         first_error = Some(err);
                     }
                 }
                 Err(panic) => {
                     if first_error.is_none() {
-                        shutdown.store(true, Ordering::Release);
+                        shutdown.shutdown();
                         wake_workers(addr, worker_count);
                         first_error = Some(E::from(join_panic_error(panic)));
                     }
@@ -368,5 +506,83 @@ mod tests {
     #[test]
     fn standalone_per_worker_limit_rounds_up() {
         assert_eq!(per_worker_max_connections(10, 3), 4);
+    }
+
+    fn wait_for_shutdown(shutdown: &ShutdownSignal) {
+        while !shutdown.is_shutdown() {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn start_workers_binds_all_workers_to_the_address_worker_zero_reports() {
+        let requested: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let bound: SocketAddr = "127.0.0.1:4242".parse().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let handle = start_workers::<std::io::Error, _, _>(requested, 3, noop_wake_workers, {
+            let seen = Arc::clone(&seen);
+            move |ctx: WorkerContext| {
+                seen.lock().unwrap().push((ctx.index, ctx.addr));
+                ctx.ready
+                    .listening(if ctx.index == 0 { bound } else { ctx.addr });
+                wait_for_shutdown(&ctx.shutdown);
+                Ok(())
+            }
+        })
+        .expect("workers start");
+
+        assert_eq!(handle.local_addr(), bound);
+        handle.shutdown().expect("clean shutdown");
+        let mut seen = seen.lock().unwrap().clone();
+        seen.sort();
+        assert_eq!(seen, vec![(0, requested), (1, bound), (2, bound)]);
+    }
+
+    #[test]
+    fn start_workers_failure_stops_already_running_workers() {
+        let worker0_exited = Arc::new(AtomicBool::new(false));
+
+        let result = start_workers::<std::io::Error, _, _>(
+            "127.0.0.1:0".parse().unwrap(),
+            2,
+            noop_wake_workers,
+            {
+                let worker0_exited = Arc::clone(&worker0_exited);
+                move |ctx: WorkerContext| {
+                    if ctx.index == 1 {
+                        return Err(std::io::Error::other("bind failed"));
+                    }
+                    ctx.ready.listening(ctx.addr);
+                    wait_for_shutdown(&ctx.shutdown);
+                    worker0_exited.store(true, Ordering::Release);
+                    Ok(())
+                }
+            },
+        );
+
+        let Err(err) = result else {
+            panic!("startup should fail");
+        };
+        assert_eq!(err.to_string(), "bind failed");
+        assert!(
+            worker0_exited.load(Ordering::Acquire),
+            "worker 0 was not joined"
+        );
+    }
+
+    #[test]
+    fn start_workers_reports_a_worker_that_panics_before_listening() {
+        let result = start_workers::<std::io::Error, _, _>(
+            "127.0.0.1:0".parse().unwrap(),
+            1,
+            noop_wake_workers,
+            |_ctx: WorkerContext| -> std::io::Result<()> { panic!("boom") },
+        );
+
+        let Err(err) = result else {
+            panic!("startup should fail");
+        };
+        assert!(err.to_string().contains("exited before reporting"), "{err}");
     }
 }

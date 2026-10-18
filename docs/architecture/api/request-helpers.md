@@ -111,6 +111,27 @@ req.set_ext(CurrentUser { id });
 let user = req.require_ext::<CurrentUser>()?;
 ```
 
+Responses carry extensions the same way, for data that flows back out to
+middleware. The main use is an application error that only knows its status,
+rendered by an outer middleware that knows the request id:
+
+```rust,ignore
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let mut resp = Response::new(self.status(), "");
+        resp.set_ext(self);
+        resp
+    }
+}
+
+// in the request-id middleware, after `next.run(req).await`:
+if let Some(err) = resp.ext::<ApiError>() {
+    resp = render_error(*err, &request_id);
+}
+```
+
+Response extensions are never written to the wire.
+
 ## What Exists Today
 
 Current stable helpers include:
@@ -122,7 +143,7 @@ Current stable helpers include:
 - JSON bodies behind `json`;
 - MessagePack bodies behind `msgpack`;
 - application state;
-- per-request extensions;
+- per-request extensions, on requests and responses;
 - raw `http::Request` access.
 
 Cookies, multipart forms, protobuf, `Accept`, and `Range` helpers can be added

@@ -48,11 +48,7 @@ use std::net::SocketAddr;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 #[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "linux")]
-use std::sync::{Arc, mpsc};
-#[cfg(target_os = "linux")]
-use std::thread;
+use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
@@ -193,112 +189,22 @@ where
 {
     let worker_count = resolve_worker_count(config.workers)?;
     let per_worker_config = per_worker_config(config, worker_count);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let mut workers = Vec::with_capacity(worker_count);
-
-    let (completion_tx, completion_rx) = mpsc::channel();
-
-    // Spawn first worker, wait for it to report the bound address.
-    let first_worker = spawn_worker(
-        make_app.clone(),
+    let inner = harrow_server::start_workers(
         addr,
-        per_worker_config.clone(),
-        Arc::clone(&shutdown),
-        completion_tx.clone(),
-        true,
-    );
-    let bound_addr = match first_worker.startup.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(a)) => a,
-        Ok(Err(e)) => {
-            shutdown.store(true, Ordering::Release);
-            let _ = harrow_server::ThreadedServerHandle::new(
-                addr,
-                shutdown,
-                completion_rx,
-                vec![first_worker.handle],
-                wake_workers,
-            )
-            .shutdown();
-            return Err(e);
-        }
-        Err(e) => {
-            shutdown.store(true, Ordering::Release);
-            let _ = harrow_server::ThreadedServerHandle::new(
-                addr,
-                shutdown,
-                completion_rx,
-                vec![first_worker.handle],
-                wake_workers,
-            )
-            .shutdown();
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!("worker startup timed out: {e}"),
-            )));
-        }
-    };
-    workers.push(first_worker.handle);
-
-    // Spawn remaining workers, all binding to the same address (SO_REUSEPORT).
-    for _ in 1..worker_count {
-        let worker = spawn_worker(
-            make_app.clone(),
-            bound_addr,
-            per_worker_config.clone(),
-            Arc::clone(&shutdown),
-            completion_tx.clone(),
-            false,
-        );
-        // Wait for each worker to start before spawning the next.
-        match worker.startup.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok(_)) => workers.push(worker.handle),
-            Ok(Err(e)) => {
-                shutdown.store(true, Ordering::Release);
-                workers.push(worker.handle);
-                let _ = harrow_server::ThreadedServerHandle::new(
-                    bound_addr,
-                    shutdown,
-                    completion_rx,
-                    workers,
-                    wake_workers,
-                )
-                .shutdown();
-                return Err(e);
-            }
-            Err(e) => {
-                shutdown.store(true, Ordering::Release);
-                workers.push(worker.handle);
-                let _ = harrow_server::ThreadedServerHandle::new(
-                    bound_addr,
-                    shutdown,
-                    completion_rx,
-                    workers,
-                    wake_workers,
-                )
-                .shutdown();
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("worker startup timed out: {e}"),
-                )));
-            }
-        }
-    }
+        worker_count,
+        wake_workers as fn(SocketAddr, usize),
+        move |ctx| run_worker(&make_app, &per_worker_config, ctx),
+    )?;
 
     tracing::info!(
-        "harrow (meguri) listening on {bound_addr} with {worker_count} workers (io_uring)"
+        "harrow (meguri) listening on {} with {worker_count} workers (io_uring)",
+        inner.local_addr()
     );
 
-    Ok(ServerHandle {
-        inner: harrow_server::ThreadedServerHandle::new(
-            bound_addr,
-            shutdown,
-            completion_rx,
-            workers,
-            wake_workers,
-        ),
-    })
+    Ok(ServerHandle { inner })
 }
 
+#[cfg(target_os = "linux")]
 /// Convenience: single-threaded blocking serve (no multi-worker).
 #[cfg(target_os = "linux")]
 pub fn serve(app: App, addr: SocketAddr) -> Result<(), BoxError> {
@@ -313,7 +219,7 @@ pub fn serve_with_config(app: App, addr: SocketAddr, config: ServerConfig) -> Re
     tracing::info!("harrow (meguri) listening on {addr} (single worker)");
 
     let listener = create_listener(addr, true)?;
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = harrow_server::ShutdownSignal::new();
     let per_worker = ServerConfig {
         workers: Some(1),
         ..config
@@ -366,75 +272,38 @@ fn wake_workers(addr: SocketAddr, worker_count: usize) {
 // Worker spawning
 // ---------------------------------------------------------------------------
 #[cfg(target_os = "linux")]
-struct WorkerThread {
-    handle: thread::JoinHandle<Result<(), BoxError>>,
-    startup: mpsc::Receiver<Result<SocketAddr, BoxError>>,
-}
-
-#[cfg(target_os = "linux")]
 struct StartupSignal {
-    tx: mpsc::Sender<Result<SocketAddr, BoxError>>,
+    ready: harrow_server::WorkerReady,
     addr: SocketAddr,
 }
 
+/// One worker thread: its own `SO_REUSEPORT` listener and io_uring loop.
 #[cfg(target_os = "linux")]
-fn spawn_worker<F>(
-    make_app: F,
-    addr: SocketAddr,
-    config: ServerConfig,
-    shutdown: Arc<AtomicBool>,
-    completion: mpsc::Sender<Result<(), String>>,
-    print_routes: bool,
-) -> WorkerThread
+fn run_worker<F>(
+    make_app: &F,
+    config: &ServerConfig,
+    ctx: harrow_server::WorkerContext,
+) -> Result<(), BoxError>
 where
-    F: Fn() -> App + Send + 'static,
+    F: Fn() -> App,
 {
-    let (startup_tx, startup_rx) = mpsc::channel::<Result<SocketAddr, BoxError>>();
-
-    let handle = thread::spawn(move || {
-        let app = make_app();
-        let shared = app.into_shared_state();
-        if print_routes {
-            shared.route_table.print_routes();
-        }
-
-        let listener = match create_listener(addr, true) {
-            Ok(l) => l,
-            Err(e) => {
-                let _ = startup_tx.send(Err(Box::new(e) as BoxError));
-                return Err(
-                    Box::new(std::io::Error::other("failed to create listener")) as BoxError
-                );
-            }
-        };
-
-        let local_addr = match listener.local_addr() {
-            Ok(a) => a,
-            Err(e) => {
-                let _ = startup_tx.send(Err(Box::new(e) as BoxError));
-                return Err(Box::new(std::io::Error::other("failed to get local addr")) as BoxError);
-            }
-        };
-
-        let result = worker_loop(
-            shared,
-            listener,
-            &config,
-            Arc::clone(&shutdown),
-            Some(StartupSignal {
-                tx: startup_tx,
-                addr: local_addr,
-            }),
-        );
-
-        let _ = completion.send(result.as_ref().map(|_| ()).map_err(|e| e.to_string()));
-        result
-    });
-
-    WorkerThread {
-        handle,
-        startup: startup_rx,
+    let shared = make_app().into_shared_state();
+    if ctx.index == 0 {
+        shared.route_table.print_routes();
     }
+
+    let listener = create_listener(ctx.addr, true)?;
+    let addr = listener.local_addr()?;
+    worker_loop(
+        shared,
+        listener,
+        config,
+        ctx.shutdown,
+        Some(StartupSignal {
+            ready: ctx.ready,
+            addr,
+        }),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -446,19 +315,12 @@ fn worker_loop(
     shared: Arc<SharedState>,
     listener: std::net::TcpListener,
     config: &ServerConfig,
-    shutdown: Arc<AtomicBool>,
+    shutdown: harrow_server::ShutdownSignal,
     mut startup: Option<StartupSignal>,
 ) -> Result<(), BoxError> {
     let mut ring = match meguri::Ring::new(config.ring_entries) {
         Ok(ring) => ring,
-        Err(err) => {
-            if let Some(signal) = startup.take() {
-                let _ = signal
-                    .tx
-                    .send(Err(Box::new(std::io::Error::other(err.to_string()))));
-            }
-            return Err(Box::new(err));
-        }
+        Err(err) => return Err(Box::new(err)),
     };
     tracing::debug!(
         "meguri worker ring created with {} entries",
@@ -476,14 +338,7 @@ fn worker_loop(
         .build()
     {
         Ok(rt) => rt,
-        Err(err) => {
-            if let Some(signal) = startup.take() {
-                let _ = signal
-                    .tx
-                    .send(Err(Box::new(std::io::Error::other(err.to_string()))));
-            }
-            return Err(Box::new(err));
-        }
+        Err(err) => return Err(Box::new(err)),
     };
     let local = tokio::task::LocalSet::new();
 
@@ -513,12 +368,12 @@ fn worker_loop(
     );
 
     if let Some(signal) = startup.take() {
-        let _ = signal.tx.send(Ok(signal.addr));
+        signal.ready.listening(signal.addr);
     }
 
     loop {
         // Check shutdown flag.
-        if shutdown.load(Ordering::Acquire) {
+        if shutdown.is_shutdown() {
             tracing::debug!("worker shutting down");
             break;
         }
@@ -550,7 +405,7 @@ fn worker_loop(
                     refresh_timeout_deadline(&mut deadline_heap, &mut conns, idx, config);
                 }
                 // Re-arm accept only if not shutting down.
-                if !shutdown.load(Ordering::Acquire) {
+                if !shutdown.is_shutdown() {
                     submit_accept(
                         &mut ring,
                         listener_fd,

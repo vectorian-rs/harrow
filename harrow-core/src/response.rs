@@ -149,6 +149,18 @@ impl Response {
         self.inner.status()
     }
 
+    /// Attach typed data for middleware further out in the chain, e.g. an
+    /// application error that a middleware renders with request-scoped
+    /// context. Extensions are never written to the wire.
+    pub fn set_ext<T: Clone + Send + Sync + 'static>(&mut self, val: T) {
+        self.inner.extensions_mut().insert(val);
+    }
+
+    /// Get typed data attached with [`Response::set_ext`].
+    pub fn ext<T: Clone + Send + Sync + 'static>(&self) -> Option<&T> {
+        self.inner.extensions().get::<T>()
+    }
+
     /// Borrow the inner `http::Response` for inspection.
     pub fn inner(&self) -> &http::Response<ResponseBody> {
         &self.inner
@@ -377,6 +389,18 @@ mod tests {
     fn status_overrides() {
         let resp = Response::ok().status(404);
         assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn ext_round_trips_and_survives_builder_calls() {
+        #[derive(Clone, Debug, PartialEq)]
+        struct Tag(&'static str);
+
+        let mut resp = Response::ok();
+        assert_eq!(resp.ext::<Tag>(), None);
+        resp.set_ext(Tag("app-error"));
+        let resp = resp.status(404).header("x-a", "1");
+        assert_eq!(resp.ext::<Tag>(), Some(&Tag("app-error")));
     }
 
     #[test]

@@ -262,6 +262,30 @@ impl Ring {
         &mut self.reclaim
     }
 
+    /// Release an operation whose future was dropped.
+    ///
+    /// If the kernel is still working on it, `resources` move to the reclaim
+    /// pool and an `ASYNC_CANCEL` is queued so the kernel stops early (an idle
+    /// `accept` or `recv` would otherwise hold its buffers until the ring is
+    /// destroyed). The cancel's own completion is discarded.
+    pub(crate) fn release_op(
+        &mut self,
+        user_data: u64,
+        resources: impl crate::reclaim::Reclaimable,
+    ) {
+        if self
+            .dispatcher
+            .release(user_data, resources, &mut self.reclaim)
+        {
+            let cancel_ud = self.dispatcher.register_internal();
+            if !self.sq.push_cancel(cancel_ud, user_data) {
+                // SQ full: the operation still completes on its own; the
+                // resources are reclaimed then.
+                self.dispatcher.unregister(cancel_ud);
+            }
+        }
+    }
+
     /// The kernel-reported parameters for this ring.
     pub fn params(&self) -> &IoUringParams {
         &self.params
@@ -332,6 +356,24 @@ mod tests {
 
         let completed = ring.poll_completions();
         assert_eq!(completed, count as usize);
+    }
+
+    /// A pure timer (count 0) must fire with -ETIME, not be rejected.
+    #[test]
+    fn timeout_fires_with_etime() {
+        let mut ring = Ring::new(8).expect("failed to create ring");
+        let ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000,
+        };
+
+        assert!(ring.sq().push_timeout(7, &ts, 0, 0));
+        ring.submit_and_wait(1).expect("submit_and_wait failed");
+
+        let cqe = ring.cq.peek().expect("expected one CQE");
+        assert_eq!(cqe.user_data, 7);
+        assert_eq!(cqe.res, -libc::ETIME, "timeout SQE rejected or misfired");
+        ring.cq.advance();
     }
 
     /// Verify SQE and CQE struct sizes match kernel expectations.
