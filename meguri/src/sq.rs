@@ -19,6 +19,15 @@ use crate::syscall::{
 ///
 /// - **head** (kernel-written, user-read): `Acquire`
 /// - **tail** (user-written, kernel-read): `Release`
+///
+/// # Pointer validity
+///
+/// All pointers point into the SQ ring and SQE mappings owned by the
+/// [`Ring`] that created this queue (`Ring::_sq_ring_mmap`, `_sqes_mmap`).
+/// The queue is a field of that `Ring` and only reachable through it, so
+/// the mappings outlive every use of the pointers below.
+///
+/// [`Ring`]: crate::Ring
 pub struct SubmissionQueue {
     // Pointers into the kernel-mapped SQ ring region.
     head: *const AtomicU32,
@@ -34,7 +43,12 @@ pub struct SubmissionQueue {
     sq_tail: u32,
 }
 
-// SAFETY: SQ is accessed only from the ring owner's thread (SINGLE_ISSUER).
+// SAFETY: the raw pointers target shared kernel memory that is not tied to
+// any thread; head/tail/flags are accessed atomically and SQE slots are only
+// written while unpublished (outside `head..tail`). It is not `Sync`, and
+// every write needs `&mut self`, so moving it between threads cannot race.
+// (`IORING_SETUP_SINGLE_ISSUER` restricts which thread may call
+// io_uring_enter; that is `Ring`'s concern, and `Ring` is `!Send`.)
 unsafe impl Send for SubmissionQueue {}
 
 impl SubmissionQueue {
@@ -49,6 +63,11 @@ impl SubmissionQueue {
         sqes: *mut IoUringSqe,
         params: &IoUringParams,
     ) -> Self {
+        // SAFETY: per the caller's contract, the mapping is the SQ ring of the
+        // ring `params` describes (mapped PROT_READ | PROT_WRITE), so the
+        // kernel-provided `sq_off` offsets are in bounds and `u32`-aligned,
+        // and `array` has `ring_entries` slots. No SQE has been submitted
+        // yet, so the kernel is not reading `array` while it is initialised.
         unsafe {
             let head = sq_ring_base.add(params.sq_off.head as usize) as *const AtomicU32;
             let tail = sq_ring_base.add(params.sq_off.tail as usize) as *const AtomicU32;
@@ -135,6 +154,9 @@ impl SubmissionQueue {
     /// Must be called before `io_uring_enter`. Returns the number of
     /// entries pending in the ring (submitted but not yet consumed by kernel).
     pub fn flush(&mut self) -> u32 {
+        // SAFETY: `tail` points to the kernel's SQ tail (see "Pointer
+        // validity"); userspace is its only writer. Release publishes the
+        // SQE writes made by the builders before the kernel can see them.
         unsafe { (*self.tail).store(self.sq_tail, Ordering::Release) };
         let head = self.load_head();
         self.sq_tail.wrapping_sub(head)
@@ -142,11 +164,15 @@ impl SubmissionQueue {
 
     /// Read the SQ head from kernel-mapped memory.
     fn load_head(&self) -> u32 {
+        // SAFETY: `head` points to the kernel's SQ head (see "Pointer
+        // validity"), an aligned u32 the kernel only updates atomically.
         unsafe { (*self.head).load(Ordering::Acquire) }
     }
 
     /// Read the SQ flags from kernel-mapped memory.
     pub fn sq_flags(&self) -> u32 {
+        // SAFETY: `flags` points to the kernel's SQ flags word (see "Pointer
+        // validity"); a Relaxed atomic load of an aligned u32.
         unsafe { (*self.flags).load(Ordering::Relaxed) }
     }
 
@@ -427,6 +453,11 @@ impl SubmissionQueue {
             return false;
         }
         let prev_idx = self.sq_tail.wrapping_sub(1) & self.ring_mask;
+        // SAFETY: `prev_idx < ring_entries`, inside the SQE array. The slot
+        // is at or after the kernel's head, so the kernel has not consumed
+        // it; without IORING_SETUP_SQPOLL (which `Ring::new` never sets) the
+        // kernel only reads SQEs inside io_uring_enter, which cannot run
+        // while we hold `&mut self`, so nothing else accesses the slot.
         let sqe = unsafe { &mut *self.sqes.add(prev_idx as usize) };
         sqe.flags |= IOSQE_IO_LINK;
         true

@@ -31,6 +31,10 @@ impl MmapRegion {
     /// io_uring mmap offset (IORING_OFF_SQ_RING, IORING_OFF_CQ_RING, or
     /// IORING_OFF_SQES).
     unsafe fn map(ring_fd: RawFd, len: usize, offset: u64) -> io::Result<Self> {
+        // SAFETY: a fresh shared mapping chosen by the kernel (null hint), so
+        // it cannot overlap memory Rust already uses; the caller guarantees
+        // `ring_fd`/`offset` name an io_uring region. The result is checked
+        // against MAP_FAILED before use.
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
@@ -62,6 +66,12 @@ impl MmapRegion {
 
 impl Drop for MmapRegion {
     fn drop(&mut self) {
+        // SAFETY: `ptr`/`len` are exactly what mmap returned for this region,
+        // unmapped once, here. The only pointers into it live in the `Ring`
+        // that owns this region (its SQ/CQ), which is being dropped and does
+        // not use them afterwards. The result is ignored on purpose: munmap
+        // only fails for invalid arguments (a bug here), and a destructor
+        // has no way to recover; the mapping would merely stay in place.
         unsafe {
             libc::munmap(self.ptr as *mut _, self.len);
         }
@@ -114,7 +124,10 @@ impl Ring {
         // io_uring_setup writes back into params, so we need a mutable copy.
         let mut params = params;
 
-        // SAFETY: io_uring_setup is safe with a valid params pointer.
+        // SAFETY: `params` is a live, exclusively borrowed `io_uring_params`
+        // (repr(C), kernel layout) with only `flags` set and every reserved
+        // field zero, as the kernel requires; it writes the offsets back into
+        // it synchronously. The returned fd is owned right below.
         let raw_fd = unsafe { io_uring_setup(entries, &mut params)? };
         // Own the fd at once so the `?` on every mmap below closes it instead
         // of leaking it.
@@ -137,12 +150,16 @@ impl Ring {
             sq_ring_size
         };
 
-        // SAFETY: ring_fd is valid, offsets are kernel-defined constants.
+        // SAFETY (all three maps): `ring_fd` is the io_uring fd just created
+        // (kept open by `owned_fd`), the offsets are the kernel-defined
+        // region constants, and the lengths are computed from the
+        // kernel-reported `params` exactly as liburing does.
         let sq_ring_mmap = unsafe { MmapRegion::map(ring_fd, sq_mmap_len, IORING_OFF_SQ_RING)? };
 
         let cq_ring_mmap = if single_mmap {
             None
         } else {
+            // SAFETY: see above.
             Some(unsafe { MmapRegion::map(ring_fd, cq_ring_size, IORING_OFF_CQ_RING)? })
         };
 
@@ -152,9 +169,14 @@ impl Ring {
             cq_ring_mmap.as_ref().unwrap().as_ptr()
         };
 
+        // SAFETY: see above.
         let sqes_mmap = unsafe { MmapRegion::map(ring_fd, sqes_size, IORING_OFF_SQES)? };
 
         // Build SQ and CQ from the mmap'd regions.
+        // SAFETY: the pointers are the bases of the SQ ring and SQE mappings
+        // of the ring `params` describes. Both mappings move into the
+        // returned `Ring` next to the queues, so they outlive them (see the
+        // queues' "Pointer validity" docs).
         let sq = unsafe {
             SubmissionQueue::from_raw(
                 sq_ring_mmap.as_ptr(),
@@ -162,6 +184,9 @@ impl Ring {
                 &params,
             )
         };
+        // SAFETY: `cq_ring_base` is the CQ ring (inside the SQ mapping with
+        // FEAT_SINGLE_MMAP, else its own mapping), kept alive by `Ring` as
+        // above.
         let cq = unsafe { CompletionQueue::from_raw(cq_ring_base, &params) };
 
         Ok(Self {
@@ -193,7 +218,13 @@ impl Ring {
     }
 
     /// Register an eventfd for cross-thread wakeup.
+    ///
+    /// The ring does not take ownership of `fd` and never closes it; the
+    /// kernel holds its own reference to the eventfd while it is registered.
     pub fn register_eventfd(&mut self, fd: RawFd) -> io::Result<()> {
+        // SAFETY: IORING_REGISTER_EVENTFD reads one `int` from `arg`, here a
+        // local that lives across the (synchronous) call; `nr_args` is 1.
+        // An invalid `fd` is reported as an error, not UB.
         unsafe {
             crate::syscall::io_uring_register(
                 self.ring_fd.as_raw_fd(),
@@ -212,6 +243,9 @@ impl Ring {
         if pending == 0 {
             return Ok(0);
         }
+        // SAFETY: `ring_fd` is this ring's open fd; `pending` counts SQEs
+        // published by `flush` (each built by a builder whose own safety
+        // contract covers the memory it references); no sigmask.
         unsafe { io_uring_enter(self.ring_fd.as_raw_fd(), pending, 0, 0, ptr::null(), 0) }
     }
 
@@ -226,6 +260,7 @@ impl Ring {
         } else {
             0
         };
+        // SAFETY: as in `submit`.
         unsafe {
             io_uring_enter(
                 self.ring_fd.as_raw_fd(),

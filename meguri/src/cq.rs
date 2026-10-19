@@ -14,6 +14,15 @@ use crate::syscall::{IoUringCqe, IoUringParams};
 ///
 /// - **tail** (kernel-written, user-read): `Acquire`
 /// - **head** (user-written, kernel-read): `Release`
+///
+/// # Pointer validity
+///
+/// All pointers point into the CQ ring mapping owned by the [`Ring`] that
+/// created this queue (`Ring::_sq_ring_mmap` or `_cq_ring_mmap`). The queue
+/// is a field of that `Ring` and only reachable through it, so the mapping
+/// outlives every use of the pointers below.
+///
+/// [`Ring`]: crate::Ring
 pub struct CompletionQueue {
     // Pointers into the kernel-mapped CQ ring region.
     head: *const AtomicU32,
@@ -25,7 +34,11 @@ pub struct CompletionQueue {
     cq_head: u32,
 }
 
-// SAFETY: CQ is accessed only from the ring owner's thread.
+// SAFETY: the raw pointers target shared kernel memory that is not tied to
+// any thread, and every access through them is either atomic (head, tail) or
+// a read of a CQE the kernel has published and will not rewrite until the
+// head moves past it. Moving the queue to another thread changes none of
+// that; it is not `Sync`, and all mutation needs `&mut self`.
 unsafe impl Send for CompletionQueue {}
 
 impl CompletionQueue {
@@ -35,6 +48,11 @@ impl CompletionQueue {
     /// - `cq_ring_base` must point to a valid mmap'd CQ ring region.
     /// - `params` must describe the ring that produced this mapping.
     pub unsafe fn from_raw(cq_ring_base: *const u8, params: &IoUringParams) -> Self {
+        // SAFETY: per the caller's contract the mapping is the CQ ring of the
+        // ring `params` describes, so the kernel-provided `cq_off` offsets
+        // are in bounds and suitably aligned: `head`, `tail` and `ring_mask`
+        // are `u32`s (head/tail accessed atomically, as the kernel does), and
+        // `cqes` is the start of the `cq_entries`-long CQE array.
         unsafe {
             let head = cq_ring_base.add(params.cq_off.head as usize) as *const AtomicU32;
             let tail = cq_ring_base.add(params.cq_off.tail as usize) as *const AtomicU32;
@@ -59,11 +77,19 @@ impl CompletionQueue {
     /// Returns `None` if no completions are available. Reads the kernel tail
     /// with `Acquire` ordering to see newly posted completions.
     pub fn peek(&self) -> Option<&IoUringCqe> {
+        // SAFETY: `tail` points to the kernel's CQ tail (see "Pointer
+        // validity"), an aligned u32 the kernel only updates atomically.
         let tail = unsafe { (*self.tail).load(Ordering::Acquire) };
         if self.cq_head == tail {
             return None;
         }
         let idx = self.cq_head & self.ring_mask;
+        // SAFETY: `idx <= ring_mask < cq_entries`, so the slot is inside the
+        // CQE array. `cq_head != tail`, and the Acquire load above makes the
+        // kernel's write of this CQE visible. The kernel does not reuse the
+        // slot until the published head moves past it, which needs
+        // `advance(&mut self)`: impossible while the returned borrow of
+        // `self` is alive (`flush_head` publishes `cq_head`, still this slot).
         Some(unsafe { &*self.cqes.add(idx as usize) })
     }
 
@@ -81,11 +107,15 @@ impl CompletionQueue {
     /// all CQE slots up to the new head. Call after processing a batch of
     /// CQEs rather than after each individual CQE.
     pub fn flush_head(&self) {
+        // SAFETY: `head` points to the kernel's CQ head (see "Pointer
+        // validity"); userspace is its only writer, and Release orders our
+        // reads of the consumed CQEs before the kernel may overwrite them.
         unsafe { (*self.head).store(self.cq_head, Ordering::Release) };
     }
 
     /// Number of CQEs available for reading.
     pub fn ready(&self) -> u32 {
+        // SAFETY: as for the tail load in `peek`.
         let tail = unsafe { (*self.tail).load(Ordering::Acquire) };
         tail.wrapping_sub(self.cq_head)
     }
