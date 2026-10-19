@@ -461,12 +461,11 @@ fn worker_loop(
         );
 
         if dispatch_tick_needed(&conns) && !dispatch_tick_armed {
-            submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
-            dispatch_tick_armed = true;
+            dispatch_tick_armed = submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
         }
 
         // Submit pending SQEs and wait for at least one completion.
-        if let Err(err) = ring.submit_and_wait(1) {
+        if let Err(err) = wait_for_completions(&mut ring) {
             failure = Some(err);
             break;
         }
@@ -544,10 +543,9 @@ fn worker_loop(
             &mut timeout_ts,
         );
         if dispatch_tick_needed(&conns) && !dispatch_tick_armed {
-            submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
-            dispatch_tick_armed = true;
+            dispatch_tick_armed = submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
         }
-        if let Err(err) = ring.submit_and_wait(1) {
+        if let Err(err) = wait_for_completions(&mut ring) {
             failure = Some(err);
             break;
         }
@@ -609,6 +607,28 @@ fn worker_loop(
     }
 }
 
+/// Submit queued SQEs and block until at least one CQE is available.
+///
+/// `EINTR` (any signal delivered to the worker thread, e.g. a profiler's
+/// SIGPROF) is retried rather than treated as fatal. `EBUSY`/`EAGAIN` mean
+/// the kernel cannot take more work until completions are reaped (CQ
+/// overflow backlog) or is short of memory; the caller drains the CQ and
+/// tries again on the next iteration.
+#[cfg(target_os = "linux")]
+fn wait_for_completions(ring: &mut meguri::Ring) -> std::io::Result<()> {
+    loop {
+        match ring.submit_and_wait(1) {
+            Ok(_) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) if matches!(err.raw_os_error(), Some(libc::EBUSY | libc::EAGAIN)) => {
+                tracing::debug!("io_uring_enter: {err}; draining completions first");
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 /// How long `teardown` waits for in-flight SQEs after shutting sockets down.
 #[cfg(target_os = "linux")]
 const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(1);
@@ -654,10 +674,8 @@ fn teardown(
         && (!conns.is_empty() || *accept_armed)
         && std::time::Instant::now() < deadline
     {
-        match ring.submit_and_wait(1) {
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(_) => break,
+        if wait_for_completions(ring).is_err() {
+            break;
         }
         while let Some(cqe) = ring.cq().peek() {
             let user_data = cqe.user_data;
@@ -754,7 +772,7 @@ fn per_worker_config(config: ServerConfig, workers: usize) -> ServerConfig {
 
 #[cfg(target_os = "linux")]
 fn create_listener(addr: SocketAddr, reuse_port: bool) -> std::io::Result<std::net::TcpListener> {
-    use std::os::fd::FromRawFd;
+    use std::os::fd::{FromRawFd, OwnedFd};
 
     let domain = if addr.is_ipv4() {
         libc::AF_INET
@@ -762,89 +780,111 @@ fn create_listener(addr: SocketAddr, reuse_port: bool) -> std::io::Result<std::n
         libc::AF_INET6
     };
 
-    // Create socket manually so we can set options BEFORE bind.
-    let fd = unsafe { libc::socket(domain, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
-    if fd < 0 {
+    // Create the socket by hand so options can be set BEFORE bind.
+    // Non-blocking from the start (as before, when it was set after listen)
+    // and close-on-exec.
+    // SAFETY: socket(2) takes no pointers; the result is checked below.
+    let raw = unsafe {
+        libc::socket(
+            domain,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
+            0,
+        )
+    };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // Owned from here on: every early return below closes it.
+    // SAFETY: socket(2) just returned this fd and nothing else owns it.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+
+    set_socket_flag(&fd, libc::SOL_SOCKET, libc::SO_REUSEADDR)?;
+    // SO_REUSEPORT must be set before bind for the kernel to spread
+    // connections across the workers' listeners; without it the second
+    // worker's bind fails with EADDRINUSE, so a failure here is fatal too.
+    if reuse_port {
+        set_socket_flag(&fd, libc::SOL_SOCKET, libc::SO_REUSEPORT)?;
+    }
+
+    // SAFETY: all-zero is a valid `sockaddr_storage`.
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let sa_len: libc::socklen_t = match addr {
+        SocketAddr::V4(a) => {
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: a.port().to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(a.ip().octets()),
+                },
+                sin_zero: [0; 8],
+            };
+            // SAFETY: `sockaddr_storage` is large and aligned enough for
+            // every `sockaddr_*` type.
+            unsafe { std::ptr::write((&raw mut storage).cast(), sin) };
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+        }
+        SocketAddr::V6(a) => {
+            let sin6 = libc::sockaddr_in6 {
+                sin6_family: libc::AF_INET6 as libc::sa_family_t,
+                sin6_port: a.port().to_be(),
+                sin6_flowinfo: a.flowinfo(),
+                sin6_addr: libc::in6_addr {
+                    s6_addr: a.ip().octets(),
+                },
+                sin6_scope_id: a.scope_id(),
+            };
+            // SAFETY: as above.
+            unsafe { std::ptr::write((&raw mut storage).cast(), sin6) };
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+        }
+    };
+
+    // SAFETY: `storage` is a local that outlives the call and holds a
+    // sockaddr of family `domain` whose length is `sa_len`.
+    let rc = unsafe {
+        libc::bind(
+            fd.as_raw_fd(),
+            (&raw const storage).cast::<libc::sockaddr>(),
+            sa_len,
+        )
+    };
+    if rc < 0 {
         return Err(std::io::Error::last_os_error());
     }
 
-    unsafe {
-        let optval = 1i32;
-        let optlen = std::mem::size_of_val(&optval) as libc::socklen_t;
-
-        // SO_REUSEADDR — allow quick restarts.
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_REUSEADDR,
-            &optval as *const _ as *const _,
-            optlen,
-        );
-
-        // SO_REUSEPORT — must be set before bind for kernel connection
-        // distribution across multiple workers.
-        if reuse_port {
-            libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_REUSEPORT,
-                &optval as *const _ as *const _,
-                optlen,
-            );
-        }
-
-        // Bind. Keep sockaddr alive across the bind call.
-        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
-        let sa_len: libc::socklen_t = match addr {
-            SocketAddr::V4(ref a) => {
-                let sin =
-                    &mut *(&mut storage as *mut libc::sockaddr_storage as *mut libc::sockaddr_in);
-                sin.sin_family = libc::AF_INET as libc::sa_family_t;
-                sin.sin_port = a.port().to_be();
-                sin.sin_addr = libc::in_addr {
-                    s_addr: u32::from_ne_bytes(a.ip().octets()),
-                };
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
-            }
-            SocketAddr::V6(ref a) => {
-                let sin6 =
-                    &mut *(&mut storage as *mut libc::sockaddr_storage as *mut libc::sockaddr_in6);
-                sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                sin6.sin6_port = a.port().to_be();
-                sin6.sin6_flowinfo = a.flowinfo();
-                sin6.sin6_addr = libc::in6_addr {
-                    s6_addr: a.ip().octets(),
-                };
-                sin6.sin6_scope_id = a.scope_id();
-                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
-            }
-        };
-
-        if libc::bind(
-            fd,
-            &storage as *const libc::sockaddr_storage as *const libc::sockaddr,
-            sa_len,
-        ) < 0
-        {
-            let err = std::io::Error::last_os_error();
-            libc::close(fd);
-            return Err(err);
-        }
-
-        // Listen with a reasonable backlog.
-        if libc::listen(fd, 1024) < 0 {
-            let err = std::io::Error::last_os_error();
-            libc::close(fd);
-            return Err(err);
-        }
-
-        // Set non-blocking after listen.
-        libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK);
+    // SAFETY: listen(2) takes no pointers; `fd` is a bound socket.
+    if unsafe { libc::listen(fd.as_raw_fd(), 1024) } < 0 {
+        return Err(std::io::Error::last_os_error());
     }
 
-    // Convert to std TcpListener for local_addr() etc.
-    let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
-    Ok(listener)
+    // Convert to std TcpListener for local_addr() etc.; it now owns the fd.
+    Ok(std::net::TcpListener::from(fd))
+}
+
+/// Enable a boolean socket option, reporting failure.
+#[cfg(target_os = "linux")]
+fn set_socket_flag(
+    fd: &impl AsRawFd,
+    level: libc::c_int,
+    name: libc::c_int,
+) -> std::io::Result<()> {
+    let on: libc::c_int = 1;
+    // SAFETY: `on` is a live `c_int` for the duration of the call and the
+    // length passed matches its size; the kernel copies it synchronously.
+    let rc = unsafe {
+        libc::setsockopt(
+            fd.as_raw_fd(),
+            level,
+            name,
+            (&raw const on).cast(),
+            std::mem::size_of_val(&on) as libc::socklen_t,
+        )
+    };
+    if rc < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -857,6 +897,10 @@ fn create_listener(addr: SocketAddr, reuse_port: bool) -> std::io::Result<std::n
 /// The peer address is not needed, so `addr`/`addrlen` are null: the SQE
 /// then references no user memory at all, and nothing has to stay alive
 /// until its CQE.
+///
+/// The accepted socket is created close-on-exec (so it does not leak into
+/// child processes) and non-blocking (matching the listener), atomically,
+/// instead of with a follow-up fcntl(2) whose result went unchecked.
 #[cfg(target_os = "linux")]
 fn submit_accept(ring: &mut meguri::Ring, listener_fd: std::os::fd::RawFd) -> bool {
     ring.sq().push_accept(
@@ -864,7 +908,7 @@ fn submit_accept(ring: &mut meguri::Ring, listener_fd: std::os::fd::RawFd) -> bo
         listener_fd,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
-        0,
+        (libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK) as u32,
     )
 }
 
@@ -890,21 +934,10 @@ fn handle_accept(
         return None;
     }
 
-    // Set non-blocking.
-    unsafe {
-        libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK);
-    }
-
-    // Disable Nagle's algorithm.
-    let nodelay = 1i32;
-    unsafe {
-        libc::setsockopt(
-            fd,
-            libc::IPPROTO_TCP,
-            libc::TCP_NODELAY,
-            &nodelay as *const _ as *const _,
-            std::mem::size_of_val(&nodelay) as _,
-        );
+    // Disable Nagle's algorithm. A failure only costs latency, so the
+    // connection is still served.
+    if let Err(err) = set_socket_flag(&fd, libc::IPPROTO_TCP, libc::TCP_NODELAY) {
+        tracing::debug!("TCP_NODELAY on fd {fd}: {err}");
     }
 
     // From here the `Conn` owns `fd`; `close_conn` closes it.
@@ -1095,9 +1128,12 @@ fn submit_recv_cancel(ring: &mut meguri::Ring, token: ConnToken) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn submit_dispatch_tick(ring: &mut meguri::Ring, ts: &libc::timespec) {
+/// Queue the short dispatch wake tick. Returns `false` if the SQ is full, so
+/// the caller does not believe a tick is armed (it would otherwise never arm
+/// another, and a pending dispatch could stall until an unrelated CQE).
+fn submit_dispatch_tick(ring: &mut meguri::Ring, ts: &libc::timespec) -> bool {
     ring.sq()
-        .push_timeout(DISPATCH_TICK_USER_DATA, ts as *const _, 0, 0);
+        .push_timeout(DISPATCH_TICK_USER_DATA, ts as *const _, 0, 0)
 }
 
 #[cfg(target_os = "linux")]
@@ -1803,6 +1839,113 @@ mod tests {
         reap_closed_drain_connections(&mut conns);
         assert!(conns.contains(busy));
         assert!(!conns.contains(idle));
+    }
+
+    extern "C" fn ignore_signal(_: libc::c_int) {}
+
+    /// A signal delivered while the worker blocks in io_uring_enter makes it
+    /// return EINTR. That used to propagate out of the event loop with `?`
+    /// and kill the worker.
+    #[test]
+    fn wait_for_completions_retries_after_a_signal() {
+        // SAFETY: installs a no-op handler (no SA_RESTART) for SIGUSR1, which
+        // nothing else in this test binary uses.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as usize;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut ring = meguri::Ring::new(8).expect("ring");
+            let ts = duration_to_timespec(Duration::from_millis(300));
+            assert!(ring.sq().push_timeout(1, &ts, 0, 0));
+            // Submit now: with nothing left to submit, an interrupted wait
+            // reports EINTR (with SQEs submitted it reports their count).
+            assert_eq!(ring.submit().expect("submit"), 1);
+            // SAFETY: pthread_self has no preconditions.
+            tx.send(unsafe { libc::pthread_self() }).unwrap();
+            let started = std::time::Instant::now();
+            let result = wait_for_completions(&mut ring);
+            (
+                result.map_err(|e| e.to_string()),
+                started.elapsed(),
+                ring.cq().peek().is_some(),
+            )
+        });
+
+        let thread = rx.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        // SAFETY: `thread` is still running (it waits up to 300ms).
+        assert_eq!(unsafe { libc::pthread_kill(thread, libc::SIGUSR1) }, 0);
+
+        let (result, elapsed, has_cqe) = worker.join().unwrap();
+        assert_eq!(result, Ok(()));
+        assert!(has_cqe, "kept waiting until the timer fired");
+        assert!(elapsed >= Duration::from_millis(250), "{elapsed:?}");
+    }
+
+    /// Accepted sockets come out close-on-exec and non-blocking from the
+    /// ACCEPT itself; no unchecked fcntl(2) afterwards.
+    #[test]
+    fn accepted_sockets_are_cloexec_and_nonblocking() {
+        let listener = create_listener("127.0.0.1:0".parse().unwrap(), false).expect("listener");
+        let mut ring = meguri::Ring::new(8).expect("ring");
+        assert!(submit_accept(&mut ring, listener.as_raw_fd()));
+        let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+
+        wait_for_completions(&mut ring).expect("enter");
+        let cqe = *ring.cq().peek().expect("accept CQE");
+        ring.cq_mut().advance();
+        ring.cq_mut().flush_head();
+        assert_eq!(cqe.user_data, ACCEPT_USER_DATA);
+        assert!(cqe.res >= 0, "accept failed: {}", cqe.res);
+
+        // SAFETY: fcntl F_GETFD/F_GETFL on the fd the ACCEPT just returned.
+        let (fd_flags, fl_flags) = unsafe {
+            (
+                libc::fcntl(cqe.res, libc::F_GETFD),
+                libc::fcntl(cqe.res, libc::F_GETFL),
+            )
+        };
+        close_accepted_fd(cqe.res);
+        assert_ne!(
+            fd_flags & libc::FD_CLOEXEC,
+            0,
+            "accepted fd must be close-on-exec"
+        );
+        assert_ne!(
+            fl_flags & libc::O_NONBLOCK,
+            0,
+            "accepted fd must be non-blocking"
+        );
+
+        // SAFETY: as above, on the listener.
+        let listener_fl = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_GETFL) };
+        assert_ne!(listener_fl & libc::O_NONBLOCK, 0);
+    }
+
+    fn open_fd_count() -> usize {
+        std::fs::read_dir("/proc/self/fd").unwrap().count()
+    }
+
+    /// Every failure path of `create_listener` closes the socket it created.
+    #[test]
+    fn listener_errors_do_not_leak_the_socket() {
+        let taken = create_listener("127.0.0.1:0".parse().unwrap(), false).expect("listener");
+        let addr = taken.local_addr().unwrap();
+        let before = open_fd_count();
+        for _ in 0..16 {
+            // Without SO_REUSEPORT on either side, bind fails: EADDRINUSE.
+            let err = create_listener(addr, false).expect_err("address in use");
+            assert_eq!(err.raw_os_error(), Some(libc::EADDRINUSE));
+        }
+        assert_eq!(open_fd_count(), before);
     }
 
     #[test]
