@@ -33,23 +33,24 @@ impl Operation for ReadOp {
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
         let spare = self.buf.spare_capacity_mut();
-        sq.push_read(
-            user_data,
-            self.fd,
-            spare.as_mut_ptr().cast(),
-            sqe_len(spare.len()),
-            self.offset,
-        )
+        // SAFETY: the region is `buf`'s spare capacity, on the heap, so it
+        // does not move with the op. The op owns `buf` exclusively and does
+        // not touch it until `complete`/`abandon`, i.e. after the CQE; if the
+        // future is dropped first, the op moves to the reclaim pool (or is
+        // leaked), so the allocation outlives the kernel's write.
+        unsafe {
+            sq.push_read(
+                user_data,
+                self.fd,
+                spare.as_mut_ptr().cast(),
+                sqe_len(spare.len()),
+                self.offset,
+            )
+        }
     }
 
     fn complete(mut self, result: MeguriResult<u32>) -> Self::Output {
-        let result = result.map(|n| {
-            let n = n as usize;
-            // SAFETY: the kernel initialized `n` bytes of spare capacity,
-            // and `n` is at most the length we passed in `push`.
-            unsafe { self.buf.set_len(self.buf.len() + n) };
-            n
-        });
+        let result = result.map(|n| super::commit_spare(&mut self.buf, n as usize));
         (result, self.buf)
     }
 }

@@ -80,9 +80,14 @@ struct DispatchInner {
 
 /// Per-connection state.
 pub(crate) struct Conn {
+    /// The connection's socket, owned by this `Conn` from accept until the
+    /// event loop's `close_conn` closes it and sets it to `-1`. `Conn` has no
+    /// `Drop` impl, so dropping it does not close the fd.
     pub fd: RawFd,
     pub state: ConnState,
-    /// Read buffer: holds raw bytes from RECV completions.
+    /// Read buffer: holds raw bytes from RECV completions. While
+    /// `recv_pending`, an in-flight RECV writes into its spare capacity, so
+    /// it must not be reallocated, and the `Conn` must not be dropped.
     pub buf: BytesMut,
     /// Parsed request headers for the active request.
     pub parsed: Option<ParsedRequest>,
@@ -94,7 +99,9 @@ pub(crate) struct Conn {
     dispatch_handle: Option<DispatchHandle>,
     /// Response byte stream produced by the spawned local dispatch task.
     response_rx: Option<mpsc::Receiver<ResponseStreamEvent>>,
-    /// Serialized response bytes to write.
+    /// Serialized response bytes to write. While `write_pending`, an
+    /// in-flight SEND reads `response_buf[response_written..]`, so it must
+    /// not be modified or replaced, and the `Conn` must not be dropped.
     pub response_buf: Vec<u8>,
     /// Number of response bytes already written.
     pub response_written: usize,
@@ -106,9 +113,13 @@ pub(crate) struct Conn {
     response_failed: bool,
     /// Whether to keep-alive after this request.
     pub keep_alive: bool,
-    /// Whether there is a pending RECV SQE for this connection.
+    /// Whether there is a pending RECV SQE for this connection. Set when the
+    /// SQE is queued and cleared only by its CQE, so it is exactly "the
+    /// kernel may still write into `buf`".
     pub recv_pending: bool,
-    /// Whether there is a pending WRITE SQE for this connection.
+    /// Whether there is a pending SEND SQE for this connection. Set when the
+    /// SQE is queued and cleared only by its CQE ("the kernel may still read
+    /// `response_buf`").
     pub write_pending: bool,
     /// Timeout error waiting to be translated into a wire response.
     timeout_error: Option<ErrorResponse>,
@@ -120,7 +131,25 @@ pub(crate) struct Conn {
     pub deadline_generation: u64,
     /// Most recently tracked deadline for this connection.
     pub tracked_deadline: Option<Instant>,
+    /// Tells this connection apart from earlier ones that used the same
+    /// slab slot. Encoded into the `user_data` of every SQE for it.
+    pub generation: u32,
+    /// The spare capacity of `buf` handed to the in-flight RECV.
+    recv_target: Option<RecvTarget>,
 }
+
+/// Where an in-flight RECV writes: the start of `buf`'s spare capacity at
+/// submission time, and how many bytes the SQE allows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RecvTarget {
+    addr: usize,
+    len: usize,
+}
+
+/// `buf` was reallocated or reshaped while a RECV was writing into it, so the
+/// received bytes are not where the buffer expects them.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RecvBufferMoved;
 
 /// Result of processing bytes from a RECV completion.
 pub(crate) enum ProcessResult {
@@ -185,7 +214,84 @@ impl Conn {
             request_started_at: now,
             deadline_generation: 0,
             tracked_deadline: None,
+            generation: 0,
+            recv_target: None,
         }
+    }
+
+    /// Whether an SQE that points into this connection's buffers is still
+    /// in flight. While it is, the `Conn` (and so `buf` and `response_buf`)
+    /// must stay in the slab.
+    pub fn has_io_in_flight(&self) -> bool {
+        self.recv_pending || self.write_pending
+    }
+
+    /// Make sure `buf` has at least `min_spare` bytes of spare capacity and
+    /// return the region a RECV SQE may write into. The region is recorded
+    /// so [`commit_recv`](Self::commit_recv) can check it did not move.
+    ///
+    /// Until the RECV completes, `buf` must not be reallocated or dropped:
+    /// no `reserve`, `extend_from_slice`, `clear` + refill, or replacing it.
+    pub fn prepare_recv(&mut self, min_spare: usize) -> (*mut u8, u32) {
+        debug_assert!(
+            !self.recv_pending,
+            "second RECV submitted into the same buffer"
+        );
+        let spare = self.buf.capacity() - self.buf.len();
+        if spare < min_spare {
+            self.buf.reserve(min_spare - spare);
+        }
+        let spare = self.buf.spare_capacity_mut();
+        let len = spare.len().min(u32::MAX as usize);
+        let ptr = spare.as_mut_ptr().cast::<u8>();
+        self.recv_target = Some(RecvTarget {
+            addr: ptr as usize,
+            len,
+        });
+        (ptr, len as u32)
+    }
+
+    /// Append the `received` bytes a RECV completion reports to `buf`.
+    ///
+    /// Returns the number of bytes appended, clamped to what the SQE allowed.
+    /// Fails if the buffer no longer ends where the RECV wrote, which means
+    /// it was reallocated under the kernel: the bytes are elsewhere, and
+    /// exposing the spare capacity would expose uninitialised memory.
+    pub fn commit_recv(&mut self, received: usize) -> Result<usize, RecvBufferMoved> {
+        let target = self.recv_target.take().ok_or(RecvBufferMoved)?;
+        let end = self.buf.as_ptr() as usize + self.buf.len();
+        let spare = self.buf.capacity() - self.buf.len();
+        if end != target.addr || spare < target.len {
+            return Err(RecvBufferMoved);
+        }
+        // The kernel never reports more than the SQE length; clamp anyway so
+        // a wrong `res` can never extend `len` past initialised bytes.
+        let n = received.min(target.len);
+        // SAFETY: the kernel wrote `n` bytes starting at `target.addr`, which
+        // is still the first byte of `buf`'s spare capacity (checked above),
+        // and `n <= target.len <= spare`, so the new length stays within the
+        // allocation and covers only initialised bytes.
+        unsafe { self.buf.set_len(self.buf.len() + n) };
+        Ok(n)
+    }
+
+    /// Forget the in-flight RECV's target after a failed or ignored
+    /// completion; nothing it wrote becomes part of `buf`.
+    pub fn discard_recv(&mut self) {
+        self.recv_target = None;
+    }
+
+    /// Mark the connection closed while SQEs may still be in flight for it.
+    /// Drops the request/response plumbing but keeps `buf` and
+    /// `response_buf`, which those SQEs may still reference.
+    pub fn mark_closed(&mut self) {
+        self.state = ConnState::Closed;
+        self.request_body = None;
+        self.pending_request_body = None;
+        self.dispatch_handle = None;
+        self.response_rx = None;
+        self.timeout_error = None;
+        self.keep_alive = false;
     }
 
     /// Process bytes from a RECV completion while waiting for request headers.
@@ -293,6 +399,7 @@ impl Conn {
             match rx.try_recv() {
                 Ok(ResponseStreamEvent::Data(chunk)) if chunk.is_empty() => continue,
                 Ok(ResponseStreamEvent::Data(chunk)) => {
+                    debug_assert!(!self.write_pending, "response_buf refilled under a SEND");
                     if matches!(self.state, ConnState::Dispatching)
                         && self.request_body_in_progress()
                     {
@@ -401,7 +508,25 @@ impl Conn {
         }
     }
 
+    /// The unwritten part of `response_buf`, for a SEND SQE, or `None` if
+    /// everything was written. `response_buf` must not be modified or
+    /// replaced until that SEND completes (`write_pending`).
+    pub fn prepare_write(&self) -> Option<(*const u8, u32)> {
+        debug_assert!(
+            !self.write_pending,
+            "second SEND submitted for the same buffer"
+        );
+        let remaining = &self.response_buf[self.response_written..];
+        if remaining.is_empty() {
+            return None;
+        }
+        // A short send is handled by `on_write`, so clamping is safe.
+        let len = remaining.len().min(u32::MAX as usize) as u32;
+        Some((remaining.as_ptr(), len))
+    }
+
     pub fn set_serialized_response(&mut self, response: Vec<u8>, keep_alive: bool) {
+        debug_assert!(!self.write_pending, "response_buf replaced under a SEND");
         self.response_buf = response;
         self.response_written = 0;
         self.response_started = true;
@@ -429,6 +554,10 @@ impl Conn {
 
     /// Reset connection state for the next request (keep-alive).
     fn reset(&mut self) {
+        debug_assert!(
+            !self.has_io_in_flight(),
+            "keep-alive reset with I/O in flight"
+        );
         self.state = ConnState::Headers;
         self.parsed = None;
         self.request_body = None;
@@ -1266,6 +1395,101 @@ mod tests {
                 Some(Duration::from_secs(1)),
             )
         );
+    }
+
+    // --- RECV buffer bookkeeping ---
+
+    /// Stand-in for the kernel: write `data` where the RECV SQE points.
+    fn kernel_recv(ptr: *mut u8, len: u32, data: &[u8]) -> usize {
+        let n = data.len().min(len as usize);
+        // SAFETY: `ptr`/`len` come from `prepare_recv`, which points into the
+        // buffer's spare capacity, and `n <= len`.
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, n) };
+        n
+    }
+
+    #[test]
+    fn recv_appends_after_existing_bytes() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(b"GET ");
+        let (ptr, len) = conn.prepare_recv(64);
+        assert!(len as usize >= 64);
+        assert_eq!(ptr as usize, conn.buf.as_ptr() as usize + 4);
+
+        let n = kernel_recv(ptr, len, b"/ HTTP/1.1");
+        assert_eq!(conn.commit_recv(n), Ok(10));
+        assert_eq!(&conn.buf[..], b"GET / HTTP/1.1");
+    }
+
+    #[test]
+    fn recv_result_is_clamped_to_the_sqe_length() {
+        let mut conn = new_conn();
+        let (ptr, len) = conn.prepare_recv(16);
+        kernel_recv(ptr, len, &vec![b'a'; len as usize]);
+        // A bogus `res` larger than the SQE allowed must not extend `len`
+        // into bytes the kernel never wrote.
+        assert_eq!(conn.commit_recv(len as usize + 4096), Ok(len as usize));
+        assert_eq!(conn.buf.len(), len as usize);
+        assert!(conn.buf.len() <= conn.buf.capacity());
+    }
+
+    #[test]
+    fn recv_survives_consuming_parsed_bytes() {
+        // Parsing advances the front of `buf`; the RECV target (the end of
+        // the initialised bytes) does not move.
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(b"abcdef");
+        let (ptr, len) = conn.prepare_recv(16);
+        conn.buf.advance(3);
+        let n = kernel_recv(ptr, len, b"gh");
+        assert_eq!(conn.commit_recv(n), Ok(2));
+        assert_eq!(&conn.buf[..], b"defgh");
+    }
+
+    #[test]
+    fn recv_detects_a_buffer_reallocated_under_it() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(b"abc");
+        let (_ptr, _len) = conn.prepare_recv(16);
+        let old = conn.buf.as_ptr();
+        conn.buf.reserve(1 << 20);
+        assert_ne!(conn.buf.as_ptr(), old, "test needs a reallocation");
+        assert_eq!(conn.commit_recv(8), Err(RecvBufferMoved));
+        assert_eq!(&conn.buf[..], b"abc", "no uninitialised bytes exposed");
+    }
+
+    #[test]
+    fn recv_commit_without_prepare_is_rejected() {
+        let mut conn = new_conn();
+        assert_eq!(conn.commit_recv(1), Err(RecvBufferMoved));
+        let (_ptr, _len) = conn.prepare_recv(16);
+        conn.discard_recv();
+        assert_eq!(conn.commit_recv(1), Err(RecvBufferMoved));
+        assert!(conn.buf.is_empty());
+    }
+
+    #[test]
+    fn write_region_covers_only_unwritten_bytes() {
+        let mut conn = new_conn();
+        assert!(conn.prepare_write().is_none());
+        conn.set_serialized_response(b"HTTP/1.1 200 OK\r\n\r\n".to_vec(), true);
+        conn.response_written = 5;
+        let (ptr, len) = conn.prepare_write().expect("bytes left");
+        assert_eq!(ptr, conn.response_buf[5..].as_ptr());
+        assert_eq!(len as usize, conn.response_buf.len() - 5);
+    }
+
+    #[test]
+    fn mark_closed_keeps_buffers_for_in_flight_sqes() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(b"partial");
+        conn.response_buf = b"HTTP/1.1".to_vec();
+        conn.recv_pending = true;
+        conn.mark_closed();
+        assert!(matches!(conn.state, ConnState::Closed));
+        assert!(conn.has_io_in_flight());
+        assert_eq!(&conn.buf[..], b"partial");
+        assert_eq!(conn.response_buf, b"HTTP/1.1");
     }
 
     // --- EOF ---

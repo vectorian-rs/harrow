@@ -31,13 +31,17 @@ impl Operation for WriteOp {
     type Output = (MeguriResult<usize>, Bytes);
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
-        sq.push_write(
-            user_data,
-            self.fd,
-            self.buf.as_ptr(),
-            sqe_len(self.buf.len()),
-            self.offset,
-        )
+        // SAFETY: as in `SendOp::push`: immutable, non-moving `Bytes` data
+        // owned by the op until the CQE.
+        unsafe {
+            sq.push_write(
+                user_data,
+                self.fd,
+                self.buf.as_ptr(),
+                sqe_len(self.buf.len()),
+                self.offset,
+            )
+        }
     }
 
     fn complete(self, result: MeguriResult<u32>) -> Self::Output {

@@ -35,13 +35,19 @@ impl Operation for AcceptOp {
     type Output = MeguriResult<(OwnedFd, SocketAddr)>;
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
-        sq.push_accept(
-            user_data,
-            self.fd,
-            (&raw mut self.addr.storage).cast(),
-            &raw mut self.addr.len,
-            libc::SOCK_CLOEXEC as u32,
-        )
+        // SAFETY: `addr` is boxed, so the storage and its length keep their
+        // address when the op moves; `len` starts as the storage size. The
+        // op (and the box) lives until the CQE is consumed: in `Op` while
+        // awaited, then in the reclaim pool (or leaked) if dropped early.
+        unsafe {
+            sq.push_accept(
+                user_data,
+                self.fd,
+                (&raw mut self.addr.storage).cast(),
+                &raw mut self.addr.len,
+                libc::SOCK_CLOEXEC as u32,
+            )
+        }
     }
 
     fn complete(self, result: MeguriResult<u32>) -> Self::Output {

@@ -28,7 +28,13 @@ unsafe fn raw_syscall(
     a6: libc::c_ulong,
 ) -> libc::c_long {
     let ret: libc::c_long;
-    // SAFETY: the caller upholds the syscall's contract (see `# Safety`).
+    // SAFETY: this follows the x86_64 Linux syscall ABI: number in rax,
+    // arguments in rdi, rsi, rdx, r10, r8, r9, result in rax. The `syscall`
+    // instruction clobbers rcx (return rip) and r11 (rflags), declared as
+    // outputs, and does not touch the user stack (`nostack` holds). Memory
+    // is not marked `nomem`/`readonly`, so the compiler assumes the kernel
+    // may read or write any memory the arguments point to. What the call
+    // does with those pointers is the caller's contract (see `# Safety`).
     unsafe {
         std::arch::asm!(
             "syscall",
@@ -64,6 +70,12 @@ unsafe fn raw_syscall(
     a6: libc::c_ulong,
 ) -> libc::c_long {
     let ret: libc::c_long;
+    // SAFETY: this follows the aarch64 Linux syscall ABI: number in x8,
+    // arguments in x0..x5, result in x0 (hence `inlateout("x0")`). The
+    // kernel preserves every other register, and `svc` does not touch the
+    // user stack (`nostack` holds). Memory is not marked `nomem`/`readonly`,
+    // so the compiler assumes the kernel may read or write memory the
+    // arguments point to; the caller's contract covers those pointers.
     unsafe {
         std::arch::asm!(
             "svc #0",
@@ -393,6 +405,9 @@ pub const IORING_SQ_TASKRUN: u32 = 1 << 2;
 /// - The caller is responsible for mmap'ing the SQ and CQ regions using the
 ///   offsets returned in `params`.
 pub unsafe fn io_uring_setup(entries: u32, params: &mut IoUringParams) -> std::io::Result<RawFd> {
+    // SAFETY: `params` is an exclusive reference to a repr(C) struct with the
+    // kernel's `io_uring_params` layout; the kernel reads and writes it only
+    // during this call. The remaining arguments are unused (0).
     let ret = unsafe {
         raw_syscall(
             libc::SYS_io_uring_setup,
@@ -415,7 +430,9 @@ pub unsafe fn io_uring_setup(entries: u32, params: &mut IoUringParams) -> std::i
 ///
 /// # Safety
 /// - `ring_fd` must be a valid io_uring fd.
-/// - If `to_submit > 0`, the SQ must have valid SQEs pushed.
+/// - If `to_submit > 0`, the SQ must have valid SQEs pushed, and every
+///   address in them must stay valid as the builder that wrote the SQE
+///   requires (until the CQE for buffers; until submission for timespecs).
 /// - If `sigmask` is non-null, it must point to a valid `sigset_t` or the
 ///   kernel may read invalid memory.
 pub unsafe fn io_uring_enter(
@@ -426,6 +443,9 @@ pub unsafe fn io_uring_enter(
     sigmask: *const libc::sigset_t,
     sigmask_sz: usize,
 ) -> std::io::Result<u32> {
+    // SAFETY: the only pointer argument is `sigmask`, valid or null per the
+    // caller's contract; the SQEs the kernel consumes are covered by the
+    // caller's contract as well.
     let ret = unsafe {
         raw_syscall(
             libc::SYS_io_uring_enter,
@@ -457,6 +477,8 @@ pub unsafe fn io_uring_register(
     arg: *const std::ffi::c_void,
     nr_args: u32,
 ) -> std::io::Result<i32> {
+    // SAFETY: `arg`/`nr_args` match `opcode` per the caller's contract;
+    // the remaining arguments are unused (0).
     let ret = unsafe {
         raw_syscall(
             libc::SYS_io_uring_register,

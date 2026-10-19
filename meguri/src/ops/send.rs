@@ -31,13 +31,18 @@ impl Operation for SendOp {
     type Output = (MeguriResult<usize>, Bytes);
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
-        sq.push_send(
-            user_data,
-            self.fd,
-            self.buf.as_ptr(),
-            sqe_len(self.buf.len()),
-            self.flags,
-        )
+        // SAFETY: `Bytes` data is immutable and never moves while a handle
+        // to it exists (heap or `'static`); the op owns this handle until the
+        // CQE (in `Op`, then in the reclaim pool or leaked if dropped).
+        unsafe {
+            sq.push_send(
+                user_data,
+                self.fd,
+                self.buf.as_ptr(),
+                sqe_len(self.buf.len()),
+                self.flags,
+            )
+        }
     }
 
     fn complete(self, result: MeguriResult<u32>) -> Self::Output {

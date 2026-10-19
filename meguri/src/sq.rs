@@ -19,6 +19,15 @@ use crate::syscall::{
 ///
 /// - **head** (kernel-written, user-read): `Acquire`
 /// - **tail** (user-written, kernel-read): `Release`
+///
+/// # Pointer validity
+///
+/// All pointers point into the SQ ring and SQE mappings owned by the
+/// [`Ring`] that created this queue (`Ring::_sq_ring_mmap`, `_sqes_mmap`).
+/// The queue is a field of that `Ring` and only reachable through it, so
+/// the mappings outlive every use of the pointers below.
+///
+/// [`Ring`]: crate::Ring
 pub struct SubmissionQueue {
     // Pointers into the kernel-mapped SQ ring region.
     head: *const AtomicU32,
@@ -34,7 +43,12 @@ pub struct SubmissionQueue {
     sq_tail: u32,
 }
 
-// SAFETY: SQ is accessed only from the ring owner's thread (SINGLE_ISSUER).
+// SAFETY: the raw pointers target shared kernel memory that is not tied to
+// any thread; head/tail/flags are accessed atomically and SQE slots are only
+// written while unpublished (outside `head..tail`). It is not `Sync`, and
+// every write needs `&mut self`, so moving it between threads cannot race.
+// (`IORING_SETUP_SINGLE_ISSUER` restricts which thread may call
+// io_uring_enter; that is `Ring`'s concern, and `Ring` is `!Send`.)
 unsafe impl Send for SubmissionQueue {}
 
 impl SubmissionQueue {
@@ -49,6 +63,11 @@ impl SubmissionQueue {
         sqes: *mut IoUringSqe,
         params: &IoUringParams,
     ) -> Self {
+        // SAFETY: per the caller's contract, the mapping is the SQ ring of the
+        // ring `params` describes (mapped PROT_READ | PROT_WRITE), so the
+        // kernel-provided `sq_off` offsets are in bounds and `u32`-aligned,
+        // and `array` has `ring_entries` slots. No SQE has been submitted
+        // yet, so the kernel is not reading `array` while it is initialised.
         unsafe {
             let head = sq_ring_base.add(params.sq_off.head as usize) as *const AtomicU32;
             let tail = sq_ring_base.add(params.sq_off.tail as usize) as *const AtomicU32;
@@ -80,16 +99,17 @@ impl SubmissionQueue {
         }
     }
 
-    /// Get a mutable reference to the next available SQE slot.
-    ///
-    /// Returns `None` if the SQ is full (local tail has caught up with
-    /// the kernel head by `ring_entries`).
-    pub fn next_sqe(&mut self) -> Option<&mut IoUringSqe> {
+    /// Claim and zero the next free SQE slot, or `None` if the SQ is full.
+    fn slot(&mut self) -> Option<&mut IoUringSqe> {
         let head = self.load_head();
         if self.sq_tail.wrapping_sub(head) >= self.ring_entries {
             return None; // SQ is full
         }
         let idx = self.sq_tail & self.ring_mask;
+        // SAFETY: `idx <= ring_mask < ring_entries`, the length of the SQE
+        // array mapped by `Ring` (which outlives `self`). The slot lies
+        // outside `head..tail` as published to the kernel, so the kernel is
+        // not reading it, and `&mut self` makes this the only reference.
         let sqe = unsafe { &mut *self.sqes.add(idx as usize) };
         // Zero the SQE so callers start from a clean slate.
         *sqe = IoUringSqe::zeroed();
@@ -97,16 +117,35 @@ impl SubmissionQueue {
         Some(sqe)
     }
 
+    /// Get a mutable reference to the next available SQE slot.
+    ///
+    /// Returns `None` if the SQ is full (local tail has caught up with
+    /// the kernel head by `ring_entries`).
+    ///
+    /// # Safety
+    ///
+    /// The SQE is handed to the kernel on the next submit as written. Every
+    /// address in it (`addr`, `off` for accept/connect, `addr3`, ...) must
+    /// stay valid, with the access the opcode implies, and unmoved until
+    /// the operation's CQE has been consumed; every fd must be owned by the
+    /// caller for the duration. The `push_*` builders state the same
+    /// contract per opcode.
+    pub unsafe fn next_sqe(&mut self) -> Option<&mut IoUringSqe> {
+        self.slot()
+    }
+
     /// Push a pre-built SQE into the next available slot.
     /// Returns `true` if pushed, `false` if the SQ is full.
-    pub fn push(&mut self, sqe: &IoUringSqe) -> bool {
-        let head = self.load_head();
-        if self.sq_tail.wrapping_sub(head) >= self.ring_entries {
+    ///
+    /// # Safety
+    ///
+    /// As for [`next_sqe`](Self::next_sqe): whatever `sqe` points to must
+    /// stay valid until its CQE has been consumed.
+    pub unsafe fn push(&mut self, sqe: &IoUringSqe) -> bool {
+        let Some(slot) = self.slot() else {
             return false;
-        }
-        let idx = self.sq_tail & self.ring_mask;
-        unsafe { std::ptr::copy_nonoverlapping(sqe, self.sqes.add(idx as usize), 1) };
-        self.sq_tail = self.sq_tail.wrapping_add(1);
+        };
+        *slot = *sqe;
         true
     }
 
@@ -115,6 +154,9 @@ impl SubmissionQueue {
     /// Must be called before `io_uring_enter`. Returns the number of
     /// entries pending in the ring (submitted but not yet consumed by kernel).
     pub fn flush(&mut self) -> u32 {
+        // SAFETY: `tail` points to the kernel's SQ tail (see "Pointer
+        // validity"); userspace is its only writer. Release publishes the
+        // SQE writes made by the builders before the kernel can see them.
         unsafe { (*self.tail).store(self.sq_tail, Ordering::Release) };
         let head = self.load_head();
         self.sq_tail.wrapping_sub(head)
@@ -122,11 +164,15 @@ impl SubmissionQueue {
 
     /// Read the SQ head from kernel-mapped memory.
     fn load_head(&self) -> u32 {
+        // SAFETY: `head` points to the kernel's SQ head (see "Pointer
+        // validity"), an aligned u32 the kernel only updates atomically.
         unsafe { (*self.head).load(Ordering::Acquire) }
     }
 
     /// Read the SQ flags from kernel-mapped memory.
     pub fn sq_flags(&self) -> u32 {
+        // SAFETY: `flags` points to the kernel's SQ flags word (see "Pointer
+        // validity"); a Relaxed atomic load of an aligned u32.
         unsafe { (*self.flags).load(Ordering::Relaxed) }
     }
 
@@ -142,7 +188,7 @@ impl SubmissionQueue {
 
     /// Build and push a `Nop` SQE (useful for testing the ring).
     pub fn push_nop(&mut self, user_data: u64) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_NOP;
@@ -152,7 +198,14 @@ impl SubmissionQueue {
     }
 
     /// Build and push a `Read` SQE.
-    pub fn push_read(
+    ///
+    /// # Safety
+    ///
+    /// `buf..buf + len` must be valid for writes and must neither move, be
+    /// freed, nor be accessed by anyone else until the CQE has been consumed:
+    /// the kernel writes into it asynchronously. `fd` must stay open (a
+    /// closed fd is only `EBADF`, but a reused fd number reads the wrong file).
+    pub unsafe fn push_read(
         &mut self,
         user_data: u64,
         fd: i32,
@@ -160,7 +213,7 @@ impl SubmissionQueue {
         len: u32,
         offset: u64,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_READ;
@@ -173,7 +226,13 @@ impl SubmissionQueue {
     }
 
     /// Build and push a `Write` SQE.
-    pub fn push_write(
+    ///
+    /// # Safety
+    ///
+    /// `buf..buf + len` must be valid for reads and must neither move, be
+    /// freed, nor be modified until the CQE has been consumed: the kernel
+    /// reads it asynchronously.
+    pub unsafe fn push_write(
         &mut self,
         user_data: u64,
         fd: i32,
@@ -181,7 +240,7 @@ impl SubmissionQueue {
         len: u32,
         offset: u64,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_WRITE;
@@ -194,7 +253,11 @@ impl SubmissionQueue {
     }
 
     /// Build and push a `Send` SQE.
-    pub fn push_send(
+    ///
+    /// # Safety
+    ///
+    /// As for [`push_write`](Self::push_write).
+    pub unsafe fn push_send(
         &mut self,
         user_data: u64,
         fd: i32,
@@ -202,7 +265,7 @@ impl SubmissionQueue {
         len: u32,
         flags: u32,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_SEND;
@@ -215,7 +278,11 @@ impl SubmissionQueue {
     }
 
     /// Build and push a `Recv` SQE.
-    pub fn push_recv(
+    ///
+    /// # Safety
+    ///
+    /// As for [`push_read`](Self::push_read).
+    pub unsafe fn push_recv(
         &mut self,
         user_data: u64,
         fd: i32,
@@ -223,7 +290,7 @@ impl SubmissionQueue {
         len: u32,
         flags: u32,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_RECV;
@@ -236,7 +303,15 @@ impl SubmissionQueue {
     }
 
     /// Build and push an `Accept` SQE.
-    pub fn push_accept(
+    ///
+    /// # Safety
+    ///
+    /// `addr` and `addrlen` must both be null, or `addrlen` must point to a
+    /// `socklen_t` holding the size of the buffer at `addr`; both must stay
+    /// valid and unmoved until the CQE has been consumed (the kernel writes
+    /// the peer address when a connection arrives). The accepted fd in the
+    /// CQE is owned by whoever consumes the CQE.
+    pub unsafe fn push_accept(
         &mut self,
         user_data: u64,
         fd: i32,
@@ -244,7 +319,7 @@ impl SubmissionQueue {
         addrlen: *mut libc::socklen_t,
         flags: u32,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_ACCEPT;
@@ -258,15 +333,18 @@ impl SubmissionQueue {
 
     /// Build and push a `Connect` SQE.
     ///
-    /// `addr` must stay valid and unmoved until the CQE is consumed.
-    pub fn push_connect(
+    /// # Safety
+    ///
+    /// `addr..addr + addrlen` must be a valid socket address that stays
+    /// valid and unmoved until the CQE has been consumed.
+    pub unsafe fn push_connect(
         &mut self,
         user_data: u64,
         fd: i32,
         addr: *const libc::sockaddr,
         addrlen: libc::socklen_t,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_CONNECT;
@@ -282,23 +360,23 @@ impl SubmissionQueue {
     /// Completes with `-ETIME` when `ts` elapses, or with `0` once `count`
     /// other completions have been posted (`count = 0`: time only).
     ///
-    /// # Safety contract (caller must uphold)
+    /// # Safety
     ///
-    /// `ts` must point to a valid `libc::timespec` that remains alive and
-    /// unmodified until the corresponding CQE is consumed.  The kernel
-    /// reads from this address **asynchronously** after `submit_and_wait`
-    /// returns — if the pointee is freed, moved, or lives on a stack
-    /// frame that unwinds before the CQE arrives, the kernel will read
-    /// garbage.  In practice this means `ts` should live on the worker
-    /// loop's stack or in a heap allocation tied to the ring's lifetime.
-    pub fn push_timeout(
+    /// `ts` must point to a valid `libc::timespec` (on 64-bit Linux it has
+    /// the `__kernel_timespec` layout) that stays alive and unmodified until
+    /// the SQE has been submitted. The kernel copies the timespec while it
+    /// prepares the request (`io_timeout_prep`), i.e. inside the
+    /// `io_uring_enter` that submits it, or in the SQ thread with SQPOLL;
+    /// it does not read it again before the CQE. Keeping it alive until the
+    /// CQE is the conservative choice.
+    pub unsafe fn push_timeout(
         &mut self,
         user_data: u64,
         ts: *const libc::timespec,
         count: u32,
         flags: u32,
     ) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_TIMEOUT;
@@ -317,12 +395,11 @@ impl SubmissionQueue {
     ///
     /// The previous SQE must have been pushed with `IOSQE_IO_LINK` flag.
     ///
-    /// # Safety contract (caller must uphold)
+    /// # Safety
     ///
-    /// Same as [`push_timeout`](Self::push_timeout): `ts` must remain
-    /// valid and stable until the CQE is consumed.
-    pub fn push_link_timeout(&mut self, user_data: u64, ts: *const libc::timespec) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+    /// Same as [`push_timeout`](Self::push_timeout).
+    pub unsafe fn push_link_timeout(&mut self, user_data: u64, ts: *const libc::timespec) -> bool {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_LINK_TIMEOUT;
@@ -335,9 +412,10 @@ impl SubmissionQueue {
 
     /// Build and push an `AsyncCancel` SQE.
     ///
-    /// Cancels a pending operation identified by `target_user_data`.
+    /// Cancels a pending operation identified by `target_user_data`. Takes
+    /// no pointers: `addr` carries the target's user_data, not an address.
     pub fn push_cancel(&mut self, user_data: u64, target_user_data: u64) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_ASYNC_CANCEL;
@@ -348,8 +426,14 @@ impl SubmissionQueue {
     }
 
     /// Build and push a `Close` SQE.
-    pub fn push_close(&mut self, user_data: u64, fd: i32) -> bool {
-        let Some(sqe) = self.next_sqe() else {
+    ///
+    /// # Safety
+    ///
+    /// The caller must own `fd` and give up ownership: nothing may use or
+    /// close it after this call (closing an fd owned by someone else, e.g.
+    /// an `OwnedFd`, breaks I/O safety, and its number may be reused).
+    pub unsafe fn push_close(&mut self, user_data: u64, fd: i32) -> bool {
+        let Some(sqe) = self.slot() else {
             return false;
         };
         sqe.opcode = IORING_OP_CLOSE;
@@ -369,6 +453,11 @@ impl SubmissionQueue {
             return false;
         }
         let prev_idx = self.sq_tail.wrapping_sub(1) & self.ring_mask;
+        // SAFETY: `prev_idx < ring_entries`, inside the SQE array. The slot
+        // is at or after the kernel's head, so the kernel has not consumed
+        // it; without IORING_SETUP_SQPOLL (which `Ring::new` never sets) the
+        // kernel only reads SQEs inside io_uring_enter, which cannot run
+        // while we hold `&mut self`, so nothing else accesses the slot.
         let sqe = unsafe { &mut *self.sqes.add(prev_idx as usize) };
         sqe.flags |= IOSQE_IO_LINK;
         true

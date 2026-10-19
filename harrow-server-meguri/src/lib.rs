@@ -23,6 +23,39 @@
 //! └─────────────────┘     └─────────────────┘
 //! ```
 //!
+//! # Ownership and lifetime rules
+//!
+//! The event loop talks to the kernel through raw pointers and raw fds, so
+//! these rules carry the memory safety of the backend:
+//!
+//! - **Listener fd**: owned by the worker's `TcpListener`, which outlives
+//!   the ring. The ACCEPT SQE passes no address buffer, so it references no
+//!   user memory.
+//! - **Accepted fds**: the fd in a successful ACCEPT CQE is owned by the
+//!   `Conn` created in `handle_accept`, or closed right away
+//!   (`close_accepted_fd`) when no connection takes it (limit reached,
+//!   drain, teardown). It is created close-on-exec.
+//! - **Connection fds**: `Conn::fd` is closed in exactly one place,
+//!   `close_conn`, which sets it to `-1`. With a RECV/SEND in flight it
+//!   first calls shutdown(2): io_uring holds its own file reference, so
+//!   close(2) alone would neither send FIN nor complete the SQE.
+//! - **RECV buffer**: a RECV SQE points into the spare capacity of
+//!   `Conn::buf`. While `recv_pending` is set, `buf` is not reallocated
+//!   (`Conn::prepare_recv`/`commit_recv` record and verify the target) and
+//!   the `Conn` stays in the slab.
+//! - **SEND buffer**: a SEND SQE points into `Conn::response_buf`. While
+//!   `write_pending` is set, `response_buf` is not modified or replaced
+//!   (debug-asserted) and the `Conn` stays in the slab.
+//! - **Slab slots**: a closed connection with an SQE in flight stays in its
+//!   slot in the `Closed` state; its last CQE frees the slot
+//!   (`release_if_idle`). At worker exit, `teardown` waits for those CQEs
+//!   and leaks (never frees) anything the kernel still holds.
+//! - **Stale CQEs**: every per-connection user_data carries the slab index
+//!   and a 28-bit generation (`ConnToken`). A CQE whose generation does not
+//!   match the slot's current connection is ignored.
+//! - **Timespecs**: TIMEOUT SQEs point at `static`s or at a worker-loop
+//!   local declared before the ring; the kernel copies them at submission.
+//!
 //! # Platform
 //!
 //! **Linux only.** io_uring is a Linux kernel feature.
@@ -117,6 +150,25 @@ const DISPATCH_TICK_USER_DATA: u64 = u64::MAX - 2;
 const TIMEOUT_CANCEL_USER_DATA: u64 = u64::MAX - 3;
 
 #[cfg(target_os = "linux")]
+/// Special user_data value for the cancel of the accept SQE at teardown.
+const ACCEPT_CANCEL_USER_DATA: u64 = u64::MAX - 4;
+
+#[cfg(target_os = "linux")]
+/// Special user_data value for the timer that bounds teardown.
+const TEARDOWN_TIMER_USER_DATA: u64 = u64::MAX - 5;
+
+// Per-connection user_data layout:
+//
+//   bit 63      always 0, so it never collides with the `u64::MAX - n` specials
+//   bits 60..63 operation tag (exactly one of the flags below)
+//   bits 32..60 connection generation (28 bits)
+//   bits  0..32 slab index
+//
+// The generation makes a CQE that outlives its connection (a late RECV CQE,
+// or the CQE of a cancel SQE) unable to act on a newer connection that
+// reuses the same slab slot.
+
+#[cfg(target_os = "linux")]
 /// Tag used for RECV-cancel SQEs when a body-phase timeout must become a 408.
 const RECV_CANCEL_USER_DATA_FLAG: u64 = 1 << 62;
 
@@ -129,8 +181,73 @@ const RECV_USER_DATA_FLAG: u64 = 1 << 61;
 const WRITE_USER_DATA_FLAG: u64 = 1 << 60;
 
 #[cfg(target_os = "linux")]
+const USER_DATA_TAG_MASK: u64 = 0b111 << 60;
+
+#[cfg(target_os = "linux")]
+const CONN_GENERATION_MASK: u32 = (1 << 28) - 1;
+
+#[cfg(target_os = "linux")]
+/// Identifies one connection: its slab slot plus the generation of the
+/// connection that occupied the slot when the SQE was submitted.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ConnToken {
+    idx: usize,
+    generation: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl ConnToken {
+    fn of(idx: usize, conn: &connection::Conn) -> Self {
+        Self {
+            idx,
+            generation: conn.generation,
+        }
+    }
+
+    fn user_data(self, tag: u64) -> u64 {
+        debug_assert!(
+            u32::try_from(self.idx).is_ok(),
+            "slab index exceeds 32 bits"
+        );
+        debug_assert_eq!(self.generation & !CONN_GENERATION_MASK, 0);
+        tag | (u64::from(self.generation & CONN_GENERATION_MASK) << 32)
+            | (self.idx as u64 & 0xFFFF_FFFF)
+    }
+
+    fn decode(user_data: u64, tag: u64) -> Option<Self> {
+        (user_data >> 63 == 0 && user_data & USER_DATA_TAG_MASK == tag).then_some(Self {
+            idx: (user_data & 0xFFFF_FFFF) as usize,
+            generation: ((user_data >> 32) as u32) & CONN_GENERATION_MASK,
+        })
+    }
+
+    /// The connection this token names, if it is still in its slot.
+    fn get(self, conns: &mut slab::Slab<connection::Conn>) -> Option<&mut connection::Conn> {
+        conns
+            .get_mut(self.idx)
+            .filter(|conn| conn.generation == self.generation)
+    }
+}
+
+#[cfg(target_os = "linux")]
 /// Wake interval while a local dispatch task is still in flight.
 const DISPATCH_TICK_MILLIS: i64 = 10;
+
+#[cfg(target_os = "linux")]
+/// The dispatch tick's duration. A `static`, so the pointer in its SQE is
+/// valid for the life of the process.
+static DISPATCH_TICK_TS: libc::timespec = libc::timespec {
+    tv_sec: 0,
+    tv_nsec: DISPATCH_TICK_MILLIS * 1_000_000,
+};
+
+#[cfg(target_os = "linux")]
+/// The teardown timer's duration (`TEARDOWN_TIMEOUT`), static for the same
+/// reason.
+static TEARDOWN_TS: libc::timespec = libc::timespec {
+    tv_sec: TEARDOWN_TIMEOUT.as_secs() as libc::time_t,
+    tv_nsec: 0,
+};
 
 #[cfg(target_os = "linux")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -318,6 +435,14 @@ fn worker_loop(
     shutdown: harrow_server::ShutdownSignal,
     mut startup: Option<StartupSignal>,
 ) -> Result<(), BoxError> {
+    // Read by the kernel when a TIMEOUT SQE pointing at it is submitted.
+    // Declared before `ring` so it is dropped after it: an SQE still queued
+    // in the ring can never point at a dead stack slot.
+    let mut timeout_ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+
     let mut ring = match meguri::Ring::new(config.ring_entries) {
         Ok(ring) => ring,
         Err(err) => return Err(Box::new(err)),
@@ -327,10 +452,11 @@ fn worker_loop(
         config.ring_entries
     );
 
-    let mut accept_addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-    let mut accept_addrlen: libc::socklen_t = std::mem::size_of::<libc::sockaddr_storage>() as _;
-
+    // Every `Conn` in the slab owns its socket fd and the buffers its SQEs
+    // point into. A slot is freed only when no SQE for it is in flight; see
+    // `close_conn` and `teardown`.
     let mut conns: slab::Slab<connection::Conn> = slab::Slab::new();
+    let mut next_generation: u32 = 0;
 
     // Embed a tokio current-thread runtime for async dispatch.
     let tokio_rt = match tokio::runtime::Builder::new_current_thread()
@@ -344,38 +470,32 @@ fn worker_loop(
 
     let listener_fd = listener.as_raw_fd();
 
-    // Timeout specs must live on the stack across submit_and_wait since the
-    // kernel reads them asynchronously.
-    let mut timeout_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    let dispatch_tick_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: DISPATCH_TICK_MILLIS * 1_000_000,
-    };
     let mut dispatch_tick_armed = false;
     let mut timeout_armed = false;
     let mut timeout_deadline = None;
     let mut deadline_heap = BinaryHeap::new();
 
-    // Submit initial accept SQE.
-    submit_accept(
-        &mut ring,
-        listener_fd,
-        &mut accept_addr,
-        &mut accept_addrlen,
-    );
+    let mut accept_armed = submit_accept(&mut ring, listener_fd);
 
     if let Some(signal) = startup.take() {
         signal.ready.listening(signal.addr);
     }
+
+    // An error from io_uring_enter ends the loops, but never skips
+    // `teardown`: freeing `conns` with SQEs in flight would hand their
+    // buffers back to the allocator while the kernel may still write them.
+    let mut failure: Option<std::io::Error> = None;
 
     loop {
         // Check shutdown flag.
         if shutdown.is_shutdown() {
             tracing::debug!("worker shutting down");
             break;
+        }
+
+        // Re-arm accept if the previous attempt found the SQ full.
+        if !accept_armed {
+            accept_armed = submit_accept(&mut ring, listener_fd);
         }
 
         schedule_next_timeout(
@@ -388,12 +508,14 @@ fn worker_loop(
         );
 
         if dispatch_tick_needed(&conns) && !dispatch_tick_armed {
-            submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
-            dispatch_tick_armed = true;
+            dispatch_tick_armed = submit_dispatch_tick(&mut ring);
         }
 
         // Submit pending SQEs and wait for at least one completion.
-        ring.submit_and_wait(1)?;
+        if let Err(err) = wait_for_completions(&mut ring) {
+            failure = Some(err);
+            break;
+        }
 
         // Drain all available completions.
         while let Some(cqe) = ring.cq().peek() {
@@ -401,17 +523,11 @@ fn worker_loop(
             let res = cqe.res;
 
             if user_data == ACCEPT_USER_DATA {
-                if let Some(idx) = handle_accept(res, &mut ring, &mut conns, config) {
+                accept_armed = false;
+                if let Some(idx) =
+                    handle_accept(res, &mut ring, &mut conns, config, &mut next_generation)
+                {
                     refresh_timeout_deadline(&mut deadline_heap, &mut conns, idx, config);
-                }
-                // Re-arm accept only if not shutting down.
-                if !shutdown.is_shutdown() {
-                    submit_accept(
-                        &mut ring,
-                        listener_fd,
-                        &mut accept_addr,
-                        &mut accept_addrlen,
-                    );
                 }
             } else if user_data == TIMEOUT_USER_DATA {
                 timeout_armed = false;
@@ -421,19 +537,15 @@ fn worker_loop(
                 // Old timeout canceled so a new nearest-deadline timeout can replace it.
             } else if user_data == DISPATCH_TICK_USER_DATA {
                 dispatch_tick_armed = false;
-            } else if let Some(conn_idx) = decode_recv_cancel_user_data(user_data) {
-                handle_recv_cancel_completion(&mut ring, &mut conns, conn_idx);
-                refresh_timeout_deadline(&mut deadline_heap, &mut conns, conn_idx, config);
-            } else if let Some(conn_idx) = decode_recv_user_data(user_data) {
-                handle_recv_completion(
-                    conn_idx, res, &mut ring, &mut conns, &shared, &local, config,
-                );
-                refresh_timeout_deadline(&mut deadline_heap, &mut conns, conn_idx, config);
-            } else if let Some(conn_idx) = decode_write_user_data(user_data) {
-                handle_write_completion(
-                    conn_idx, res, &mut ring, &mut conns, &shared, &local, config,
-                );
-                refresh_timeout_deadline(&mut deadline_heap, &mut conns, conn_idx, config);
+            } else if ConnToken::decode(user_data, RECV_CANCEL_USER_DATA_FLAG).is_some() {
+                // Nothing to do: the cancelled RECV's own CQE (always posted,
+                // cancelled or not) turns the armed timeout into a 408.
+            } else if let Some(token) = ConnToken::decode(user_data, RECV_USER_DATA_FLAG) {
+                handle_recv_completion(token, res, &mut ring, &mut conns, &shared, &local, config);
+                refresh_timeout_deadline(&mut deadline_heap, &mut conns, token.idx, config);
+            } else if let Some(token) = ConnToken::decode(user_data, WRITE_USER_DATA_FLAG) {
+                handle_write_completion(token, res, &mut ring, &mut conns, &shared, &local, config);
+                refresh_timeout_deadline(&mut deadline_heap, &mut conns, token.idx, config);
             } else {
                 tracing::debug!("ignoring unexpected CQE user_data={user_data} res={res}");
             }
@@ -463,7 +575,7 @@ fn worker_loop(
 
     // Drain phase: wait for in-flight connections.
     let drain_start = std::time::Instant::now();
-    while !conns.is_empty() && drain_start.elapsed() < config.drain_timeout {
+    while failure.is_none() && !conns.is_empty() && drain_start.elapsed() < config.drain_timeout {
         reap_closed_drain_connections(&mut conns);
         if conns.is_empty() {
             break;
@@ -478,18 +590,19 @@ fn worker_loop(
             &mut timeout_ts,
         );
         if dispatch_tick_needed(&conns) && !dispatch_tick_armed {
-            submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
-            dispatch_tick_armed = true;
+            dispatch_tick_armed = submit_dispatch_tick(&mut ring);
         }
-        ring.submit_and_wait(1)?;
+        if let Err(err) = wait_for_completions(&mut ring) {
+            failure = Some(err);
+            break;
+        }
         while let Some(cqe) = ring.cq().peek() {
             let user_data = cqe.user_data;
             let res = cqe.res;
             if user_data == ACCEPT_USER_DATA {
+                accept_armed = false;
                 if res >= 0 {
-                    unsafe {
-                        libc::close(res);
-                    }
+                    close_accepted_fd(res);
                 }
             } else if user_data == DISPATCH_TICK_USER_DATA {
                 dispatch_tick_armed = false;
@@ -497,20 +610,15 @@ fn worker_loop(
                 timeout_armed = false;
                 timeout_deadline = None;
                 sweep_timed_out_connections(&mut ring, &mut conns, config, &mut deadline_heap);
-            } else if user_data == TIMEOUT_CANCEL_USER_DATA {
-            } else if let Some(conn_idx) = decode_recv_cancel_user_data(user_data) {
-                handle_recv_cancel_completion(&mut ring, &mut conns, conn_idx);
-                refresh_timeout_deadline(&mut deadline_heap, &mut conns, conn_idx, config);
-            } else if let Some(conn_idx) = decode_recv_user_data(user_data) {
-                handle_recv_completion(
-                    conn_idx, res, &mut ring, &mut conns, &shared, &local, config,
-                );
-                refresh_timeout_deadline(&mut deadline_heap, &mut conns, conn_idx, config);
-            } else if let Some(conn_idx) = decode_write_user_data(user_data) {
-                handle_write_completion(
-                    conn_idx, res, &mut ring, &mut conns, &shared, &local, config,
-                );
-                refresh_timeout_deadline(&mut deadline_heap, &mut conns, conn_idx, config);
+            } else if user_data == TIMEOUT_CANCEL_USER_DATA
+                || ConnToken::decode(user_data, RECV_CANCEL_USER_DATA_FLAG).is_some()
+            {
+            } else if let Some(token) = ConnToken::decode(user_data, RECV_USER_DATA_FLAG) {
+                handle_recv_completion(token, res, &mut ring, &mut conns, &shared, &local, config);
+                refresh_timeout_deadline(&mut deadline_heap, &mut conns, token.idx, config);
+            } else if let Some(token) = ConnToken::decode(user_data, WRITE_USER_DATA_FLAG) {
+                handle_write_completion(token, res, &mut ring, &mut conns, &shared, &local, config);
+                refresh_timeout_deadline(&mut deadline_heap, &mut conns, token.idx, config);
             }
             ring.cq_mut().advance();
         }
@@ -537,22 +645,151 @@ fn worker_loop(
 
     if !conns.is_empty() {
         tracing::warn!("drain timeout, {} connections aborted", conns.len());
-        // Close remaining connections.
-        for conn in conns.drain() {
-            unsafe {
-                libc::close(conn.fd);
+    }
+    teardown(&mut ring, &mut conns, &mut accept_armed);
+
+    match failure {
+        Some(err) => Err(Box::new(err)),
+        None => Ok(()),
+    }
+}
+
+/// Submit queued SQEs and block until at least one CQE is available.
+///
+/// `EINTR` (any signal delivered to the worker thread, e.g. a profiler's
+/// SIGPROF) is retried rather than treated as fatal. `EBUSY`/`EAGAIN` mean
+/// the kernel cannot take more work until completions are reaped (CQ
+/// overflow backlog) or is short of memory; the caller drains the CQ and
+/// tries again on the next iteration.
+#[cfg(target_os = "linux")]
+fn wait_for_completions(ring: &mut meguri::Ring) -> std::io::Result<()> {
+    loop {
+        match ring.submit_and_wait(1) {
+            Ok(_) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) if matches!(err.raw_os_error(), Some(libc::EBUSY | libc::EAGAIN)) => {
+                tracing::debug!("io_uring_enter: {err}; draining completions first");
+                return Ok(());
             }
+            Err(err) => return Err(err),
         }
     }
+}
 
-    Ok(())
+/// How long `teardown` waits for in-flight SQEs after shutting sockets down.
+#[cfg(target_os = "linux")]
+const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Close every remaining connection, then wait until no SQE references
+/// memory owned by this worker, so the slab can be freed.
+///
+/// `close_conn` shuts sockets with in-flight SQEs down, which makes their
+/// RECV/SEND complete right away. The accept SQE is cancelled so an accepted
+/// socket cannot appear after the worker has stopped reading CQEs (it would
+/// leak). If the kernel still has not finished after `TEARDOWN_TIMEOUT`, the
+/// remaining connections are leaked rather than freed.
+#[cfg(target_os = "linux")]
+fn teardown(
+    ring: &mut meguri::Ring,
+    conns: &mut slab::Slab<connection::Conn>,
+    accept_armed: &mut bool,
+) {
+    let all: Vec<usize> = conns.iter().map(|(idx, _)| idx).collect();
+    for idx in all {
+        close_conn(idx, conns);
+    }
+    if conns.is_empty() && !*accept_armed {
+        return;
+    }
+
+    // Flush first so the SQ has room for the cancel and the timer.
+    let _ = ring.submit();
+    if *accept_armed {
+        let _ = ring
+            .sq()
+            .push_cancel(ACCEPT_CANCEL_USER_DATA, ACCEPT_USER_DATA);
+    }
+    // SAFETY: `TEARDOWN_TS` is a `static`, valid for as long as the SQE can
+    // be submitted.
+    let timer_armed = unsafe {
+        ring.sq()
+            .push_timeout(TEARDOWN_TIMER_USER_DATA, &TEARDOWN_TS, 0, 0)
+    };
+
+    let deadline = std::time::Instant::now() + TEARDOWN_TIMEOUT;
+    while timer_armed
+        && (!conns.is_empty() || *accept_armed)
+        && std::time::Instant::now() < deadline
+    {
+        if wait_for_completions(ring).is_err() {
+            break;
+        }
+        while let Some(cqe) = ring.cq().peek() {
+            let user_data = cqe.user_data;
+            let res = cqe.res;
+            if user_data == ACCEPT_USER_DATA {
+                *accept_armed = false;
+                if res >= 0 {
+                    close_accepted_fd(res);
+                }
+            } else if let Some(token) = ConnToken::decode(user_data, RECV_USER_DATA_FLAG) {
+                if let Some(conn) = token.get(conns) {
+                    conn.recv_pending = false;
+                    conn.discard_recv();
+                }
+                release_if_idle(token.idx, conns);
+            } else if let Some(token) = ConnToken::decode(user_data, WRITE_USER_DATA_FLAG) {
+                if let Some(conn) = token.get(conns) {
+                    conn.write_pending = false;
+                }
+                release_if_idle(token.idx, conns);
+            }
+            ring.cq_mut().advance();
+        }
+        ring.cq_mut().flush_head();
+    }
+
+    if !conns.is_empty() {
+        tracing::warn!(
+            "{} connections still had I/O in flight at worker exit; leaking their buffers",
+            conns.len()
+        );
+        for conn in conns.drain() {
+            std::mem::forget(conn);
+        }
+    }
+}
+
+/// Close an fd an ACCEPT CQE handed to us that no connection will own.
+#[cfg(target_os = "linux")]
+fn close_accepted_fd(fd: i32) {
+    // SAFETY: a successful ACCEPT CQE returns a new fd that nothing else
+    // owns; it is closed exactly once here. close(2) errors are ignored:
+    // Linux releases the fd even when close reports an error.
+    unsafe {
+        libc::close(fd);
+    }
+}
+
+/// Free a closed connection's slot once its last in-flight SQE completed.
+#[cfg(target_os = "linux")]
+fn release_if_idle(idx: usize, conns: &mut slab::Slab<connection::Conn>) {
+    if conns.get(idx).is_some_and(|conn| {
+        matches!(conn.state, connection::ConnState::Closed) && !conn.has_io_in_flight()
+    }) {
+        conns.remove(idx);
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn reap_closed_drain_connections(conns: &mut slab::Slab<connection::Conn>) {
+    // Only slots whose SQEs have all completed; the others are released by
+    // their last CQE (`release_if_idle`).
     let closed: Vec<usize> = conns
         .iter()
-        .filter(|(_, conn)| matches!(conn.state, connection::ConnState::Closed))
+        .filter(|(_, conn)| {
+            matches!(conn.state, connection::ConnState::Closed) && !conn.has_io_in_flight()
+        })
         .map(|(idx, _)| idx)
         .collect();
 
@@ -582,7 +819,7 @@ fn per_worker_config(config: ServerConfig, workers: usize) -> ServerConfig {
 
 #[cfg(target_os = "linux")]
 fn create_listener(addr: SocketAddr, reuse_port: bool) -> std::io::Result<std::net::TcpListener> {
-    use std::os::fd::FromRawFd;
+    use std::os::fd::{FromRawFd, OwnedFd};
 
     let domain = if addr.is_ipv4() {
         libc::AF_INET
@@ -590,109 +827,141 @@ fn create_listener(addr: SocketAddr, reuse_port: bool) -> std::io::Result<std::n
         libc::AF_INET6
     };
 
-    // Create socket manually so we can set options BEFORE bind.
-    let fd = unsafe { libc::socket(domain, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
-    if fd < 0 {
+    // Create the socket by hand so options can be set BEFORE bind.
+    // Non-blocking from the start (as before, when it was set after listen)
+    // and close-on-exec.
+    // SAFETY: socket(2) takes no pointers; the result is checked below.
+    let raw = unsafe {
+        libc::socket(
+            domain,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
+            0,
+        )
+    };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // Owned from here on: every early return below closes it.
+    // SAFETY: socket(2) just returned this fd and nothing else owns it.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+
+    set_socket_flag(&fd, libc::SOL_SOCKET, libc::SO_REUSEADDR)?;
+    // SO_REUSEPORT must be set before bind for the kernel to spread
+    // connections across the workers' listeners; without it the second
+    // worker's bind fails with EADDRINUSE, so a failure here is fatal too.
+    if reuse_port {
+        set_socket_flag(&fd, libc::SOL_SOCKET, libc::SO_REUSEPORT)?;
+    }
+
+    // SAFETY: all-zero is a valid `sockaddr_storage`.
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let sa_len: libc::socklen_t = match addr {
+        SocketAddr::V4(a) => {
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: a.port().to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(a.ip().octets()),
+                },
+                sin_zero: [0; 8],
+            };
+            // SAFETY: `sockaddr_storage` is large and aligned enough for
+            // every `sockaddr_*` type.
+            unsafe { std::ptr::write((&raw mut storage).cast(), sin) };
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+        }
+        SocketAddr::V6(a) => {
+            let sin6 = libc::sockaddr_in6 {
+                sin6_family: libc::AF_INET6 as libc::sa_family_t,
+                sin6_port: a.port().to_be(),
+                sin6_flowinfo: a.flowinfo(),
+                sin6_addr: libc::in6_addr {
+                    s6_addr: a.ip().octets(),
+                },
+                sin6_scope_id: a.scope_id(),
+            };
+            // SAFETY: as above.
+            unsafe { std::ptr::write((&raw mut storage).cast(), sin6) };
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+        }
+    };
+
+    // SAFETY: `storage` is a local that outlives the call and holds a
+    // sockaddr of family `domain` whose length is `sa_len`.
+    let rc = unsafe {
+        libc::bind(
+            fd.as_raw_fd(),
+            (&raw const storage).cast::<libc::sockaddr>(),
+            sa_len,
+        )
+    };
+    if rc < 0 {
         return Err(std::io::Error::last_os_error());
     }
 
-    unsafe {
-        let optval = 1i32;
-        let optlen = std::mem::size_of_val(&optval) as libc::socklen_t;
-
-        // SO_REUSEADDR — allow quick restarts.
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_REUSEADDR,
-            &optval as *const _ as *const _,
-            optlen,
-        );
-
-        // SO_REUSEPORT — must be set before bind for kernel connection
-        // distribution across multiple workers.
-        if reuse_port {
-            libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_REUSEPORT,
-                &optval as *const _ as *const _,
-                optlen,
-            );
-        }
-
-        // Bind. Keep sockaddr alive across the bind call.
-        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
-        let sa_len: libc::socklen_t = match addr {
-            SocketAddr::V4(ref a) => {
-                let sin =
-                    &mut *(&mut storage as *mut libc::sockaddr_storage as *mut libc::sockaddr_in);
-                sin.sin_family = libc::AF_INET as libc::sa_family_t;
-                sin.sin_port = a.port().to_be();
-                sin.sin_addr = libc::in_addr {
-                    s_addr: u32::from_ne_bytes(a.ip().octets()),
-                };
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
-            }
-            SocketAddr::V6(ref a) => {
-                let sin6 =
-                    &mut *(&mut storage as *mut libc::sockaddr_storage as *mut libc::sockaddr_in6);
-                sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                sin6.sin6_port = a.port().to_be();
-                sin6.sin6_flowinfo = a.flowinfo();
-                sin6.sin6_addr = libc::in6_addr {
-                    s6_addr: a.ip().octets(),
-                };
-                sin6.sin6_scope_id = a.scope_id();
-                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
-            }
-        };
-
-        if libc::bind(
-            fd,
-            &storage as *const libc::sockaddr_storage as *const libc::sockaddr,
-            sa_len,
-        ) < 0
-        {
-            let err = std::io::Error::last_os_error();
-            libc::close(fd);
-            return Err(err);
-        }
-
-        // Listen with a reasonable backlog.
-        if libc::listen(fd, 1024) < 0 {
-            let err = std::io::Error::last_os_error();
-            libc::close(fd);
-            return Err(err);
-        }
-
-        // Set non-blocking after listen.
-        libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK);
+    // SAFETY: listen(2) takes no pointers; `fd` is a bound socket.
+    if unsafe { libc::listen(fd.as_raw_fd(), 1024) } < 0 {
+        return Err(std::io::Error::last_os_error());
     }
 
-    // Convert to std TcpListener for local_addr() etc.
-    let listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
-    Ok(listener)
+    // Convert to std TcpListener for local_addr() etc.; it now owns the fd.
+    Ok(std::net::TcpListener::from(fd))
+}
+
+/// Enable a boolean socket option, reporting failure.
+#[cfg(target_os = "linux")]
+fn set_socket_flag(
+    fd: &impl AsRawFd,
+    level: libc::c_int,
+    name: libc::c_int,
+) -> std::io::Result<()> {
+    let on: libc::c_int = 1;
+    // SAFETY: `on` is a live `c_int` for the duration of the call and the
+    // length passed matches its size; the kernel copies it synchronously.
+    let rc = unsafe {
+        libc::setsockopt(
+            fd.as_raw_fd(),
+            level,
+            name,
+            (&raw const on).cast(),
+            std::mem::size_of_val(&on) as libc::socklen_t,
+        )
+    };
+    if rc < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
 // SQE submission helpers
 // ---------------------------------------------------------------------------
 
+/// Queue the ACCEPT SQE. Returns `false` if the SQ is full (the caller
+/// retries on the next loop iteration).
+///
+/// The peer address is not needed, so `addr`/`addrlen` are null: the SQE
+/// then references no user memory at all, and nothing has to stay alive
+/// until its CQE.
+///
+/// The accepted socket is created close-on-exec (so it does not leak into
+/// child processes) and non-blocking (matching the listener), atomically,
+/// instead of with a follow-up fcntl(2) whose result went unchecked.
 #[cfg(target_os = "linux")]
-fn submit_accept(
-    ring: &mut meguri::Ring,
-    listener_fd: std::os::fd::RawFd,
-    addr: &mut libc::sockaddr_storage,
-    addrlen: &mut libc::socklen_t,
-) {
-    ring.sq().push_accept(
-        ACCEPT_USER_DATA,
-        listener_fd,
-        addr as *mut _ as *mut libc::sockaddr,
-        addrlen as *mut _,
-        0,
-    );
+fn submit_accept(ring: &mut meguri::Ring, listener_fd: std::os::fd::RawFd) -> bool {
+    // SAFETY: null `addr`/`addrlen` is allowed and points at no memory. The
+    // accepted fd in the CQE is taken over by `handle_accept` (or closed by
+    // the drain/teardown loops); `listener_fd` outlives the ring.
+    unsafe {
+        ring.sq().push_accept(
+            ACCEPT_USER_DATA,
+            listener_fd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            (libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK) as u32,
+        )
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -701,6 +970,7 @@ fn handle_accept(
     ring: &mut meguri::Ring,
     conns: &mut slab::Slab<connection::Conn>,
     config: &ServerConfig,
+    next_generation: &mut u32,
 ) -> Option<usize> {
     if res < 0 {
         let err = std::io::Error::from_raw_os_error(-res);
@@ -712,54 +982,50 @@ fn handle_accept(
 
     if conns.len() >= config.max_connections {
         tracing::warn!("connection limit reached, dropping new connection");
-        unsafe {
-            libc::close(fd);
-        }
+        close_accepted_fd(fd);
         return None;
     }
 
-    // Set non-blocking.
-    unsafe {
-        libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK);
+    // Disable Nagle's algorithm. A failure only costs latency, so the
+    // connection is still served.
+    if let Err(err) = set_socket_flag(&fd, libc::IPPROTO_TCP, libc::TCP_NODELAY) {
+        tracing::debug!("TCP_NODELAY on fd {fd}: {err}");
     }
 
-    // Disable Nagle's algorithm.
-    let nodelay = 1i32;
-    unsafe {
-        libc::setsockopt(
-            fd,
-            libc::IPPROTO_TCP,
-            libc::TCP_NODELAY,
-            &nodelay as *const _ as *const _,
-            std::mem::size_of_val(&nodelay) as _,
-        );
-    }
-
-    let conn = connection::Conn::new(fd);
+    // From here the `Conn` owns `fd`; `close_conn` closes it.
+    let mut conn = connection::Conn::new(fd);
+    conn.generation = *next_generation;
+    *next_generation = next_generation.wrapping_add(1) & CONN_GENERATION_MASK;
     let conn_idx = conns.insert(conn);
     submit_recv_or_close(ring, conn_idx, conns);
     Some(conn_idx)
 }
 
+/// Queue a RECV into the spare capacity of `conn.buf`.
+///
+/// Buffer lifetime: the SQE holds a raw pointer into `conn.buf`. It stays
+/// valid because (1) `conn.buf` is not reallocated while `recv_pending` is
+/// set (`Conn::prepare_recv` documents this and `commit_recv` checks it), and
+/// (2) the `Conn` is not removed from the slab while `recv_pending` is set
+/// (`close_conn` keeps the slot until the CQE arrives).
 #[cfg(target_os = "linux")]
 fn submit_recv(ring: &mut meguri::Ring, conn_idx: usize, conn: &mut connection::Conn) -> bool {
-    // Ensure spare capacity for the kernel to write into.
-    let spare = conn.buf.capacity() - conn.buf.len();
-    if spare < codec::DEFAULT_BUFFER_SIZE {
-        conn.buf.reserve(codec::DEFAULT_BUFFER_SIZE - spare);
+    if conn.recv_pending || conn.fd < 0 {
+        debug_assert!(false, "RECV submitted twice or on a closed connection");
+        return false;
     }
+    let (buf_ptr, len) = conn.prepare_recv(codec::DEFAULT_BUFFER_SIZE);
+    let user_data = ConnToken::of(conn_idx, conn).user_data(RECV_USER_DATA_FLAG);
 
-    let start = conn.buf.len();
-    let avail = conn.buf.capacity() - start;
-    let buf_ptr = conn.buf.as_mut_ptr();
-
-    if !ring.sq().push_recv(
-        recv_user_data(conn_idx),
-        conn.fd,
-        unsafe { buf_ptr.add(start) },
-        avail as u32,
-        0,
-    ) {
+    // SAFETY: `buf_ptr..buf_ptr + len` is `conn.buf`'s spare capacity (heap,
+    // valid for writes). It stays allocated and unmoved until the CQE: the
+    // slot is kept while `recv_pending` (`close_conn`, `teardown`), and
+    // `conn.buf` is not reallocated while a RECV is pending (checked by
+    // `commit_recv`). `conn.fd` is the connection's open socket; if it is
+    // closed early, the kernel keeps its own reference.
+    let pushed = unsafe { ring.sq().push_recv(user_data, conn.fd, buf_ptr, len, 0) };
+    if !pushed {
+        conn.discard_recv();
         tracing::error!("SQ full, dropping connection fd {}", conn.fd);
         return false;
     }
@@ -770,7 +1036,7 @@ fn submit_recv(ring: &mut meguri::Ring, conn_idx: usize, conn: &mut connection::
 
 #[cfg(target_os = "linux")]
 fn handle_recv_completion(
-    conn_idx: usize,
+    token: ConnToken,
     res: i32,
     ring: &mut meguri::Ring,
     conns: &mut slab::Slab<connection::Conn>,
@@ -778,52 +1044,69 @@ fn handle_recv_completion(
     local: &tokio::task::LocalSet,
     config: &ServerConfig,
 ) {
-    if !conns.contains(conn_idx) {
-        return; // Connection already closed.
+    let conn_idx = token.idx;
+    // A CQE for an older connection in this slot: that connection is gone,
+    // and this CQE must not touch the current one.
+    let Some(conn) = token.get(conns) else {
+        return;
+    };
+    if !conn.recv_pending {
+        return;
+    }
+    conn.recv_pending = false;
+
+    if matches!(conn.state, connection::ConnState::Closed) {
+        conn.discard_recv();
+        release_if_idle(conn_idx, conns);
+        return;
     }
 
-    let conn = &mut conns[conn_idx];
-
-    if conn.recv_pending {
-        conn.recv_pending = false;
-
-        if let Some(error) = conn.take_timeout_error() {
-            conns[conn_idx].set_error_response(error);
-            submit_write_or_close(ring, conn_idx, conns);
+    if let Some(error) = conn.take_timeout_error() {
+        conn.discard_recv();
+        if conn.write_pending || !matches!(conn.state, connection::ConnState::Dispatching) {
+            // A response is already on its way (it replaced the request
+            // phase that timed out) and ends with connection: close; its
+            // buffer must not be replaced under the in-flight SEND.
+            conn.keep_alive = false;
             return;
         }
+        conn.set_error_response(error);
+        submit_write_or_close(ring, conn_idx, conns);
+        return;
+    }
 
-        if res < 0 {
-            tracing::debug!(
-                "recv error on fd {}: {}",
-                conn.fd,
-                std::io::Error::from_raw_os_error(-res)
-            );
+    if res < 0 {
+        tracing::debug!(
+            "recv error on fd {}: {}",
+            conn.fd,
+            std::io::Error::from_raw_os_error(-res)
+        );
+        conn.discard_recv();
+        close_conn(conn_idx, conns);
+        return;
+    }
+
+    let nbytes = match conn.commit_recv(res as usize) {
+        Ok(nbytes) => nbytes,
+        Err(connection::RecvBufferMoved) => {
+            debug_assert!(false, "receive buffer moved while a RECV was in flight");
+            tracing::error!("receive buffer moved under a RECV on fd {}", conn.fd);
             close_conn(conn_idx, conns);
             return;
         }
+    };
 
-        // Advance the buffer length to include the bytes the kernel wrote.
-        // Clamp to spare capacity as a safety invariant — the kernel should
-        // never return more than we requested, but trusting that blindly in
-        // an unsafe set_len would risk reading uninitialised memory.
-        let nbytes = (res as usize).min(conn.buf.capacity() - conn.buf.len());
-        unsafe {
-            conn.buf.set_len(conn.buf.len() + nbytes);
-        }
-
-        if matches!(conns[conn_idx].state, connection::ConnState::Headers) {
-            let result = conns[conn_idx].on_recv(nbytes, config.max_body_size);
-            handle_process_result(ring, conns, conn_idx, result, shared, local, config);
-        } else if matches!(conns[conn_idx].state, connection::ConnState::Dispatching) {
-            advance_dispatching_connection(ring, conns, conn_idx, shared, local, config);
-        }
+    if matches!(conns[conn_idx].state, connection::ConnState::Headers) {
+        let result = conns[conn_idx].on_recv(nbytes, config.max_body_size);
+        handle_process_result(ring, conns, conn_idx, result, shared, local, config);
+    } else if matches!(conns[conn_idx].state, connection::ConnState::Dispatching) {
+        advance_dispatching_connection(ring, conns, conn_idx, shared, local, config);
     }
 }
 
 #[cfg(target_os = "linux")]
 fn handle_write_completion(
-    conn_idx: usize,
+    token: ConnToken,
     res: i32,
     ring: &mut meguri::Ring,
     conns: &mut slab::Slab<connection::Conn>,
@@ -831,16 +1114,20 @@ fn handle_write_completion(
     local: &tokio::task::LocalSet,
     config: &ServerConfig,
 ) {
-    if !conns.contains(conn_idx) {
+    let conn_idx = token.idx;
+    let Some(conn) = token.get(conns) else {
         return;
-    }
-
-    let conn = &mut conns[conn_idx];
+    };
     if !conn.write_pending {
         return;
     }
 
     conn.write_pending = false;
+
+    if matches!(conn.state, connection::ConnState::Closed) {
+        release_if_idle(conn_idx, conns);
+        return;
+    }
 
     if res < 0 {
         tracing::debug!(
@@ -857,20 +1144,28 @@ fn handle_write_completion(
     handle_write_result(ring, conns, conn_idx, result, shared, local, config);
 }
 
+/// Queue a SEND of the unwritten part of `conn.response_buf`.
+///
+/// Buffer lifetime: as for `submit_recv`. `response_buf` is not modified or
+/// replaced while `write_pending` is set (debug-asserted in `Conn`), and the
+/// slot is kept until the CQE arrives.
 #[cfg(target_os = "linux")]
 fn submit_write(ring: &mut meguri::Ring, conn_idx: usize, conn: &mut connection::Conn) -> bool {
-    let remaining = &conn.response_buf[conn.response_written..];
-    if remaining.is_empty() {
-        return true;
+    if conn.write_pending || conn.fd < 0 {
+        debug_assert!(false, "SEND submitted twice or on a closed connection");
+        return false;
     }
+    let Some((ptr, len)) = conn.prepare_write() else {
+        return true;
+    };
+    let user_data = ConnToken::of(conn_idx, conn).user_data(WRITE_USER_DATA_FLAG);
 
-    if !ring.sq().push_send(
-        write_user_data(conn_idx),
-        conn.fd,
-        remaining.as_ptr(),
-        remaining.len() as u32,
-        0,
-    ) {
+    // SAFETY: `ptr..ptr + len` is the unwritten tail of `conn.response_buf`
+    // (heap, valid for reads). It stays allocated, unmoved and unmodified
+    // until the CQE: the slot is kept while `write_pending`, and nothing
+    // replaces or refills `response_buf` while a SEND is pending.
+    let pushed = unsafe { ring.sq().push_send(user_data, conn.fd, ptr, len, 0) };
+    if !pushed {
         tracing::error!("SQ full, dropping connection fd {}", conn.fd);
         return false;
     }
@@ -886,47 +1181,26 @@ fn submit_timeout_cancel(ring: &mut meguri::Ring) {
         .push_cancel(TIMEOUT_CANCEL_USER_DATA, TIMEOUT_USER_DATA);
 }
 
+/// Ask the kernel to cancel the connection's in-flight RECV. The target
+/// carries the generation, so it can only ever hit this connection's RECV.
 #[cfg(target_os = "linux")]
-fn recv_cancel_user_data(conn_idx: usize) -> u64 {
-    RECV_CANCEL_USER_DATA_FLAG | conn_idx as u64
+fn submit_recv_cancel(ring: &mut meguri::Ring, token: ConnToken) -> bool {
+    ring.sq().push_cancel(
+        token.user_data(RECV_CANCEL_USER_DATA_FLAG),
+        token.user_data(RECV_USER_DATA_FLAG),
+    )
 }
 
 #[cfg(target_os = "linux")]
-fn decode_recv_cancel_user_data(user_data: u64) -> Option<usize> {
-    (user_data & RECV_CANCEL_USER_DATA_FLAG != 0)
-        .then_some((user_data & !RECV_CANCEL_USER_DATA_FLAG) as usize)
-}
-
-#[cfg(target_os = "linux")]
-fn submit_recv_cancel(ring: &mut meguri::Ring, conn_idx: usize) -> bool {
-    ring.sq()
-        .push_cancel(recv_cancel_user_data(conn_idx), recv_user_data(conn_idx))
-}
-
-#[cfg(target_os = "linux")]
-fn recv_user_data(conn_idx: usize) -> u64 {
-    RECV_USER_DATA_FLAG | conn_idx as u64
-}
-
-#[cfg(target_os = "linux")]
-fn decode_recv_user_data(user_data: u64) -> Option<usize> {
-    (user_data & RECV_USER_DATA_FLAG != 0).then_some((user_data & !RECV_USER_DATA_FLAG) as usize)
-}
-
-#[cfg(target_os = "linux")]
-fn write_user_data(conn_idx: usize) -> u64 {
-    WRITE_USER_DATA_FLAG | conn_idx as u64
-}
-
-#[cfg(target_os = "linux")]
-fn decode_write_user_data(user_data: u64) -> Option<usize> {
-    (user_data & WRITE_USER_DATA_FLAG != 0).then_some((user_data & !WRITE_USER_DATA_FLAG) as usize)
-}
-
-#[cfg(target_os = "linux")]
-fn submit_dispatch_tick(ring: &mut meguri::Ring, ts: &libc::timespec) {
-    ring.sq()
-        .push_timeout(DISPATCH_TICK_USER_DATA, ts as *const _, 0, 0);
+/// Queue the short dispatch wake tick. Returns `false` if the SQ is full, so
+/// the caller does not believe a tick is armed (it would otherwise never arm
+/// another, and a pending dispatch could stall until an unrelated CQE).
+fn submit_dispatch_tick(ring: &mut meguri::Ring) -> bool {
+    // SAFETY: `DISPATCH_TICK_TS` is a `static`.
+    unsafe {
+        ring.sq()
+            .push_timeout(DISPATCH_TICK_USER_DATA, &DISPATCH_TICK_TS, 0, 0)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -956,10 +1230,15 @@ fn schedule_next_timeout(
 
     let delay = deadline.saturating_duration_since(std::time::Instant::now());
     *timeout_ts = duration_to_timespec(delay);
-    if ring
-        .sq()
-        .push_timeout(TIMEOUT_USER_DATA, timeout_ts as *const _, 0, 0)
-    {
+    // SAFETY: `timeout_ts` is the worker loop's local, declared before the
+    // ring, so it outlives every submit of this SQE. It is next rewritten
+    // only on a later call, after the loop has submitted this SQE (each
+    // iteration submits before scheduling again) and the kernel has copied
+    // the value.
+    if unsafe {
+        ring.sq()
+            .push_timeout(TIMEOUT_USER_DATA, timeout_ts as *const _, 0, 0)
+    } {
         *timeout_armed = true;
     }
 }
@@ -1080,8 +1359,11 @@ fn sweep_timed_out_connections(
             tracing::debug!("body read timeout fd={fd}");
 
             if recv_pending {
+                // The RECV's CQE (ECANCELED, or data if it won the race)
+                // turns the armed error into a 408; see handle_recv_completion.
                 conns[idx].arm_timeout_error(ErrorResponse::RequestTimeout);
-                if !submit_recv_cancel(ring, idx) {
+                let token = ConnToken::of(idx, &conns[idx]);
+                if !submit_recv_cancel(ring, token) {
                     close_conn(idx, conns);
                 }
             } else if write_pending {
@@ -1091,50 +1373,12 @@ fn sweep_timed_out_connections(
                 submit_write_or_close(ring, idx, conns);
             }
         } else {
-            let conn = &mut conns[idx];
-            tracing::debug!("closing timed-out connection fd={}", conn.fd);
-
-            if conn.recv_pending || conn.write_pending {
-                // I/O is in flight — close the fd so the kernel cancels the
-                // pending operation, but keep the slab entry alive until the
-                // CQE arrives. The CQE handler will see the error and call
-                // close_conn to release the slot.
-                unsafe {
-                    libc::shutdown(conn.fd, libc::SHUT_RDWR);
-                    libc::close(conn.fd);
-                }
-                conn.fd = -1;
-                conn.state = connection::ConnState::Closed;
-            } else {
-                close_conn(idx, conns);
-            }
+            tracing::debug!("closing timed-out connection fd={}", conns[idx].fd);
+            close_conn(idx, conns);
         }
 
         refresh_timeout_deadline(deadline_heap, conns, idx, config);
     }
-}
-
-#[cfg(target_os = "linux")]
-fn handle_recv_cancel_completion(
-    ring: &mut meguri::Ring,
-    conns: &mut slab::Slab<connection::Conn>,
-    conn_idx: usize,
-) {
-    if !conns.contains(conn_idx) {
-        return;
-    }
-
-    let Some(error) = conns[conn_idx].take_timeout_error() else {
-        return;
-    };
-
-    if !matches!(conns[conn_idx].state, connection::ConnState::Dispatching) {
-        return;
-    }
-
-    conns[conn_idx].recv_pending = false;
-    conns[conn_idx].set_error_response(error);
-    submit_write_or_close(ring, conn_idx, conns);
 }
 
 /// Send HTTP/1.1 100 Continue interim response.
@@ -1144,6 +1388,14 @@ fn handle_recv_cancel_completion(
 /// `send(2)` with `MSG_DONTWAIT` will never block on a connected socket.
 #[cfg(target_os = "linux")]
 fn submit_continue(_ring: &mut meguri::Ring, _conn_idx: usize, conn: &mut connection::Conn) {
+    // SAFETY: `CONTINUE_100` is a `'static` byte string and send(2) reads
+    // it synchronously; `conn.fd` is the connection's open socket (this is
+    // only called for a live connection that just parsed headers).
+    //
+    // The result is ignored on purpose: this is best effort. If the 25
+    // bytes do not fit right now (EAGAIN) or the peer is gone, a client
+    // that sent `Expect: 100-continue` sends the body anyway after its own
+    // timeout, and a dead peer surfaces on the next RECV/SEND CQE.
     unsafe {
         libc::send(
             conn.fd,
@@ -1154,13 +1406,41 @@ fn submit_continue(_ring: &mut meguri::Ring, _conn_idx: usize, conn: &mut connec
     }
 }
 
+/// Close a connection's socket and release its slab slot.
+///
+/// fd ownership: a `Conn` owns `conn.fd` from accept until this function,
+/// the only place that closes it; `fd` is set to `-1` right after, so a
+/// second call cannot close a reused fd number.
+///
+/// If a RECV or SEND for the connection is still in flight, the slot (and
+/// with it `buf` / `response_buf`, which that SQE points into) is kept in
+/// the `Closed` state and released by the last CQE (`release_if_idle`).
+/// The socket is shut down first: io_uring holds its own reference to the
+/// file, so close(2) alone would neither send FIN nor complete the RECV.
 #[cfg(target_os = "linux")]
 fn close_conn(conn_idx: usize, conns: &mut slab::Slab<connection::Conn>) {
-    let conn = conns.remove(conn_idx);
+    let Some(conn) = conns.get_mut(conn_idx) else {
+        return;
+    };
+    let in_flight = conn.has_io_in_flight();
     if conn.fd >= 0 {
+        // SAFETY: `conn.fd` is the connection's own socket, still open
+        // (`fd >= 0`), and closed exactly once here. shutdown(2) can only
+        // fail with ENOTCONN when the peer already reset the connection,
+        // which is fine: the in-flight SQE then fails by itself. close(2)
+        // errors are ignored because Linux releases the fd regardless.
         unsafe {
+            if in_flight {
+                libc::shutdown(conn.fd, libc::SHUT_RDWR);
+            }
             libc::close(conn.fd);
         }
+        conn.fd = -1;
+    }
+    if in_flight {
+        conn.mark_closed();
+    } else {
+        conns.remove(conn_idx);
     }
 }
 
@@ -1503,6 +1783,254 @@ mod tests {
 
         assert!(next >= first);
         assert_eq!(conns[idx].tracked_deadline, Some(next));
+    }
+
+    fn conn_with_generation(generation: u32) -> connection::Conn {
+        // fd -1: these tests never touch a real socket.
+        let mut conn = connection::Conn::new(-1);
+        conn.generation = generation;
+        conn
+    }
+
+    #[test]
+    fn user_data_round_trips_index_generation_and_tag() {
+        for tag in [
+            RECV_USER_DATA_FLAG,
+            WRITE_USER_DATA_FLAG,
+            RECV_CANCEL_USER_DATA_FLAG,
+        ] {
+            let token = ConnToken {
+                idx: 0xFFFF_FFFF,
+                generation: CONN_GENERATION_MASK,
+            };
+            let user_data = token.user_data(tag);
+            assert_eq!(ConnToken::decode(user_data, tag), Some(token));
+            for other in [
+                RECV_USER_DATA_FLAG,
+                WRITE_USER_DATA_FLAG,
+                RECV_CANCEL_USER_DATA_FLAG,
+            ] {
+                if other != tag {
+                    assert_eq!(ConnToken::decode(user_data, other), None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn special_user_data_never_decodes_as_a_connection() {
+        for special in [
+            ACCEPT_USER_DATA,
+            TIMEOUT_USER_DATA,
+            DISPATCH_TICK_USER_DATA,
+            TIMEOUT_CANCEL_USER_DATA,
+            ACCEPT_CANCEL_USER_DATA,
+            TEARDOWN_TIMER_USER_DATA,
+        ] {
+            for tag in [
+                RECV_USER_DATA_FLAG,
+                WRITE_USER_DATA_FLAG,
+                RECV_CANCEL_USER_DATA_FLAG,
+            ] {
+                assert_eq!(ConnToken::decode(special, tag), None, "{special:#x}");
+            }
+        }
+    }
+
+    /// A late CQE for a connection that has left its slot must not be
+    /// applied to the next connection that reuses the slot.
+    #[test]
+    fn stale_cqe_does_not_reach_a_connection_reusing_the_slot() {
+        let mut conns = slab::Slab::new();
+        let old_idx = conns.insert(conn_with_generation(7));
+        let stale = ConnToken::of(old_idx, &conns[old_idx]).user_data(RECV_USER_DATA_FLAG);
+        conns.remove(old_idx);
+
+        let new_idx = conns.insert(conn_with_generation(8));
+        assert_eq!(new_idx, old_idx, "slab reuses the freed slot");
+        conns[new_idx].recv_pending = true;
+
+        let token = ConnToken::decode(stale, RECV_USER_DATA_FLAG).unwrap();
+        assert_eq!(token.idx, new_idx);
+        assert!(token.get(&mut conns).is_none(), "generation mismatch");
+
+        let current = ConnToken::of(new_idx, &conns[new_idx]);
+        assert!(current.get(&mut conns).is_some());
+    }
+
+    #[test]
+    fn generation_wraps_within_its_bits() {
+        let mut next = CONN_GENERATION_MASK;
+        let first = next;
+        next = next.wrapping_add(1) & CONN_GENERATION_MASK;
+        assert_eq!(next, 0);
+        let token = ConnToken {
+            idx: 3,
+            generation: first,
+        };
+        assert_eq!(
+            ConnToken::decode(token.user_data(WRITE_USER_DATA_FLAG), WRITE_USER_DATA_FLAG),
+            Some(token)
+        );
+    }
+
+    /// `close_conn` must not free a connection (and its buffers) while the
+    /// kernel may still write into them; the last CQE frees the slot.
+    #[test]
+    fn closing_with_io_in_flight_keeps_the_slot_until_the_last_cqe() {
+        let mut conns = slab::Slab::new();
+        let idx = conns.insert(conn_with_generation(1));
+        conns[idx].recv_pending = true;
+        conns[idx].write_pending = true;
+
+        close_conn(idx, &mut conns);
+        assert!(conns.contains(idx), "buffers still referenced by SQEs");
+        assert!(matches!(conns[idx].state, connection::ConnState::Closed));
+        assert_eq!(conns[idx].fd, -1);
+
+        conns[idx].recv_pending = false;
+        release_if_idle(idx, &mut conns);
+        assert!(conns.contains(idx), "SEND still in flight");
+
+        conns[idx].write_pending = false;
+        release_if_idle(idx, &mut conns);
+        assert!(!conns.contains(idx));
+    }
+
+    #[test]
+    fn closing_an_idle_connection_frees_the_slot_at_once() {
+        let mut conns = slab::Slab::new();
+        let idx = conns.insert(conn_with_generation(1));
+        close_conn(idx, &mut conns);
+        assert!(!conns.contains(idx));
+        // Closing again (e.g. from a stale path) is a no-op.
+        close_conn(idx, &mut conns);
+    }
+
+    #[test]
+    fn drain_reaping_skips_closed_connections_with_io_in_flight() {
+        let mut conns = slab::Slab::new();
+        let busy = conns.insert(conn_with_generation(1));
+        conns[busy].recv_pending = true;
+        conns[busy].mark_closed();
+        let idle = conns.insert(conn_with_generation(2));
+        conns[idle].mark_closed();
+
+        reap_closed_drain_connections(&mut conns);
+        assert!(conns.contains(busy));
+        assert!(!conns.contains(idle));
+    }
+
+    extern "C" fn ignore_signal(_: libc::c_int) {}
+
+    /// A signal delivered while the worker blocks in io_uring_enter makes it
+    /// return EINTR. That used to propagate out of the event loop with `?`
+    /// and kill the worker.
+    #[test]
+    fn wait_for_completions_retries_after_a_signal() {
+        // SAFETY: installs a no-op handler (no SA_RESTART) for SIGUSR1, which
+        // nothing else in this test binary uses.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as usize;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut ring = meguri::Ring::new(8).expect("ring");
+            let ts = duration_to_timespec(Duration::from_millis(300));
+            // SAFETY: `ts` outlives the submit right below.
+            assert!(unsafe { ring.sq().push_timeout(1, &ts, 0, 0) });
+            // Submit now: with nothing left to submit, an interrupted wait
+            // reports EINTR (with SQEs submitted it reports their count).
+            assert_eq!(ring.submit().expect("submit"), 1);
+            // SAFETY: pthread_self has no preconditions.
+            tx.send(unsafe { libc::pthread_self() }).unwrap();
+            let started = std::time::Instant::now();
+            let result = wait_for_completions(&mut ring);
+            (
+                result.map_err(|e| e.to_string()),
+                started.elapsed(),
+                ring.cq().peek().is_some(),
+            )
+        });
+
+        let thread = rx.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        // SAFETY: `thread` is still running (it waits up to 300ms).
+        assert_eq!(unsafe { libc::pthread_kill(thread, libc::SIGUSR1) }, 0);
+
+        let (result, elapsed, has_cqe) = worker.join().unwrap();
+        assert_eq!(result, Ok(()));
+        assert!(has_cqe, "kept waiting until the timer fired");
+        assert!(elapsed >= Duration::from_millis(250), "{elapsed:?}");
+    }
+
+    /// Accepted sockets come out close-on-exec and non-blocking from the
+    /// ACCEPT itself; no unchecked fcntl(2) afterwards.
+    #[test]
+    fn accepted_sockets_are_cloexec_and_nonblocking() {
+        let listener = create_listener("127.0.0.1:0".parse().unwrap(), false).expect("listener");
+        let mut ring = meguri::Ring::new(8).expect("ring");
+        assert!(submit_accept(&mut ring, listener.as_raw_fd()));
+        let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+
+        wait_for_completions(&mut ring).expect("enter");
+        let cqe = *ring.cq().peek().expect("accept CQE");
+        ring.cq_mut().advance();
+        ring.cq_mut().flush_head();
+        assert_eq!(cqe.user_data, ACCEPT_USER_DATA);
+        assert!(cqe.res >= 0, "accept failed: {}", cqe.res);
+
+        // SAFETY: fcntl F_GETFD/F_GETFL on the fd the ACCEPT just returned.
+        let (fd_flags, fl_flags) = unsafe {
+            (
+                libc::fcntl(cqe.res, libc::F_GETFD),
+                libc::fcntl(cqe.res, libc::F_GETFL),
+            )
+        };
+        close_accepted_fd(cqe.res);
+        assert_ne!(
+            fd_flags & libc::FD_CLOEXEC,
+            0,
+            "accepted fd must be close-on-exec"
+        );
+        assert_ne!(
+            fl_flags & libc::O_NONBLOCK,
+            0,
+            "accepted fd must be non-blocking"
+        );
+
+        // SAFETY: as above, on the listener.
+        let listener_fl = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_GETFL) };
+        assert_ne!(listener_fl & libc::O_NONBLOCK, 0);
+    }
+
+    fn open_fd_count() -> usize {
+        std::fs::read_dir("/proc/self/fd").unwrap().count()
+    }
+
+    /// Every failure path of `create_listener` closes the socket it created.
+    #[test]
+    fn listener_errors_do_not_leak_the_socket() {
+        let taken = create_listener("127.0.0.1:0".parse().unwrap(), false).expect("listener");
+        let addr = taken.local_addr().unwrap();
+        // Other tests open and close fds concurrently, so compare with slack:
+        // a leak would add one fd per iteration.
+        const ATTEMPTS: usize = 256;
+        let before = open_fd_count();
+        for _ in 0..ATTEMPTS {
+            // Without SO_REUSEPORT on either side, bind fails: EADDRINUSE.
+            let err = create_listener(addr, false).expect_err("address in use");
+            assert_eq!(err.raw_os_error(), Some(libc::EADDRINUSE));
+        }
+        let after = open_fd_count();
+        assert!(after < before + ATTEMPTS / 4, "{before} -> {after} fds");
     }
 
     #[test]

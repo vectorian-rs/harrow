@@ -33,7 +33,10 @@ impl Operation for TimeoutOp {
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
         // count = 0: a pure timer, not "after N other completions".
-        sq.push_timeout(user_data, &raw const *self.ts, 0, 0)
+        // SAFETY: `ts` is boxed, so it keeps its address when the op moves,
+        // and the op keeps it alive until the CQE, longer than the kernel
+        // needs (it copies the timespec at submission).
+        unsafe { sq.push_timeout(user_data, &raw const *self.ts, 0, 0) }
     }
 
     fn complete(self, result: MeguriResult<u32>) -> Self::Output {
