@@ -1169,7 +1169,10 @@ mod tests {
     fn encoding_an_empty_chunk_writes_nothing() {
         let mut buf = b"prefix".to_vec();
         encode_chunk_into(b"", &mut buf);
-        assert_eq!(buf, b"prefix", "an empty chunk would be the end-of-body marker");
+        assert_eq!(
+            buf, b"prefix",
+            "an empty chunk would be the end-of-body marker"
+        );
         assert!(encode_chunk(b"").is_empty());
     }
 
