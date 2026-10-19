@@ -35,6 +35,11 @@ impl H1Connection {
                 Err(codec::CodecError::BodyTooLarge) => {
                     return Err(ProtocolError::BodyTooLarge);
                 }
+                Err(codec::CodecError::ExpectationFailed) => {
+                    return Err(ProtocolError::Rejected(
+                        harrow_server::h1::ErrorResponse::ExpectationFailed,
+                    ));
+                }
             }
 
             let n = self

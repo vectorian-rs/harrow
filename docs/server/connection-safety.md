@@ -126,6 +126,19 @@ time to finish before aborting the remainder.
 
 This prevents shutdown from hanging forever on stuck connections.
 
+### 6. `Expect` Policy
+
+The custom HTTP/1 backends (Tokio, Monoio, Meguri) follow RFC 9110 §10.1.1:
+
+- `Expect: 100-continue` (case-insensitive) gets an interim `100 Continue`
+  before the body is read. Comma lists and repeated headers are allowed as long
+  as every member is `100-continue`; empty list elements are ignored.
+- Any other expectation is rejected with `417 Expectation Failed` before the
+  handler runs, and the connection is closed.
+- Non-ASCII or control bytes in `Expect` are a `400 Bad Request`.
+- In HTTP/1.0 requests, `100-continue` is ignored: 1.0 clients do not expect
+  interim responses.
+
 ## Request-Body Backpressure
 
 The next major safety/performance requirement is bounded request-body

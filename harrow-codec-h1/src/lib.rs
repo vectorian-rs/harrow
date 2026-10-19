@@ -49,6 +49,9 @@ pub enum CodecError {
     Incomplete,
     HeadersTooLarge,
     BodyTooLarge,
+    /// The request carries an `Expect` member other than `100-continue`
+    /// (RFC 9110 §10.1.1); answer `417 Expectation Failed`.
+    ExpectationFailed,
     Invalid(String),
 }
 
@@ -58,6 +61,7 @@ impl std::fmt::Display for CodecError {
             CodecError::Incomplete => write!(f, "incomplete HTTP request"),
             CodecError::HeadersTooLarge => write!(f, "request headers too large"),
             CodecError::BodyTooLarge => write!(f, "body too large"),
+            CodecError::ExpectationFailed => write!(f, "unsupported expectation"),
             CodecError::Invalid(msg) => write!(f, "invalid HTTP request: {msg}"),
         }
     }
@@ -167,17 +171,20 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
                     }
                 }
             }
-        } else if name == EXPECT
-            && let Ok(s) = std::str::from_utf8(h.value)
-            && s.trim().eq_ignore_ascii_case("100-continue")
-        {
-            expect_continue = true;
+        } else if name == EXPECT {
+            expect_continue |= parse_expect(h.value)?;
         }
 
         headers.append(name, value);
     }
 
     let keep_alive = should_keep_alive(version, conn_close, conn_keep_alive);
+
+    // RFC 9110 §10.1.1: a server MUST ignore a 100-continue expectation in an
+    // HTTP/1.0 request (1.0 clients do not understand the interim response).
+    if version == Version::HTTP_10 {
+        expect_continue = false;
+    }
 
     // RFC 9110 §6.3: reject any request with both Content-Length and
     // Transfer-Encoding, not just chunked. Different hops may disagree
@@ -210,6 +217,31 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
         keep_alive,
         expect_continue,
     })
+}
+
+/// Parse one `Expect` field value (RFC 9110 §10.1.1): a comma-separated list
+/// whose only supported member is `100-continue` (case-insensitive). Empty
+/// list elements are ignored (§5.6.1). Returns whether `100-continue` was
+/// present.
+fn parse_expect(value: &[u8]) -> Result<bool, CodecError> {
+    if !value
+        .iter()
+        .all(|&b| b == b' ' || b == b'\t' || b.is_ascii_graphic())
+    {
+        return Err(CodecError::Invalid("invalid expect header value".into()));
+    }
+    // Checked above: visible ASCII and whitespace only.
+    let value = std::str::from_utf8(value).expect("ascii");
+
+    let mut expect_continue = false;
+    for member in value.split(',').map(str::trim).filter(|m| !m.is_empty()) {
+        if member.eq_ignore_ascii_case("100-continue") {
+            expect_continue = true;
+        } else {
+            return Err(CodecError::ExpectationFailed);
+        }
+    }
+    Ok(expect_continue)
 }
 
 fn should_keep_alive(version: Version, conn_close: bool, conn_keep_alive: bool) -> bool {
@@ -285,6 +317,8 @@ enum PayloadKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChunkedState {
+    /// First byte of a chunk-size: must be a hex digit (1*HEXDIG).
+    SizeStart,
     Size,
     SizeLws,
     Extension,
@@ -308,7 +342,7 @@ impl PayloadDecoder {
     /// Create a decoder for a chunked transfer-encoded body.
     pub fn chunked() -> Self {
         Self {
-            kind: PayloadKind::Chunked(ChunkedState::Size, 0, 0),
+            kind: PayloadKind::Chunked(ChunkedState::SizeStart, 0, 0),
         }
     }
 
@@ -414,6 +448,7 @@ impl ChunkedState {
         chunk: &mut Option<Bytes>,
     ) -> Poll<Result<ChunkedState, &'static str>> {
         match self {
+            ChunkedState::SizeStart => Self::read_size_start(src, size),
             ChunkedState::Size => Self::read_size(src, size),
             ChunkedState::SizeLws => Self::read_size_lws(src),
             ChunkedState::Extension => Self::read_extension(src),
@@ -428,7 +463,7 @@ impl ChunkedState {
             ChunkedState::BodyLf => Self::expect_byte(
                 src,
                 b'\n',
-                ChunkedState::Size,
+                ChunkedState::SizeStart,
                 "expected LF after chunk body",
             ),
             ChunkedState::EndCr => Self::expect_byte(
@@ -445,6 +480,21 @@ impl ChunkedState {
             ),
             ChunkedState::End => Poll::Ready(Ok(ChunkedState::End)),
         }
+    }
+
+    fn read_size_start(
+        src: &mut BytesMut,
+        size: &mut u64,
+    ) -> Poll<Result<ChunkedState, &'static str>> {
+        if src.is_empty() {
+            return Poll::Pending;
+        }
+        let b = src[0];
+        if !b.is_ascii_hexdigit() {
+            return Poll::Ready(Err("chunk size must start with a hex digit"));
+        }
+        *size = 0;
+        Self::read_size(src, size)
     }
 
     fn read_size(src: &mut BytesMut, size: &mut u64) -> Poll<Result<ChunkedState, &'static str>> {
@@ -564,55 +614,28 @@ impl ChunkedState {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy stateless decoder (kept for backward compatibility)
+// One-shot chunked decoding
 // ---------------------------------------------------------------------------
 
-/// Decode chunked transfer-encoding in a single pass.
+/// Decode a complete chunked body held in one buffer.
 ///
-/// Prefer [`PayloadDecoder::chunked`] for incremental decoding.
+/// Returns `Ok(None)` if `buf` ends before the body does, or
+/// `Ok(Some((body, consumed)))` with the decoded body and the number of
+/// bytes of `buf` it used. Exactly as strict as [`PayloadDecoder`], which
+/// it drives; prefer that for incremental decoding.
 pub fn decode_chunked_with_limit(
     buf: &[u8],
     max_body: Option<usize>,
 ) -> Result<Option<(Bytes, usize)>, CodecError> {
+    let mut decoder = PayloadDecoder::chunked();
+    let mut src = BytesMut::from(buf);
     let mut decoded = BytesMut::new();
-    let mut pos = 0;
-
     loop {
-        let remaining = &buf[pos..];
-        let crlf_pos = match find_crlf(remaining) {
-            Some(p) => p,
+        match decoder.decode(&mut src, max_body)? {
+            Some(PayloadItem::Chunk(chunk)) => decoded.extend_from_slice(&chunk),
+            Some(PayloadItem::Eof) => return Ok(Some((decoded.freeze(), buf.len() - src.len()))),
             None => return Ok(None),
-        };
-
-        let size_str = std::str::from_utf8(&remaining[..crlf_pos])
-            .map_err(|_| CodecError::Invalid("invalid chunk size".into()))?;
-        let size_str = size_str.trim();
-        let chunk_size_u64 = u64::from_str_radix(size_str, 16)
-            .map_err(|_| CodecError::Invalid(format!("invalid chunk size: {size_str}")))?;
-        let chunk_size = usize::try_from(chunk_size_u64)
-            .map_err(|_| CodecError::Invalid("chunk size too large".into()))?;
-
-        pos += crlf_pos + 2;
-
-        if chunk_size == 0 {
-            if buf.len() < pos + 2 {
-                return Ok(None);
-            }
-            pos += 2;
-            return Ok(Some((decoded.freeze(), pos)));
         }
-
-        let needed = pos.saturating_add(chunk_size).saturating_add(2);
-        if buf.len() < needed {
-            return Ok(None);
-        }
-
-        if max_body.is_some_and(|limit| decoded.len().saturating_add(chunk_size) > limit) {
-            return Err(CodecError::BodyTooLarge);
-        }
-
-        decoded.extend_from_slice(&buf[pos..pos + chunk_size]);
-        pos += chunk_size + 2;
     }
 }
 
@@ -694,18 +717,6 @@ pub fn encode_chunk(data: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(data.len() + 20);
     encode_chunk_into(data, &mut buf);
     buf
-}
-
-fn find_crlf(buf: &[u8]) -> Option<usize> {
-    let mut start = 0;
-    while start < buf.len() {
-        let abs = start + memchr::memchr(b'\r', &buf[start..])?;
-        if abs + 1 < buf.len() && buf[abs + 1] == b'\n' {
-            return Some(abs);
-        }
-        start = abs + 1;
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +900,75 @@ mod tests {
         let parsed = try_parse_request(req).unwrap();
         assert!(parsed.expect_continue);
         assert_eq!(parsed.content_length, Some(1024));
+    }
+
+    fn parse_with_expect(
+        version: &str,
+        expect_lines: &[&[u8]],
+    ) -> Result<ParsedRequest, CodecError> {
+        let mut req = format!("POST /upload {version}\r\nHost: localhost\r\nContent-Length: 4\r\n")
+            .into_bytes();
+        for line in expect_lines {
+            req.extend_from_slice(b"Expect: ");
+            req.extend_from_slice(line);
+            req.extend_from_slice(b"\r\n");
+        }
+        req.extend_from_slice(b"\r\n");
+        try_parse_request(&req)
+    }
+
+    #[test]
+    fn expect_100_continue_is_case_and_whitespace_insensitive() {
+        for value in [
+            &b"100-Continue"[..],
+            b"  100-CONTINUE\t",
+            b"100-continue, 100-continue",
+            b", 100-continue,",
+        ] {
+            let parsed = parse_with_expect("HTTP/1.1", &[value]).expect("accepted");
+            assert!(parsed.expect_continue, "{}", String::from_utf8_lossy(value));
+        }
+    }
+
+    #[test]
+    fn expect_with_only_empty_elements_is_ignored() {
+        let parsed = parse_with_expect("HTTP/1.1", &[b" , "]).expect("accepted");
+        assert!(!parsed.expect_continue);
+    }
+
+    #[test]
+    fn unsupported_expectations_fail_with_417() {
+        for lines in [
+            &[&b"foo"[..]][..],
+            &[b"100-continue, foo"],
+            &[b"100-continue=1"],
+            &[b"100-continue", b"bar"],
+        ] {
+            assert!(
+                matches!(
+                    parse_with_expect("HTTP/1.1", lines),
+                    Err(CodecError::ExpectationFailed)
+                ),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn expect_with_non_ascii_bytes_is_invalid() {
+        assert!(matches!(
+            parse_with_expect("HTTP/1.1", &[b"100-continue\xff"]),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn expect_100_continue_is_ignored_for_http_10() {
+        let parsed = parse_with_expect("HTTP/1.0", &[b"100-continue"]).expect("accepted");
+        assert!(
+            !parsed.expect_continue,
+            "1.0 clients must not get a 100 response"
+        );
     }
 
     #[test]
@@ -1258,6 +1338,132 @@ mod tests {
 
     // --- Legacy stateless decoder ---
 
+    /// Drive a fresh chunked `PayloadDecoder` over `input` in one buffer.
+    fn decode_all(input: &[u8], max_body: Option<usize>) -> Result<Option<Vec<u8>>, CodecError> {
+        let mut decoder = PayloadDecoder::chunked();
+        let mut src = BytesMut::from(input);
+        let mut body = Vec::new();
+        loop {
+            match decoder.decode(&mut src, max_body)? {
+                Some(PayloadItem::Chunk(chunk)) => body.extend_from_slice(&chunk),
+                Some(PayloadItem::Eof) => return Ok(Some(body)),
+                None => return Ok(None),
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_size_line_without_hex_digits_is_invalid() {
+        // RFC 9112 §7.1: chunk-size = 1*HEXDIG. An empty size must not be
+        // read as 0, which would end the body early and let the rest of
+        // the stream be parsed as a new request.
+        for input in [
+            &b"\r\n\r\nGET /smuggled HTTP/1.1\r\n"[..],
+            b";ext\r\n\r\n",
+            b" \r\n\r\n",
+            b"\t;ext\r\n\r\n",
+        ] {
+            assert!(
+                matches!(decode_all(input, None), Err(CodecError::Invalid(_))),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_size_may_not_start_with_whitespace() {
+        assert!(matches!(
+            decode_all(b" 5\r\nhello\r\n0\r\n\r\n", None),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn chunk_size_allows_trailing_whitespace_and_extensions() {
+        let body = decode_all(b"5 ;name=value\r\nhello\r\n0;last\r\n\r\n", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(body, b"hello");
+    }
+
+    #[test]
+    fn one_shot_decoder_rejects_bad_delimiters_after_chunk_data() {
+        // The old one-shot decoder skipped two bytes here without looking.
+        for input in [
+            &b"5\r\nhelloXY0\r\n\r\n"[..],
+            b"5\r\nhello\n\r0\r\n\r\n",
+            b"5\r\nhello\r0\r\n\r\n",
+        ] {
+            assert!(
+                matches!(
+                    decode_chunked_with_limit(input, None),
+                    Err(CodecError::Invalid(_))
+                ),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn one_shot_decoder_validates_the_final_crlf() {
+        assert!(matches!(
+            decode_chunked_with_limit(b"5\r\nhello\r\n0\r\nXY", None),
+            Err(CodecError::Invalid(_))
+        ));
+        // Trailer fields are not supported (same as PayloadDecoder).
+        assert!(matches!(
+            decode_chunked_with_limit(b"5\r\nhello\r\n0\r\nX-T: 1\r\n\r\n", None),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn one_shot_decoder_accepts_chunk_extensions() {
+        let input = b"5;a=b\r\nhello\r\n0;c\r\n\r\n";
+        let (body, used) = decode_chunked_with_limit(input, None).unwrap().unwrap();
+        assert_eq!(&body[..], b"hello");
+        assert_eq!(used, input.len());
+    }
+
+    #[test]
+    fn one_shot_decoder_reports_bytes_used_before_trailing_data() {
+        let input = b"3\r\nabc\r\n0\r\n\r\nGET / HTTP/1.1\r\n";
+        let (body, used) = decode_chunked_with_limit(input, None).unwrap().unwrap();
+        assert_eq!(&body[..], b"abc");
+        assert_eq!(&input[used..], b"GET / HTTP/1.1\r\n");
+    }
+
+    #[test]
+    fn one_shot_decoder_needs_more_data_mid_chunk_and_before_final_crlf() {
+        for input in [
+            &b"a\r\nhel"[..],
+            b"5\r\nhello\r",
+            b"5\r\nhello\r\n0\r\n",
+            b"5\r\nhello\r\n0\r\n\r",
+        ] {
+            assert!(
+                matches!(decode_chunked_with_limit(input, None), Ok(None)),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn one_shot_decoder_enforces_the_limit_across_chunks() {
+        assert!(matches!(
+            decode_chunked_with_limit(b"3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n", Some(5)),
+            Err(CodecError::BodyTooLarge)
+        ));
+        assert!(
+            decode_chunked_with_limit(b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n", Some(5))
+                .unwrap()
+                .is_some()
+        );
+    }
+
     #[test]
     fn decode_chunked_complete() {
         let data = b"5\r\nhello\r\n0\r\n\r\n";
@@ -1313,15 +1519,6 @@ mod tests {
     #[test]
     fn encode_chunk_basic() {
         assert_eq!(encode_chunk(b"hello"), b"5\r\nhello\r\n");
-    }
-
-    #[test]
-    fn find_crlf_basic() {
-        assert_eq!(find_crlf(b"hello\r\nworld"), Some(5));
-        assert_eq!(find_crlf(b"\r\n"), Some(0));
-        assert_eq!(find_crlf(b"no crlf here"), None);
-        assert_eq!(find_crlf(b"just\r no lf"), None);
-        assert_eq!(find_crlf(b""), None);
     }
 }
 

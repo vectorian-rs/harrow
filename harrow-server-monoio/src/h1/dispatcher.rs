@@ -109,6 +109,10 @@ impl H1Connection {
                     let _ = self.write_status(error.status(), error.body()).await;
                     return Ok(());
                 }
+                Err(ProtocolError::Rejected(error)) => {
+                    let _ = self.write_status(error.status(), error.body()).await;
+                    return Ok(());
+                }
                 Err(e) => {
                     let error = harrow_server::h1::ErrorResponse::BadRequest;
                     let _ = self.write_status(error.status(), error.body()).await;

@@ -136,6 +136,9 @@ impl RequestBodyState {
                 Err(ProtocolError::Parse(_) | ProtocolError::ProtocolViolation(_)) => {
                     return self.finish_response_error(ErrorResponse::BadRequest);
                 }
+                Err(ProtocolError::Rejected(error)) => {
+                    return self.finish_response_error(error);
+                }
                 Err(ProtocolError::Io(_) | ProtocolError::StreamClosed) => {
                     return self.finish_connection_closed();
                 }
