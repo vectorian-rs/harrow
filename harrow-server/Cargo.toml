@@ -7,6 +7,11 @@ repository.workspace = true
 readme.workspace = true
 description = "Shared server primitives for Harrow: listener, workers, shutdown, config"
 
+[features]
+# Record each connection's lifecycle events so tests can replay them against
+# `h1_lifecycle::Machine`. Off in normal builds: recording compiles to no-ops.
+lifecycle-trace = []
+
 [dependencies]
 bytes = { workspace = true }
 harrow-codec-h1 = { workspace = true }

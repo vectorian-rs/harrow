@@ -148,7 +148,10 @@ impl Machine {
                 Action::Close
             }
 
-            (Headers, Recv, ProtocolError | BodyLimitExceeded) => {
+            // An error response can be decided while reading headers (parse
+            // error, Content-Length over the limit) or the body (bad chunk
+            // framing, body over the limit, body read timeout).
+            (Headers | Body, Recv, ProtocolError | BodyLimitExceeded) => {
                 self.state = Writing;
                 self.pending_io = Write;
                 Action::ArmWrite
@@ -225,9 +228,163 @@ impl fmt::Display for InvalidTransition {
 
 impl std::error::Error for InvalidTransition {}
 
+/// Record a connection's lifecycle events and replay them against [`Machine`].
+///
+/// Backends call [`trace::Trace::record`] at each lifecycle step. With the
+/// `lifecycle-trace` feature, a finished connection's events are kept for
+/// [`trace::take_recorded`]; without it, `Trace` is empty and recording is a
+/// no-op. Tests replay the recorded traces with [`trace::replay`], so a
+/// backend that drifts from the model fails a test instead of silently
+/// diverging.
+pub mod trace {
+    use super::{ConnectionState, Event, InvalidTransition, Machine};
+
+    /// One connection's lifecycle events, in order.
+    #[derive(Debug, Default)]
+    pub struct Trace {
+        #[cfg(feature = "lifecycle-trace")]
+        events: Vec<Event>,
+    }
+
+    impl Trace {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        #[inline]
+        pub fn record(&mut self, event: Event) {
+            #[cfg(feature = "lifecycle-trace")]
+            self.events.push(event);
+            #[cfg(not(feature = "lifecycle-trace"))]
+            let _ = event;
+        }
+    }
+
+    #[cfg(feature = "lifecycle-trace")]
+    static RECORDED: std::sync::Mutex<Vec<Vec<Event>>> = std::sync::Mutex::new(Vec::new());
+
+    #[cfg(feature = "lifecycle-trace")]
+    impl Drop for Trace {
+        fn drop(&mut self) {
+            let events = std::mem::take(&mut self.events);
+            if let Ok(mut recorded) = RECORDED.lock() {
+                recorded.push(events);
+            }
+        }
+    }
+
+    /// Take every trace recorded since the last call (one per finished
+    /// connection, in completion order).
+    #[cfg(feature = "lifecycle-trace")]
+    pub fn take_recorded() -> Vec<Vec<Event>> {
+        RECORDED
+            .lock()
+            .map(|mut recorded| std::mem::take(&mut *recorded))
+            .unwrap_or_default()
+    }
+
+    /// Why a trace does not fit the model.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum ReplayError {
+        /// The event at `step` is not a valid transition.
+        Invalid {
+            step: usize,
+            error: InvalidTransition,
+        },
+        /// Every event fit, but the connection did not end `Free`.
+        Unfinished { state: ConnectionState },
+    }
+
+    impl std::fmt::Display for ReplayError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Invalid { step, error } => write!(f, "step {step}: {error}"),
+                Self::Unfinished { state } => {
+                    write!(f, "trace ended in state {state:?}, expected Free")
+                }
+            }
+        }
+    }
+
+    /// Replay one connection's events from a fresh [`Machine`]. Succeeds if
+    /// every event is a valid transition, every intermediate state satisfies
+    /// the machine's invariant, and the connection ends `Free`.
+    pub fn replay(events: &[Event]) -> Result<Machine, ReplayError> {
+        let mut machine = Machine::new();
+        for (step, &event) in events.iter().enumerate() {
+            machine
+                .apply(event)
+                .map_err(|error| ReplayError::Invalid { step, error })?;
+            debug_assert!(machine.invariant_holds(), "invariant broken at step {step}");
+        }
+        if machine.state != ConnectionState::Free {
+            return Err(ReplayError::Unfinished {
+                state: machine.state,
+            });
+        }
+        Ok(machine)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_accepts_a_keep_alive_then_close_trace() {
+        use Event::*;
+        let events = [
+            Accept,
+            HeadersNeedMore,
+            HeadersParsed { has_body: true },
+            BodyNeedMore,
+            BodyDone,
+            DispatchDone,
+            WriteDone {
+                keep_alive: true,
+                buffered_next_request: false,
+            },
+            HeadersParsed { has_body: false },
+            DispatchDone,
+            WriteDone {
+                keep_alive: false,
+                buffered_next_request: false,
+            },
+        ];
+        assert!(trace::replay(&events).is_ok());
+    }
+
+    #[test]
+    fn replay_reports_the_failing_step_and_unfinished_traces() {
+        use Event::*;
+        let invalid = [Accept, DispatchDone];
+        assert!(matches!(
+            trace::replay(&invalid),
+            Err(trace::ReplayError::Invalid { step: 1, .. })
+        ));
+        let unfinished = [Accept, HeadersParsed { has_body: false }];
+        assert!(matches!(
+            trace::replay(&unfinished),
+            Err(trace::ReplayError::Unfinished {
+                state: ConnectionState::Dispatching
+            })
+        ));
+    }
+
+    #[test]
+    fn error_response_while_reading_the_body() {
+        use Event::*;
+        let events = [
+            Accept,
+            HeadersParsed { has_body: true },
+            BodyLimitExceeded,
+            WriteDone {
+                keep_alive: false,
+                buffered_next_request: false,
+            },
+        ];
+        assert!(trace::replay(&events).is_ok());
+    }
 
     #[derive(Clone, Debug)]
     struct ScriptCase {
