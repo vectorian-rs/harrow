@@ -9,7 +9,9 @@ fuzz_target!(|data: &[u8]| {
     let path_len = data.get(1).copied().unwrap_or(0) as usize % 24;
     let body_len = data.len().saturating_sub(2 + path_len).min(4096);
 
-    let path_bytes = &data[2..2 + path_len.min(data.len().saturating_sub(2))];
+    // Inputs shorter than the two control bytes are fine: no path, no body.
+    let rest = data.get(2..).unwrap_or(&[]);
+    let path_bytes = &rest[..path_len.min(rest.len())];
     let mut path = String::from("/roundtrip");
     if !path_bytes.is_empty() {
         path.push('/');
@@ -24,8 +26,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let body_start = 2 + path_bytes.len();
-    let body = &data[body_start..body_start + body_len];
+    let body = &rest[path_bytes.len()..path_bytes.len() + body_len];
 
     let mut request = if use_chunked {
         format!(
@@ -50,7 +51,11 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let parsed = try_parse_request(&request).expect("constructed request should parse");
-    let mut decoder = PayloadDecoder::from_parsed(&parsed).expect("payload decoder");
+    // `Content-Length: 0` has no payload to decode.
+    let Some(mut decoder) = PayloadDecoder::from_parsed(&parsed) else {
+        assert!(body.is_empty() && !use_chunked, "only an empty fixed-length body has no decoder");
+        return;
+    };
     let mut buf = BytesMut::from(&request[parsed.header_len..]);
     let mut decoded = Vec::new();
 

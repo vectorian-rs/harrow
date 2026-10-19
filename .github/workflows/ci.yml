@@ -44,3 +44,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+
+  fuzz-build:
+    name: Fuzz targets build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            harrow-core/fuzz
+            harrow-middleware/fuzz
+            harrow-codec-h1/fuzz
+      # Same as `mise run fuzz:check`: type-check every fuzz target so a
+      # harness that no longer compiles fails CI, not the next campaign.
+      # (Runtime harness bugs still need an actual fuzz run.)
+      - run: cargo check --manifest-path harrow-core/fuzz/Cargo.toml
+      - run: cargo check --manifest-path harrow-middleware/fuzz/Cargo.toml
+      - run: cargo check --manifest-path harrow-codec-h1/fuzz/Cargo.toml

@@ -705,7 +705,14 @@ pub fn write_response_head_into_bytes_mut(
 }
 
 /// Encode a single chunk into a caller-provided buffer.
+///
+/// Empty `data` writes nothing: a zero-size chunk is the end-of-body marker,
+/// so encoding one would end the body early. Finish a body with
+/// [`CHUNK_TERMINATOR`].
 pub fn encode_chunk_into(data: &[u8], buf: &mut Vec<u8>) {
+    if data.is_empty() {
+        return;
+    }
     let _ = write!(buf, "{:x}", data.len());
     buf.extend_from_slice(b"\r\n");
     buf.extend_from_slice(data);
@@ -1517,6 +1524,17 @@ mod tests {
     }
 
     #[test]
+    fn encoding_an_empty_chunk_writes_nothing() {
+        let mut buf = b"prefix".to_vec();
+        encode_chunk_into(b"", &mut buf);
+        assert_eq!(
+            buf, b"prefix",
+            "an empty chunk would be the end-of-body marker"
+        );
+        assert!(encode_chunk(b"").is_empty());
+    }
+
+    #[test]
     fn encode_chunk_basic() {
         assert_eq!(encode_chunk(b"hello"), b"5\r\nhello\r\n");
     }
@@ -1755,15 +1773,17 @@ mod proptests {
             full.extend_from_slice(&trailing);
 
             let parsed = try_parse_request(&full).unwrap();
-            let mut decoder = PayloadDecoder::from_parsed(&parsed).unwrap();
             let mut buf = BytesMut::from(&full[parsed.header_len..]);
             let mut decoded = Vec::new();
 
-            loop {
-                match decoder.decode(&mut buf, None).unwrap() {
-                    Some(PayloadItem::Chunk(chunk)) => decoded.extend_from_slice(&chunk),
-                    Some(PayloadItem::Eof) => break,
-                    None => prop_assert!(false, "unexpected incomplete request body"),
+            // `Content-Length: 0` has no payload decoder: nothing to read.
+            if let Some(mut decoder) = PayloadDecoder::from_parsed(&parsed) {
+                loop {
+                    match decoder.decode(&mut buf, None).unwrap() {
+                        Some(PayloadItem::Chunk(chunk)) => decoded.extend_from_slice(&chunk),
+                        Some(PayloadItem::Eof) => break,
+                        None => prop_assert!(false, "unexpected incomplete request body"),
+                    }
                 }
             }
 
