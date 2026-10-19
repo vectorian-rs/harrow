@@ -241,6 +241,7 @@ pub enum ErrorResponse {
     RequestHeadersTooLarge,
     RequestTimeout,
     PayloadTooLarge,
+    ExpectationFailed,
 }
 
 impl ErrorResponse {
@@ -249,6 +250,7 @@ impl ErrorResponse {
             CodecError::Incomplete | CodecError::Invalid(_) => Self::BadRequest,
             CodecError::HeadersTooLarge => Self::RequestHeadersTooLarge,
             CodecError::BodyTooLarge => Self::PayloadTooLarge,
+            CodecError::ExpectationFailed => Self::ExpectationFailed,
         }
     }
 
@@ -257,6 +259,7 @@ impl ErrorResponse {
             Self::BadRequest | Self::RequestHeadersTooLarge => http::StatusCode::BAD_REQUEST,
             Self::RequestTimeout => http::StatusCode::REQUEST_TIMEOUT,
             Self::PayloadTooLarge => http::StatusCode::PAYLOAD_TOO_LARGE,
+            Self::ExpectationFailed => http::StatusCode::EXPECTATION_FAILED,
         }
     }
 
@@ -270,6 +273,7 @@ impl ErrorResponse {
             Self::RequestHeadersTooLarge => "request headers too large",
             Self::RequestTimeout => "request timeout",
             Self::PayloadTooLarge => "payload too large",
+            Self::ExpectationFailed => "expectation failed",
         }
     }
 }
@@ -567,6 +571,14 @@ mod tests {
         assert_eq!(
             ErrorResponse::from_codec_error(&CodecError::BodyTooLarge),
             ErrorResponse::PayloadTooLarge
+        );
+        assert_eq!(
+            ErrorResponse::from_codec_error(&CodecError::ExpectationFailed),
+            ErrorResponse::ExpectationFailed
+        );
+        assert_eq!(
+            ErrorResponse::ExpectationFailed.status(),
+            http::StatusCode::EXPECTATION_FAILED
         );
         assert_eq!(
             ErrorResponse::RequestTimeout.status(),

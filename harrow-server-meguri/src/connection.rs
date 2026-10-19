@@ -243,6 +243,9 @@ impl Conn {
             Err(CodecError::BodyTooLarge) => {
                 ProcessResult::WriteError(wire_error(ErrorResponse::PayloadTooLarge, false))
             }
+            Err(CodecError::ExpectationFailed) => {
+                ProcessResult::WriteError(wire_error(ErrorResponse::ExpectationFailed, false))
+            }
         }
     }
 
@@ -970,6 +973,18 @@ mod tests {
         conn.buf.extend_from_slice(b"INVALID\r\n\r\n");
         let result = conn.on_recv(conn.buf.len(), 1024);
         assert!(matches!(result, ProcessResult::WriteError(_)));
+    }
+
+    #[test]
+    fn unsupported_expectation_is_417() {
+        let mut conn = new_conn();
+        conn.buf.extend_from_slice(
+            b"POST /x HTTP/1.1\r\nHost: h\r\nExpect: foo\r\nContent-Length: 1\r\n\r\nx",
+        );
+        let ProcessResult::WriteError(wire) = conn.on_recv(conn.buf.len(), 1024) else {
+            panic!("expected an error response");
+        };
+        assert!(wire.starts_with(b"HTTP/1.1 417 Expectation Failed\r\n"));
     }
 
     #[test]

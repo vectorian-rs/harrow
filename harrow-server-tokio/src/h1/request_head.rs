@@ -29,7 +29,8 @@ where
             Err(
                 err @ (CodecError::HeadersTooLarge
                 | CodecError::Invalid(_)
-                | CodecError::BodyTooLarge),
+                | CodecError::BodyTooLarge
+                | CodecError::ExpectationFailed),
             ) => {
                 return RequestHeadRead::WriteError(ErrorResponse::from_codec_error(&err));
             }
