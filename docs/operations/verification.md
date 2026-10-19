@@ -225,6 +225,48 @@ tests.
 
 ---
 
+## Fuzz Campaigns
+
+Every HTTP/1 codec fuzz target runs for at least **15 minutes** from the shared
+corpus (`harrow-codec-h1/fuzz/corpus/<target>`) before a release, and each run
+is recorded here. Any crash is fixed or filed as an issue before the release.
+CI builds every fuzz target on each pull request (`Fuzz targets build` job,
+same as `mise run fuzz:check`); it does not run them.
+
+To run one target: `mise run fuzz:codec:<name>` (add
+`-- -max_total_time=900` for a 15-minute run).
+
+### 2026-10-19: HTTP/1 codec, pre-1.0 (#87)
+
+- Host: macOS, Apple Silicon (aarch64); `cargo-fuzz` 0.13.1; rustc
+  1.97.0-nightly (2026-04-12); libFuzzer; 900 s per target, existing corpora.
+- Code fuzzed: `main` at `7bea8c5` with the then-open codec PRs #95 (`Expect`)
+  and #96 (strict chunk-size) merged in; `fuzz_roundtrip` additionally with the
+  harness fixes from this PR.
+
+| Target | Executions | Coverage (edges) | Corpus | Crashes |
+| --- | ---: | ---: | ---: | ---: |
+| `fuzz_parse_request` | 61,640,389 | 2,049 | 4,066 | 0 |
+| `fuzz_response_head` | 40,641,042 | 1,698 | 4,278 | 0 |
+| `fuzz_chunked_decode` | 80,060,439 | 183 | 212 | 0 |
+| `fuzz_payload_decoder` | 63,054,136 | 185 | 212 | 0 |
+| `fuzz_roundtrip` | 81,537,223 | 521 | 88 | 0 |
+
+Findings:
+
+- `fuzz_roundtrip` had never fuzzed anything: its harness panicked on the first
+  (empty) input, slicing `data[2..]` without a length check, and treated a
+  zero-length `Content-Length` body (which has no payload decoder) as a crash.
+  Fixed; the 15-minute run above is with the fixed harness.
+- Fixing it exposed a codec trap: `encode_chunk_into(b"")` wrote `0\r\n\r\n`,
+  the end-of-body marker. The servers already skip empty frames; the codec now
+  writes nothing for an empty chunk.
+- The same zero-length-body mistake made the proptest
+  `request_body_roundtrip_with_content_length` fail in roughly one run in
+  eight. Fixed.
+- Two older crash inputs in `fuzz/artifacts/fuzz_chunked_decode/` (very large
+  chunk sizes) replay cleanly: fixed earlier by checked size arithmetic.
+
 ## Implementation Priority
 
 Ordered by expected bug-finding value per hour of effort:
