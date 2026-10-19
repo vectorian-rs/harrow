@@ -4,17 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- HTTP/1 codec: a chunk-size line without hex digits (`\r\n`, `;ext\r\n`, ` \r\n`) was read as size 0, ending the body early and letting the following bytes be parsed as a new request on a keep-alive connection. Every chunk-size must now start with a hex digit (RFC 9112 §7.1).
+- HTTP/1 codec: `Content-Length` accepted a leading `+` (`+5`), and `Content-Length` / `Transfer-Encoding` values padded with Unicode whitespace (e.g. U+00A0) were trimmed and accepted. Both are now rejected: `Content-Length` must be `1*DIGIT`, and only spaces and tabs are trimmed. An upstream proxy could read such values differently (request smuggling).
+- meguri server: a connection's slab slot and its buffers were released while a RECV or SEND was still in flight (typically when a handler answered without reading the request body), so the kernel could write into freed memory, and a late completion could be applied to a newer connection in the same slot. Slots are now kept until their last completion, completions carry a slot generation, and sockets are shut down before close.
+- meguri: `Ring::drop` freed the buffers of abandoned operations before the kernel had finished with them; it now cancels and waits (bounded), and leaks rather than frees if the kernel is still busy.
+
 ### Added
 - Security headers middleware (`security-headers` feature)
 - `harrow-server-tokio-hyper`: prototype Tokio backend where Hyper owns HTTP/1 parsing and framing, with one `current_thread` runtime per worker (`tokio-hyper` feature). Used to compare Hyper against the custom codec before 1.0.
+- `Response::set_ext` / `Response::ext`: typed per-response data for outer middleware, e.g. an error that only knows its status, rendered with the request id by one middleware. Never written to the wire.
+- Tokio backend: `start` / `start_with_config` returning a `ServerHandle` (`local_addr`, `shutdown`, `wait`), so a multi-worker server can drain gracefully on SIGTERM. `serve_multi_worker` is now `start_with_config(..)?.wait()`; binding port 0 works.
+- `harrow_server::start_workers`: shared worker startup for the threaded backends (Tokio, Monoio, Meguri).
+- `h1_lifecycle::trace`: backends record per-connection lifecycle events and tests replay them against the lifecycle model (`lifecycle-trace` feature, off in normal builds). The Tokio backend is instrumented.
+- meguri `ops` layer is now functional: `Driver` plus `Accept`, `Connect`, `Recv`, `Send`, `Read`, `Write`, `Timeout` and `Cancel` as owned-buffer futures; dropping one before completion cancels it and keeps its buffers until the kernel is done.
+- Adversarial HTTP/1 test suite (parser, framing, response writing, lifecycle) and a first recorded codec fuzz campaign; see `docs/operations/verification.md`. CI now builds the fuzz targets.
+- `examples/framework-compare`: the same API in Harrow, axum, ntex and Tako, with a shared black-box contract test.
 
 ### Fixed
 - HTTP/1 codec enforces the header size limit
 - Stricter `Transfer-Encoding` parsing
 - Response framing headers are normalized, so a response never carries both `Content-Length` and `Transfer-Encoding`
+- Unsupported `Expect` values are rejected with `417 Expectation Failed` before the handler runs; non-ASCII `Expect` values with `400`. `Expect: 100-continue` on HTTP/1.0 is ignored (previously Harrow sent an interim `100` to 1.0 clients).
+- `decode_chunked_with_limit` skipped the CRLF after each chunk without checking it; it is now a wrapper over `PayloadDecoder` and exactly as strict.
+- `encode_chunk_into(b"")` wrote `0\r\n\r\n`, the end-of-body marker; an empty chunk now writes nothing.
+- Tokio backend: a response to a request still running when shutdown started advertised keep-alive and the connection was then closed; it now carries `Connection: close`.
+- meguri: `IORING_OP_TIMEOUT` SQEs were rejected by the kernel (`len` must be 1, count goes in `off`), so the meguri server's dispatch tick and timeout sweep never waited and its event loop spun.
+- meguri server: `setsockopt` / `fcntl` results are checked, accepted sockets are close-on-exec and non-blocking from the accept itself, and an interrupted `io_uring_enter` (EINTR) is retried instead of stopping the worker.
+- meguri: x86_64 builds failed under `-D warnings` (inline `asm!` without an inner `unsafe` block).
 
 ### Changed
 - Shared H1 connection lifecycle and threaded worker control moved into `harrow-server`
+- **Breaking:** `CodecError` has a new `ExpectationFailed` variant; `ErrorResponse` a new `ExpectationFailed` variant.
+- **Breaking (meguri, not published):** `SubmissionQueue` builders that take raw pointers or fds are now `unsafe fn`, with per-opcode safety contracts. `ops::Read`/`Write`/… are aliases of the generic `ops::Op<K>`; `Accept` yields an `OwnedFd`; `Read`/`Recv`/`Write`/`Send` return their buffer together with the result.
+- The lifecycle model (and its TLA+ spec) allows an error response while reading the request body, not only the headers.
+- Benchmarks: Tako 2.4 with a thread-per-core mode, and the Hyper prototype, added to the comparison runs.
+- Rust toolchain pinned to 1.99.1.
+
+### Removed
+- **Breaking:** the `tls` feature (`harrow` and `harrow-server-tokio`). It pulled in `rustls` but no code used it, so enabling it silently served plain HTTP. No backend terminates TLS in-process; terminate at a reverse proxy or load balancer.
 
 ## [0.10.0] - 2026-04-20
 
