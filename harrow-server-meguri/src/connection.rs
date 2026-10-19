@@ -80,9 +80,14 @@ struct DispatchInner {
 
 /// Per-connection state.
 pub(crate) struct Conn {
+    /// The connection's socket, owned by this `Conn` from accept until the
+    /// event loop's `close_conn` closes it and sets it to `-1`. `Conn` has no
+    /// `Drop` impl, so dropping it does not close the fd.
     pub fd: RawFd,
     pub state: ConnState,
-    /// Read buffer: holds raw bytes from RECV completions.
+    /// Read buffer: holds raw bytes from RECV completions. While
+    /// `recv_pending`, an in-flight RECV writes into its spare capacity, so
+    /// it must not be reallocated, and the `Conn` must not be dropped.
     pub buf: BytesMut,
     /// Parsed request headers for the active request.
     pub parsed: Option<ParsedRequest>,
@@ -94,7 +99,9 @@ pub(crate) struct Conn {
     dispatch_handle: Option<DispatchHandle>,
     /// Response byte stream produced by the spawned local dispatch task.
     response_rx: Option<mpsc::Receiver<ResponseStreamEvent>>,
-    /// Serialized response bytes to write.
+    /// Serialized response bytes to write. While `write_pending`, an
+    /// in-flight SEND reads `response_buf[response_written..]`, so it must
+    /// not be modified or replaced, and the `Conn` must not be dropped.
     pub response_buf: Vec<u8>,
     /// Number of response bytes already written.
     pub response_written: usize,
@@ -106,9 +113,13 @@ pub(crate) struct Conn {
     response_failed: bool,
     /// Whether to keep-alive after this request.
     pub keep_alive: bool,
-    /// Whether there is a pending RECV SQE for this connection.
+    /// Whether there is a pending RECV SQE for this connection. Set when the
+    /// SQE is queued and cleared only by its CQE, so it is exactly "the
+    /// kernel may still write into `buf`".
     pub recv_pending: bool,
-    /// Whether there is a pending WRITE SQE for this connection.
+    /// Whether there is a pending SEND SQE for this connection. Set when the
+    /// SQE is queued and cleared only by its CQE ("the kernel may still read
+    /// `response_buf`").
     pub write_pending: bool,
     /// Timeout error waiting to be translated into a wire response.
     timeout_error: Option<ErrorResponse>,

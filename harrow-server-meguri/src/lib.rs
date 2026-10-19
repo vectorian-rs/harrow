@@ -23,6 +23,39 @@
 //! └─────────────────┘     └─────────────────┘
 //! ```
 //!
+//! # Ownership and lifetime rules
+//!
+//! The event loop talks to the kernel through raw pointers and raw fds, so
+//! these rules carry the memory safety of the backend:
+//!
+//! - **Listener fd**: owned by the worker's `TcpListener`, which outlives
+//!   the ring. The ACCEPT SQE passes no address buffer, so it references no
+//!   user memory.
+//! - **Accepted fds**: the fd in a successful ACCEPT CQE is owned by the
+//!   `Conn` created in `handle_accept`, or closed right away
+//!   (`close_accepted_fd`) when no connection takes it (limit reached,
+//!   drain, teardown). It is created close-on-exec.
+//! - **Connection fds**: `Conn::fd` is closed in exactly one place,
+//!   `close_conn`, which sets it to `-1`. With a RECV/SEND in flight it
+//!   first calls shutdown(2): io_uring holds its own file reference, so
+//!   close(2) alone would neither send FIN nor complete the SQE.
+//! - **RECV buffer**: a RECV SQE points into the spare capacity of
+//!   `Conn::buf`. While `recv_pending` is set, `buf` is not reallocated
+//!   (`Conn::prepare_recv`/`commit_recv` record and verify the target) and
+//!   the `Conn` stays in the slab.
+//! - **SEND buffer**: a SEND SQE points into `Conn::response_buf`. While
+//!   `write_pending` is set, `response_buf` is not modified or replaced
+//!   (debug-asserted) and the `Conn` stays in the slab.
+//! - **Slab slots**: a closed connection with an SQE in flight stays in its
+//!   slot in the `Closed` state; its last CQE frees the slot
+//!   (`release_if_idle`). At worker exit, `teardown` waits for those CQEs
+//!   and leaks (never frees) anything the kernel still holds.
+//! - **Stale CQEs**: every per-connection user_data carries the slab index
+//!   and a 28-bit generation (`ConnToken`). A CQE whose generation does not
+//!   match the slot's current connection is ignored.
+//! - **Timespecs**: TIMEOUT SQEs point at `static`s or at a worker-loop
+//!   local declared before the ring; the kernel copies them at submission.
+//!
 //! # Platform
 //!
 //! **Linux only.** io_uring is a Linux kernel feature.
@@ -1355,6 +1388,14 @@ fn sweep_timed_out_connections(
 /// `send(2)` with `MSG_DONTWAIT` will never block on a connected socket.
 #[cfg(target_os = "linux")]
 fn submit_continue(_ring: &mut meguri::Ring, _conn_idx: usize, conn: &mut connection::Conn) {
+    // SAFETY: `CONTINUE_100` is a `'static` byte string and send(2) reads
+    // it synchronously; `conn.fd` is the connection's open socket (this is
+    // only called for a live connection that just parsed headers).
+    //
+    // The result is ignored on purpose: this is best effort. If the 25
+    // bytes do not fit right now (EAGAIN) or the peer is gone, a client
+    // that sent `Expect: 100-continue` sends the body anyway after its own
+    // timeout, and a dead peer surfaces on the next RECV/SEND CQE.
     unsafe {
         libc::send(
             conn.fd,
