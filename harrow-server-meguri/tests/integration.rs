@@ -382,6 +382,108 @@ async fn header_read_timeout_closes_connection() {
     drop(server);
 }
 
+/// A connection closed by a timeout while its RECV is still in flight keeps
+/// its slab slot until that RECV completes, and must then release it. If the
+/// slot leaked, the per-worker connection limit would fill up with dead
+/// connections and new clients would be refused.
+#[tokio::test]
+async fn timed_out_connections_release_their_slots() {
+    let _guard = integration_lock();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let app = || App::new().get("/hello", hello);
+    let config = harrow_server_meguri::ServerConfig {
+        max_connections: 2,
+        ..test_config()
+    };
+    let (addr, server) = start_meguri_server(app, config);
+
+    for _ in 0..3 {
+        let mut idle = [
+            connect_with_retry(addr).await,
+            connect_with_retry(addr).await,
+        ];
+        for stream in &mut idle {
+            let mut buf = Vec::new();
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                read_to_end_allow_reset(stream, &mut buf),
+            )
+            .await
+            .expect("header timeout should close the idle connection");
+        }
+    }
+
+    let mut stream = connect_with_retry(addr).await;
+    stream
+        .write_all(b"GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut buf))
+        .await
+        .expect("server should answer once the timed-out slots are free")
+        .unwrap();
+    let (status, _headers, body) = parse_http_response(&buf);
+    assert_eq!(status, 200, "raw: {}", String::from_utf8_lossy(&buf));
+    assert_eq!(body, "hello");
+    drop(server);
+}
+
+/// The handler answers without reading the body while the server still has a
+/// RECV in flight for more body bytes. The response is `connection: close`,
+/// so the server closes the connection with that RECV outstanding. io_uring
+/// holds its own reference to the socket, so a bare close(2) neither sends
+/// FIN nor stops the RECV; the server must shut the socket down and keep
+/// the receive buffer alive until the RECV completes.
+#[tokio::test]
+async fn early_response_closes_socket_while_body_recv_is_in_flight() {
+    let _guard = integration_lock();
+    use tokio::io::AsyncWriteExt;
+
+    let app = || App::new().post("/upload", hello).get("/hello", hello);
+    let config = harrow_server_meguri::ServerConfig {
+        body_read_timeout: Some(Duration::from_secs(30)),
+        ..test_config()
+    };
+    let (addr, server) = start_meguri_server(app, config);
+
+    let mut stream = connect_with_retry(addr).await;
+    stream
+        .write_all(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\nhello")
+        .await
+        .unwrap();
+
+    let mut buf = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        read_to_end_allow_reset(&mut stream, &mut buf),
+    )
+    .await
+    .expect("server must close the socket after an early response");
+    let (status, headers, body) = parse_http_response(&buf);
+    assert_eq!(status, 200);
+    assert_eq!(body, "hello");
+    assert_eq!(get_header(&headers, "connection"), Some("close"));
+
+    // The rest of the body goes to a connection the server already closed.
+    let _ = stream.write_all(&[b'x'; 995]).await;
+    drop(stream);
+
+    // The worker is still healthy, and a new connection that may reuse the
+    // old slab slot is unaffected by the old connection's late RECV CQE.
+    for _ in 0..3 {
+        let (status, _headers, body) = http_request(
+            addr,
+            "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body, "hello");
+    }
+    drop(server);
+}
+
 #[tokio::test]
 async fn body_read_timeout_returns_408() {
     let _guard = integration_lock();
