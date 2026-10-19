@@ -1146,6 +1146,101 @@ mod tests {
         }
     }
 
+    // --- PayloadDecoder: adversarial chunked framing (#86) ---
+
+    /// Drive the stateful chunked decoder over a complete input.
+    fn decode_stateful(input: &[u8], max_body: Option<usize>) -> Result<Vec<u8>, CodecError> {
+        let mut buf = BytesMut::from(input);
+        let mut dec = PayloadDecoder::chunked();
+        let mut body = Vec::new();
+        loop {
+            match dec.decode(&mut buf, max_body)? {
+                Some(PayloadItem::Chunk(c)) => body.extend_from_slice(&c),
+                Some(PayloadItem::Eof) => return Ok(body),
+                None => return Err(CodecError::Incomplete),
+            }
+        }
+    }
+
+    #[test]
+    fn payload_chunked_rejects_bad_delimiter_after_chunk_data() {
+        for input in [
+            &b"5\r\nhelloXX0\r\n\r\n"[..],
+            b"5\r\nhello\rX0\r\n\r\n",
+            b"5\r\nhello\n0\r\n\r\n",
+            // Chunk longer than its declared size.
+            b"5\r\nhello!\r\n0\r\n\r\n",
+        ] {
+            assert!(
+                matches!(decode_stateful(input, None), Err(CodecError::Invalid(_))),
+                "{:?} should be rejected",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn payload_chunked_rejects_bad_final_crlf() {
+        for input in [
+            &b"5\r\nhello\r\n0\r\nXX"[..],
+            b"5\r\nhello\r\n0\r\n\rX",
+            b"5\r\nhello\r\n0\r\n\n",
+            // Trailer fields are not supported; they must not be skipped
+            // silently or mistaken for the next request.
+            b"5\r\nhello\r\n0\r\nX-Trailer: a\r\n\r\n",
+        ] {
+            assert!(
+                matches!(decode_stateful(input, None), Err(CodecError::Invalid(_))),
+                "{:?} should be rejected",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn payload_chunked_rejects_chunk_size_overflow() {
+        // 17 hex digits do not fit in a u64.
+        let err = decode_stateful(b"10000000000000000\r\nx\r\n0\r\n\r\n", None).unwrap_err();
+        assert!(matches!(err, CodecError::Invalid(ref m) if m.contains("overflow")));
+        // The largest u64 size parses but cannot exceed the body limit.
+        assert!(matches!(
+            decode_stateful(b"ffffffffffffffff\r\nxx", Some(1)),
+            Err(CodecError::BodyTooLarge)
+        ));
+    }
+
+    #[test]
+    fn payload_chunked_eof_mid_chunk_is_incomplete_not_eof() {
+        for input in [
+            &b"5\r\nhel"[..],
+            b"5\r\nhello",
+            b"5\r\nhello\r\n",
+            b"5\r\nhello\r\n0\r\n",
+            b"5",
+        ] {
+            assert!(
+                matches!(decode_stateful(input, None), Err(CodecError::Incomplete)),
+                "{:?} must not decode as a complete body",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn payload_chunked_preserves_pipelined_bytes_after_terminator() {
+        let mut buf = BytesMut::from(&b"5\r\nhello\r\n0\r\n\r\nGET /next HTTP/1.1\r\n\r\n"[..]);
+        let mut dec = PayloadDecoder::chunked();
+        assert!(matches!(
+            dec.decode(&mut buf, None).unwrap(),
+            Some(PayloadItem::Chunk(_))
+        ));
+        assert!(matches!(
+            dec.decode(&mut buf, None).unwrap(),
+            Some(PayloadItem::Eof)
+        ));
+        assert_eq!(buf.as_ref(), b"GET /next HTTP/1.1\r\n\r\n");
+    }
+
     #[test]
     fn payload_from_parsed_chunked() {
         let req = b"POST /data HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n";
