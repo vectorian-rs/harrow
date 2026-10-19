@@ -669,7 +669,14 @@ pub fn write_response_head_into_bytes_mut(
 }
 
 /// Encode a single chunk into a caller-provided buffer.
+///
+/// Empty `data` writes nothing: a zero-size chunk is the end-of-body marker,
+/// so encoding one would end the body early. Finish a body with
+/// [`CHUNK_TERMINATOR`].
 pub fn encode_chunk_into(data: &[u8], buf: &mut Vec<u8>) {
+    if data.is_empty() {
+        return;
+    }
     let _ = write!(buf, "{:x}", data.len());
     buf.extend_from_slice(b"\r\n");
     buf.extend_from_slice(data);
@@ -1156,6 +1163,14 @@ mod tests {
         let head = write_response_head(StatusCode::OK, &HeaderMap::new(), true);
         let s = String::from_utf8(head).unwrap();
         assert!(s.contains("transfer-encoding: chunked\r\n"));
+    }
+
+    #[test]
+    fn encoding_an_empty_chunk_writes_nothing() {
+        let mut buf = b"prefix".to_vec();
+        encode_chunk_into(b"", &mut buf);
+        assert_eq!(buf, b"prefix", "an empty chunk would be the end-of-body marker");
+        assert!(encode_chunk(b"").is_empty());
     }
 
     #[test]
