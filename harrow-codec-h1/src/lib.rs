@@ -272,6 +272,8 @@ enum PayloadKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChunkedState {
+    /// First byte of a chunk-size: must be a hex digit (1*HEXDIG).
+    SizeStart,
     Size,
     SizeLws,
     Extension,
@@ -295,7 +297,7 @@ impl PayloadDecoder {
     /// Create a decoder for a chunked transfer-encoded body.
     pub fn chunked() -> Self {
         Self {
-            kind: PayloadKind::Chunked(ChunkedState::Size, 0, 0),
+            kind: PayloadKind::Chunked(ChunkedState::SizeStart, 0, 0),
         }
     }
 
@@ -401,6 +403,7 @@ impl ChunkedState {
         chunk: &mut Option<Bytes>,
     ) -> Poll<Result<ChunkedState, &'static str>> {
         match self {
+            ChunkedState::SizeStart => Self::read_size_start(src, size),
             ChunkedState::Size => Self::read_size(src, size),
             ChunkedState::SizeLws => Self::read_size_lws(src),
             ChunkedState::Extension => Self::read_extension(src),
@@ -415,7 +418,7 @@ impl ChunkedState {
             ChunkedState::BodyLf => Self::expect_byte(
                 src,
                 b'\n',
-                ChunkedState::Size,
+                ChunkedState::SizeStart,
                 "expected LF after chunk body",
             ),
             ChunkedState::EndCr => Self::expect_byte(
@@ -432,6 +435,21 @@ impl ChunkedState {
             ),
             ChunkedState::End => Poll::Ready(Ok(ChunkedState::End)),
         }
+    }
+
+    fn read_size_start(
+        src: &mut BytesMut,
+        size: &mut u64,
+    ) -> Poll<Result<ChunkedState, &'static str>> {
+        if src.is_empty() {
+            return Poll::Pending;
+        }
+        let b = src[0];
+        if !b.is_ascii_hexdigit() {
+            return Poll::Ready(Err("chunk size must start with a hex digit"));
+        }
+        *size = 0;
+        Self::read_size(src, size)
     }
 
     fn read_size(src: &mut BytesMut, size: &mut u64) -> Poll<Result<ChunkedState, &'static str>> {
@@ -1105,6 +1123,55 @@ mod tests {
     }
 
     // --- Legacy stateless decoder ---
+
+    /// Drive a fresh chunked `PayloadDecoder` over `input` in one buffer.
+    fn decode_all(input: &[u8], max_body: Option<usize>) -> Result<Option<Vec<u8>>, CodecError> {
+        let mut decoder = PayloadDecoder::chunked();
+        let mut src = BytesMut::from(input);
+        let mut body = Vec::new();
+        loop {
+            match decoder.decode(&mut src, max_body)? {
+                Some(PayloadItem::Chunk(chunk)) => body.extend_from_slice(&chunk),
+                Some(PayloadItem::Eof) => return Ok(Some(body)),
+                None => return Ok(None),
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_size_line_without_hex_digits_is_invalid() {
+        // RFC 9112 §7.1: chunk-size = 1*HEXDIG. An empty size must not be
+        // read as 0, which would end the body early and let the rest of
+        // the stream be parsed as a new request.
+        for input in [
+            &b"\r\n\r\nGET /smuggled HTTP/1.1\r\n"[..],
+            b";ext\r\n\r\n",
+            b" \r\n\r\n",
+            b"\t;ext\r\n\r\n",
+        ] {
+            assert!(
+                matches!(decode_all(input, None), Err(CodecError::Invalid(_))),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_size_may_not_start_with_whitespace() {
+        assert!(matches!(
+            decode_all(b" 5\r\nhello\r\n0\r\n\r\n", None),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn chunk_size_allows_trailing_whitespace_and_extensions() {
+        let body = decode_all(b"5 ;name=value\r\nhello\r\n0;last\r\n\r\n", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(body, b"hello");
+    }
 
     #[test]
     fn decode_chunked_complete() {
