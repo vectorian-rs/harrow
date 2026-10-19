@@ -215,7 +215,7 @@ impl ConnToken {
     }
 
     fn decode(user_data: u64, tag: u64) -> Option<Self> {
-        (user_data >> 63 == 0 && user_data & USER_DATA_TAG_MASK == tag).then(|| Self {
+        (user_data >> 63 == 0 && user_data & USER_DATA_TAG_MASK == tag).then_some(Self {
             idx: (user_data & 0xFFFF_FFFF) as usize,
             generation: ((user_data >> 32) as u32) & CONN_GENERATION_MASK,
         })
