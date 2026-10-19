@@ -2487,7 +2487,7 @@ mod h1_adversarial {
     }
 
     #[tokio::test]
-    #[ignore = "bug: streaming responses to HTTP/1.0 clients use chunked transfer-encoding, which HTTP/1.0 does not define (RFC 9112 §6.1); they must be close-delimited"]
+    #[ignore = "bug #100: streaming responses to HTTP/1.0 clients use chunked transfer-encoding, which HTTP/1.0 does not define (RFC 9112 §6.1); they must be close-delimited"]
     async fn tcp_http10_streaming_response_is_not_chunked() {
         let addr = start_server(|| {
             App::new().get("/stream", |_req: Request| async {
@@ -2963,7 +2963,7 @@ mod h1_adversarial {
     }
 
     #[tokio::test]
-    #[ignore = "bug: ShutdownSignal is a polled flag, so an idle keep-alive connection blocked in read_request_head is not woken; shutdown waits for header_read_timeout or drain_timeout"]
+    #[ignore = "bug #98: ShutdownSignal is a polled flag, so an idle keep-alive connection blocked in read_request_head is not woken; shutdown waits for header_read_timeout or drain_timeout"]
     async fn tcp_shutdown_closes_idle_keep_alive_connection_promptly() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

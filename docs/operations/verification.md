@@ -275,12 +275,12 @@ File keys:
 
 #### Known gaps (ignored tests)
 
-- `tcp_http10_streaming_response_is_not_chunked`: a streaming response to an
+- `tcp_http10_streaming_response_is_not_chunked` (#100): a streaming response to an
   HTTP/1.0 request is sent with `transfer-encoding: chunked`. HTTP/1.0 does
   not define chunked encoding, so the response must be close-delimited
   (RFC 9112 §6.1). To fix this, every backend needs a close-delimited body
   mode.
-- `tcp_shutdown_closes_idle_keep_alive_connection_promptly`:
+- `tcp_shutdown_closes_idle_keep_alive_connection_promptly` (#98):
   `ShutdownSignal` is a flag that the server checks only between requests.
   An idle keep-alive connection that waits in `read_request_head` does not
   see the shutdown. The server stops only after `header_read_timeout` or
