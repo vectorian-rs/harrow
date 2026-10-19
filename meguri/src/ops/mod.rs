@@ -205,6 +205,27 @@ fn sqe_len(len: usize) -> u32 {
     u32::try_from(len).unwrap_or(u32::MAX)
 }
 
+/// Extend `buf` over the `n` bytes a READ/RECV wrote into its spare capacity.
+/// Returns the number of bytes appended.
+///
+/// The operation owns `buf` and leaves it untouched between `push` (which
+/// hands the kernel the start of the spare capacity and at most
+/// `sqe_len(spare)` bytes) and here, so the kernel's bytes sit right at
+/// `buf.len()` and `n` cannot exceed the current spare capacity. The clamp
+/// keeps `set_len` in bounds even if the kernel misreported `n`.
+fn commit_spare(buf: &mut bytes::BytesMut, n: usize) -> usize {
+    let spare = buf.capacity() - buf.len();
+    debug_assert!(
+        n <= spare,
+        "kernel reported {n} bytes, the SQE allowed {spare}"
+    );
+    let n = n.min(spare);
+    // SAFETY: the kernel initialised the first `n` bytes of the spare
+    // capacity (see above), and `len + n <= capacity`.
+    unsafe { buf.set_len(buf.len() + n) };
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::fd::RawFd;
@@ -250,6 +271,53 @@ mod tests {
         assert!(driver.ring().dispatcher().is_empty());
         close(r);
         close(w);
+    }
+
+    /// The kernel may fill the spare capacity exactly; `len` then reaches
+    /// `capacity` and never beyond.
+    #[test]
+    fn read_fills_at_most_the_spare_capacity() {
+        let driver = Driver::new(8).expect("ring");
+        let (r, w) = pipe();
+
+        let (res, buf) = driver.block_on(async {
+            let (written, _) = Write::new(&driver, w, Bytes::from_static(b"hello world"), 0).await;
+            assert_eq!(written.expect("write"), 11);
+            let mut buf = BytesMut::with_capacity(8);
+            buf.extend_from_slice(b">");
+            let spare = buf.capacity() - buf.len();
+            let (res, buf) = Read::new(&driver, r, buf, 0).await;
+            assert_eq!(res.as_ref().ok(), Some(&spare.min(11)));
+            (res, buf)
+        });
+
+        let n = res.expect("read");
+        assert_eq!(buf.len(), 1 + n);
+        assert!(buf.len() <= buf.capacity());
+        assert_eq!(&buf[1..], &b"hello world"[..n]);
+
+        // A full buffer has no spare capacity: the read asks for 0 bytes.
+        let mut full = buf;
+        let cap = full.capacity();
+        full.resize(cap, b'x');
+        let (res, full) = driver.block_on(Read::new(&driver, r, full, 0));
+        assert_eq!(res.expect("zero-length read"), 0);
+        assert_eq!(full.len(), cap);
+        close(r);
+        close(w);
+    }
+
+    #[test]
+    fn commit_spare_extends_up_to_capacity() {
+        let mut buf = BytesMut::with_capacity(4);
+        buf.extend_from_slice(b"ab");
+        let spare = buf.capacity() - buf.len();
+        // Only in-bounds values here: an out-of-bounds `n` trips the
+        // debug_assert, which is the point of it.
+        assert_eq!(commit_spare(&mut buf, 0), 0);
+        buf.spare_capacity_mut()[..spare].fill(std::mem::MaybeUninit::new(b'z'));
+        assert_eq!(commit_spare(&mut buf, spare), spare);
+        assert_eq!(buf.len(), buf.capacity());
     }
 
     #[test]

@@ -43,13 +43,7 @@ impl Operation for ReadOp {
     }
 
     fn complete(mut self, result: MeguriResult<u32>) -> Self::Output {
-        let result = result.map(|n| {
-            let n = n as usize;
-            // SAFETY: the kernel initialized `n` bytes of spare capacity,
-            // and `n` is at most the length we passed in `push`.
-            unsafe { self.buf.set_len(self.buf.len() + n) };
-            n
-        });
+        let result = result.map(|n| super::commit_spare(&mut self.buf, n as usize));
         (result, self.buf)
     }
 }
