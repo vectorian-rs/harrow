@@ -191,6 +191,103 @@ boundary that all of those backends rely on.
 
 ---
 
+### HTTP/1 adversarial coverage (#86)
+
+Harrow owns its HTTP/1 stack, so request-smuggling resistance, response
+framing, and connection lifecycle need explicit adversarial tests. The table
+maps each acceptance criterion from issue #86 to the tests that pin it.
+End-to-end tests drive the Tokio backend over real TCP and assert on the raw
+bytes; codec tests cover pure parsing.
+
+File keys:
+
+- **codec**: `harrow-codec-h1/src/lib.rs` (`tests` module)
+- **shared**: `harrow-server/src/h1.rs` (`tests` module)
+- **tokio-e2e**: `harrow-server-tokio/tests/integration.rs`. Tests with a
+  `h1_adversarial::` prefix are in the `h1_adversarial` module.
+- **tokio-dst**: `harrow-server-tokio/tests/dst.rs` (duplex stream, paused time)
+- **tokio-resp**: `harrow-server-tokio/src/h1/response.rs` (`tests` module)
+- **meguri**: `harrow-server-meguri/src/connection.rs` (`tests` module)
+- **monoio**: `harrow-server-monoio/tests/integration.rs` (Linux only)
+- **multi**: `harrow-server-tokio/tests/multi_worker.rs`
+
+#### Request parsing / smuggling
+
+| Criterion | Tests |
+|---|---|
+| Oversized complete headers | codec `reject_complete_headers_over_max_header_buf`; tokio-dst `dst_oversized_headers` |
+| Oversized incomplete headers | codec `reject_incomplete_headers_at_max_header_buf`; tokio-e2e `h1_adversarial::tcp_oversized_incomplete_headers_get_400_and_close` |
+| Duplicate identical `Content-Length` | codec `accept_duplicate_same_content_length`; tokio-e2e `h1_adversarial::tcp_duplicate_identical_content_length_is_accepted` |
+| Duplicate conflicting `Content-Length` | codec `reject_conflicting_content_lengths`; tokio-e2e `h1_adversarial::tcp_conflicting_content_lengths_are_rejected_without_dispatch` |
+| `Transfer-Encoding` + `Content-Length` | codec `reject_content_length_and_chunked`, `reject_transfer_encoding_with_content_length`; tokio-e2e `h1_adversarial::tcp_transfer_encoding_with_content_length_is_rejected`; monoio `rejects_content_length_and_chunked_together` |
+| Invalid `Content-Length` | codec `reject_invalid_content_length`, `reject_non_digit_content_length_forms`, `content_length_allows_surrounding_ows`; tokio-e2e `h1_adversarial::tcp_invalid_content_length_is_rejected` |
+| Invalid or unsupported `Transfer-Encoding` | codec `reject_identity_transfer_encoding`, `reject_comma_separated_transfer_encoding`, `reject_unsupported_transfer_encoding`, `reject_empty_transfer_encoding_token`, `reject_invalid_transfer_encoding_bytes`, `reject_duplicate_transfer_encoding`, `reject_transfer_encoding_with_non_ows_whitespace`; tokio-e2e `h1_adversarial::tcp_invalid_or_unsupported_transfer_encoding_is_rejected` |
+| HTTP/1.0 body and framing edge cases | codec `reject_transfer_encoding_on_http10`, `reject_http10_post_without_content_length`, `reject_http10_put_without_content_length`, `allow_http10_get_without_content_length`, `keep_alive_http10_close`, `keep_alive_http10_explicit`; tokio-e2e `h1_adversarial::tcp_http10_post_with_content_length_is_served_then_closed`, `h1_adversarial::tcp_http10_body_without_content_length_or_with_chunked_is_rejected`, `h1_adversarial::tcp_http10_streaming_response_is_not_chunked` (**ignored: known bug**). The handling of `Expect` on HTTP/1.0 is covered in #95. |
+
+#### Chunked request bodies
+
+| Criterion | Tests |
+|---|---|
+| Invalid CRLF after chunk body | codec `payload_chunked_rejects_bad_delimiter_after_chunk_data`; tokio-e2e `h1_adversarial::tcp_chunked_body_framing_errors_get_400`. The one-shot decoder is covered in #96. |
+| Invalid final CRLF | codec `payload_chunked_rejects_bad_final_crlf`; tokio-e2e `h1_adversarial::tcp_chunked_body_framing_errors_get_400`. The one-shot decoder is covered in #96. |
+| Chunk size overflow | codec `payload_chunked_rejects_chunk_size_overflow`; tokio-e2e `h1_adversarial::tcp_chunked_body_framing_errors_get_400`. A chunk-size line with no hex digits is covered in #96. |
+| EOF mid-chunk | codec `payload_chunked_eof_mid_chunk_is_incomplete_not_eof`; tokio-e2e `h1_adversarial::tcp_eof_mid_chunk_closes_without_response`; tokio-dst `dst_eof_mid_body` (Content-Length) |
+| Body limit exceeded across chunks | codec `payload_chunked_cumulative_max_body`, `decode_chunked_too_large`; tokio-e2e `h1_adversarial::tcp_chunked_body_over_limit_across_chunks_gets_413`; monoio `body_limit_chunked_rejection` |
+
+#### Response writing
+
+| Criterion | Tests |
+|---|---|
+| App-set `Transfer-Encoding` | shared `prepare_response_removes_app_supplied_transfer_encoding`; tokio-e2e `h1_adversarial::tcp_app_set_transfer_encoding_is_replaced_by_server_framing` |
+| App-set `Content-Length` + `Transfer-Encoding` | shared `prepare_response_strips_body_framing_for_204`; tokio-e2e `h1_adversarial::tcp_app_set_content_length_and_transfer_encoding_uses_content_length` |
+| Wrong fixed `Content-Length` | shared `prepare_response_rejects_wrong_exact_content_length`, `fixed_response_length_helpers_validate_bounds`; tokio-resp `fixed_length_response_shorter_than_declared_errors`; meguri `stream_response_fixed_length_mismatch_reports_error`; tokio-e2e `h1_adversarial::tcp_wrong_fixed_content_length_closes_without_writing_a_response` |
+| `HEAD`, `204`, `304` body suppression | shared `response_body_rule_matches_http_bodyless_cases`, `prepare_response_preserves_head_content_length`; tokio-e2e `tcp_head_response_is_not_chunked_on_wire`, `tcp_204_and_304_responses_are_bodyless_on_wire`, `tcp_head_generated_404_and_405_strip_body`, `h1_adversarial::tcp_bodyless_responses_keep_pipelined_connection_in_sync`; meguri `stream_response_omits_chunked_for_bodyless_status`, `stream_response_omits_head_body_bytes`; monoio `head_response_has_no_body_or_chunked_framing` |
+| Streaming response error mid-body | tokio-e2e `h1_adversarial::tcp_streaming_response_error_mid_body_truncates_and_closes` |
+
+#### Lifecycle
+
+| Criterion | Tests |
+|---|---|
+| Keep-alive reuse | tokio-dst `dst_keep_alive_two_requests`, `dst_keep_alive_five_requests`; tokio-e2e `h1_adversarial::tcp_keep_alive_reuses_connection_for_sequential_requests`; monoio `keep_alive_multiple_requests` |
+| Pipelined or buffered next request | tokio-dst `dst_pipelined_requests_correct_count` (proptest); codec `payload_length_with_trailing_data`, `payload_chunked_preserves_pipelined_bytes_after_terminator`; meguri `resume_after_keep_alive_reuses_buffered_pipelined_request`, `chunked_body_preserves_pipelined_data`; shared lifecycle `keep_alive_reset_reports_buffered_request_bytes`; tokio-e2e `h1_adversarial::tcp_pipelined_requests_after_bodies_are_parsed_from_buffer` |
+| Body too large: early response | tokio-dst `dst_oversized_content_length`; tokio-e2e `h1_adversarial::tcp_oversized_content_length_gets_413_before_body_is_sent`, `h1_adversarial::tcp_early_response_without_reading_body_closes_connection`; meguri `content_length_too_large`; shared lifecycle `early_response_moves_from_body_to_write`; monoio `body_limit_content_length_rejection` |
+| Slow header timeout | tokio-dst `dst_slowloris_header_timeout`; tokio-e2e `h1_adversarial::tcp_slow_header_timeout_closes_connection`; meguri `read_timed_out_uses_header_timeout_for_headers_state`; monoio `header_read_timeout` |
+| Slow body timeout | tokio-dst `dst_slowloris_body_timeout`; tokio-e2e `tcp_body_read_timeout_returns_400` (Content-Length), `h1_adversarial::tcp_slow_chunked_body_timeout_gets_408`; meguri `read_timed_out_uses_body_timeout_for_body_phase`; monoio `body_read_timeout` |
+| Shutdown during active request | tokio-e2e `tcp_graceful_drain_completes_inflight_request`, `tcp_graceful_shutdown_waits_for_drain_before_returning`, `h1_adversarial::tcp_shutdown_during_keep_alive_request_completes_then_closes`, `h1_adversarial::tcp_shutdown_closes_idle_keep_alive_connection_promptly` (**ignored: known bug**); multi `shutdown_drains_in_flight_requests_then_stops_accepting`; shared lifecycle `shutdown_scripts_can_drain_to_free`; monoio `graceful_shutdown_drains_connections` |
+
+#### Behaviour these tests pin
+
+- The server rejects framing errors in the request head or chunked body with
+  one `400` (or `413` for the body limit) and `connection: close`. It does
+  not dispatch the request and does not parse the bytes that follow.
+- A header read timeout closes the connection without a response. A body
+  read timeout sends `408`.
+- EOF in the middle of a request body closes the connection without a
+  response.
+- If a response body does not match its declared `Content-Length`, the
+  server closes the connection without writing that response. If a chunked
+  stream fails after its first bytes are sent, the server closes the
+  connection without the `0\r\n\r\n` terminator. The client then sees a
+  truncated body.
+- The server always replaces application-set `Transfer-Encoding` and
+  `Connection` headers with its own framing.
+- Chunked trailer fields are rejected (`400`). They are not ignored.
+
+#### Known gaps (ignored tests)
+
+- `tcp_http10_streaming_response_is_not_chunked`: a streaming response to an
+  HTTP/1.0 request is sent with `transfer-encoding: chunked`. HTTP/1.0 does
+  not define chunked encoding, so the response must be close-delimited
+  (RFC 9112 §6.1). To fix this, every backend needs a close-delimited body
+  mode.
+- `tcp_shutdown_closes_idle_keep_alive_connection_promptly`:
+  `ShutdownSignal` is a flag that the server checks only between requests.
+  An idle keep-alive connection that waits in `read_request_head` does not
+  see the shutdown. The server stops only after `header_read_timeout` or
+  `drain_timeout`.
+
+---
+
 ## First-Class Commands
 
 - `cargo test -p harrow-core`
