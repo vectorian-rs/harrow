@@ -2184,6 +2184,825 @@ mod ws_tests {
     }
 }
 
+// ============================================================================
+// Adversarial HTTP/1 wire tests (#86)
+//
+// Each test pins what the Tokio backend does on the wire for a hostile or
+// malformed exchange. See `docs/operations/verification.md` for the map from
+// issue #86 acceptance criteria to tests.
+// ============================================================================
+
+mod h1_adversarial {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    type Headers = Vec<(String, String)>;
+
+    /// Read until the server closes the connection (EOF or reset). Panics if
+    /// the server keeps the connection open for more than five seconds.
+    async fn read_until_close(stream: &mut TcpStream) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        let closed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => out.extend_from_slice(&buf[..n]),
+                }
+            }
+        })
+        .await;
+        assert!(
+            closed.is_ok(),
+            "server kept the connection open; read so far: {:?}",
+            String::from_utf8_lossy(&out)
+        );
+        out
+    }
+
+    /// Send raw bytes on a fresh connection and return everything the server
+    /// writes before closing it.
+    async fn raw_exchange(addr: SocketAddr, request: &[u8]) -> Vec<u8> {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(request).await.unwrap();
+        read_until_close(&mut stream).await
+    }
+
+    /// Parse one response from the front of `raw`. Returns `None` while the
+    /// response is incomplete. `has_body` is false for HEAD/204/304, whose
+    /// framing headers do not describe bytes on the wire.
+    fn try_parse_response(raw: &[u8], has_body: bool) -> Option<(u16, Headers, Vec<u8>, usize)> {
+        let head_end = raw.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+        let (status, headers, _) = parse_raw_http_response(&raw[..head_end]);
+        if !has_body {
+            return Some((status, headers, Vec::new(), head_end));
+        }
+        if let Some(len) = header_val(&headers, "content-length") {
+            let end = head_end + len.parse::<usize>().unwrap();
+            if raw.len() < end {
+                return None;
+            }
+            let body = raw[head_end..end].to_vec();
+            return Some((status, headers, body, end));
+        }
+        assert_eq!(
+            header_val(&headers, "transfer-encoding"),
+            Some("chunked"),
+            "response has a body but no framing: {:?}",
+            String::from_utf8_lossy(&raw[..head_end])
+        );
+        let mut pos = head_end;
+        let mut body = Vec::new();
+        loop {
+            let line_end = pos + raw[pos..].windows(2).position(|w| w == b"\r\n")?;
+            let size = usize::from_str_radix(std::str::from_utf8(&raw[pos..line_end]).unwrap(), 16)
+                .unwrap();
+            pos = line_end + 2;
+            if raw.len() < pos + size + 2 {
+                return None;
+            }
+            assert_eq!(&raw[pos + size..pos + size + 2], b"\r\n");
+            if size == 0 {
+                return Some((status, headers, body, pos + 2));
+            }
+            body.extend_from_slice(&raw[pos..pos + size]);
+            pos += size + 2;
+        }
+    }
+
+    /// Read exactly one response from a keep-alive connection, leaving any
+    /// later bytes in `pending`.
+    async fn read_one_response(
+        stream: &mut TcpStream,
+        pending: &mut Vec<u8>,
+        has_body: bool,
+    ) -> (u16, Headers, Vec<u8>) {
+        loop {
+            if let Some((status, headers, body, end)) = try_parse_response(pending, has_body) {
+                pending.drain(..end);
+                return (status, headers, body);
+            }
+            let mut buf = [0u8; 4096];
+            let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf))
+                .await
+                .expect("timed out waiting for a response")
+                .expect("read failed");
+            assert!(
+                n > 0,
+                "connection closed mid-response: {:?}",
+                String::from_utf8_lossy(pending)
+            );
+            pending.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    fn count_responses(raw: &[u8]) -> usize {
+        raw.windows(b"HTTP/1.1 ".len())
+            .filter(|w| *w == b"HTTP/1.1 ")
+            .count()
+    }
+
+    /// Assert the server answered with exactly one `status` response that
+    /// closes the connection.
+    fn assert_single_error(raw: &[u8], status: u16, context: &str) {
+        let (got, headers, _) = parse_raw_http_response(raw);
+        assert_eq!(
+            got,
+            status,
+            "{context}: unexpected response {:?}",
+            String::from_utf8_lossy(raw)
+        );
+        assert_eq!(
+            header_val(&headers, "connection"),
+            Some("close"),
+            "{context}"
+        );
+        assert_eq!(count_responses(raw), 1, "{context}: extra response on wire");
+    }
+
+    fn one_chunk_stream(data: &'static [u8]) -> Response {
+        Response::streaming(
+            StatusCode::OK,
+            futures_util::stream::iter([Ok(http_body::Frame::data(bytes::Bytes::from_static(
+                data,
+            )))]),
+        )
+    }
+
+    // -- Request parsing / smuggling ----------------------------------------
+
+    #[tokio::test]
+    async fn tcp_oversized_incomplete_headers_get_400_and_close() {
+        let addr = start_server(|| App::new().get("/", hello)).await;
+
+        // Exactly MAX_HEADER_BUF bytes with no end-of-headers marker.
+        let mut req = b"GET / HTTP/1.1\r\nHost: localhost\r\nx-large: ".to_vec();
+        req.resize(64 * 1024, b'a');
+        let raw = raw_exchange(addr, &req).await;
+
+        assert_single_error(&raw, 400, "incomplete oversized headers");
+        assert!(raw.ends_with(b"request headers too large"));
+    }
+
+    #[tokio::test]
+    async fn tcp_duplicate_identical_content_length_is_accepted() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        let raw = raw_exchange(
+            addr,
+            b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+        )
+        .await;
+
+        let (status, _, body) = parse_raw_http_response(&raw);
+        assert_eq!(status, 200);
+        assert_eq!(body, b"got 5 bytes");
+    }
+
+    #[tokio::test]
+    async fn tcp_conflicting_content_lengths_are_rejected_without_dispatch() {
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        let addr = start_server(|| {
+            App::new().post("/echo", |_req: Request| async {
+                HITS.fetch_add(1, Ordering::SeqCst);
+                Response::text("dispatched")
+            })
+        })
+        .await;
+
+        // If either length were honoured, the tail would parse as a second
+        // (smuggled) request on the same connection.
+        let raw = raw_exchange(
+            addr,
+            b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\nhelloGET /smuggled HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        )
+        .await;
+
+        assert_single_error(&raw, 400, "conflicting content-length");
+        assert_eq!(HITS.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn tcp_transfer_encoding_with_content_length_is_rejected() {
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        let addr = start_server(|| {
+            App::new().post("/echo", |_req: Request| async {
+                HITS.fetch_add(1, Ordering::SeqCst);
+                Response::text("dispatched")
+            })
+        })
+        .await;
+
+        for (name, req) in [
+            (
+                "CL then TE",
+                &b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: localhost\r\n\r\n"[..],
+            ),
+            (
+                "TE then CL",
+                b"POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            ),
+        ] {
+            let raw = raw_exchange(addr, req).await;
+            assert_single_error(&raw, 400, name);
+        }
+        assert_eq!(HITS.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn tcp_invalid_content_length_is_rejected() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        for value in [
+            "abc",
+            "+5",
+            "-1",
+            "5, 5",
+            "0x5",
+            "",
+            "99999999999999999999999",
+        ] {
+            let req = format!(
+                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: {value}\r\n\r\nhello"
+            );
+            let raw = raw_exchange(addr, req.as_bytes()).await;
+            assert_single_error(&raw, 400, &format!("content-length {value:?}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_invalid_or_unsupported_transfer_encoding_is_rejected() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        for te in [
+            "Transfer-Encoding: gzip\r\n",
+            "Transfer-Encoding: identity\r\n",
+            "Transfer-Encoding: gzip, chunked\r\n",
+            "Transfer-Encoding: chunked, gzip\r\n",
+            "Transfer-Encoding: chunked, \r\n",
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n",
+        ] {
+            let req = format!(
+                "POST /echo HTTP/1.1\r\nHost: localhost\r\n{te}\r\n5\r\nhello\r\n0\r\n\r\n"
+            );
+            let raw = raw_exchange(addr, req.as_bytes()).await;
+            assert_single_error(&raw, 400, te.trim_end());
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_http10_post_with_content_length_is_served_then_closed() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        let raw = raw_exchange(
+            addr,
+            b"POST /echo HTTP/1.0\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello",
+        )
+        .await;
+
+        let (status, headers, body) = parse_raw_http_response(&raw);
+        assert_eq!(status, 200);
+        assert_eq!(body, b"got 5 bytes");
+        assert_eq!(header_val(&headers, "connection"), Some("close"));
+    }
+
+    #[tokio::test]
+    async fn tcp_http10_body_without_content_length_or_with_chunked_is_rejected() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        for (name, req) in [
+            (
+                "POST without length",
+                &b"POST /echo HTTP/1.0\r\nHost: localhost\r\n\r\nhello"[..],
+            ),
+            (
+                "chunked on HTTP/1.0",
+                b"POST /echo HTTP/1.0\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+            ),
+        ] {
+            let raw = raw_exchange(addr, req).await;
+            assert_single_error(&raw, 400, name);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "bug #100: streaming responses to HTTP/1.0 clients use chunked transfer-encoding, which HTTP/1.0 does not define (RFC 9112 §6.1); they must be close-delimited"]
+    async fn tcp_http10_streaming_response_is_not_chunked() {
+        let addr = start_server(|| {
+            App::new().get("/stream", |_req: Request| async {
+                one_chunk_stream(b"hello")
+            })
+        })
+        .await;
+
+        let raw = raw_exchange(addr, b"GET /stream HTTP/1.0\r\nHost: localhost\r\n\r\n").await;
+
+        let (status, headers, body) = parse_raw_http_response(&raw);
+        assert_eq!(status, 200);
+        assert_eq!(header_val(&headers, "transfer-encoding"), None);
+        assert_eq!(body, b"hello");
+    }
+
+    // -- Chunked request bodies ---------------------------------------------
+
+    #[tokio::test]
+    async fn tcp_chunked_body_framing_errors_get_400() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        for (name, body) in [
+            ("bad CRLF after chunk data", &b"5\r\nhelloXX0\r\n\r\n"[..]),
+            ("chunk longer than its size", b"5\r\nhello!\r\n0\r\n\r\n"),
+            ("bad final CRLF", b"5\r\nhello\r\n0\r\nXX"),
+            (
+                "chunk size overflow",
+                b"10000000000000000\r\nx\r\n0\r\n\r\n",
+            ),
+            ("non-hex chunk size", b"zz\r\nhello\r\n0\r\n\r\n"),
+        ] {
+            let mut req =
+                b"POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    .to_vec();
+            req.extend_from_slice(body);
+            let raw = raw_exchange(addr, &req).await;
+            assert_single_error(&raw, 400, name);
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_eof_mid_chunk_closes_without_response() {
+        let addr = start_server(|| App::new().post("/echo", echo_body)).await;
+
+        for partial in [&b"5\r\nhel"[..], b"5\r\nhello\r\n", b"5\r\nhello\r\n0\r\n"] {
+            let mut stream = TcpStream::connect(addr).await.unwrap();
+            stream
+                .write_all(
+                    b"POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            stream.write_all(partial).await.unwrap();
+            stream.shutdown().await.unwrap();
+
+            let raw = read_until_close(&mut stream).await;
+            assert!(
+                raw.is_empty(),
+                "truncated chunked body {:?} must not produce a response: {:?}",
+                String::from_utf8_lossy(partial),
+                String::from_utf8_lossy(&raw)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_chunked_body_over_limit_across_chunks_gets_413() {
+        let addr = start_server_with_config(
+            || App::new().post("/echo", echo_body),
+            harrow_server_tokio::ServerConfig {
+                max_body_size: 10,
+                ..Default::default()
+            },
+        )
+        .await;
+
+        // No single chunk exceeds the limit; the running total does.
+        let raw = raw_exchange(
+            addr,
+            b"POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n5\r\nworld\r\n5\r\nagain\r\n0\r\n\r\n",
+        )
+        .await;
+
+        assert_single_error(&raw, 413, "chunked body over limit");
+    }
+
+    // -- Response writing ---------------------------------------------------
+
+    #[tokio::test]
+    async fn tcp_app_set_transfer_encoding_is_replaced_by_server_framing() {
+        let addr = start_server(|| {
+            App::new().get("/stream", |_req: Request| async {
+                one_chunk_stream(b"hello").header("transfer-encoding", "gzip")
+            })
+        })
+        .await;
+
+        let raw = raw_exchange(
+            addr,
+            b"GET /stream HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+
+        let (status, headers, body, end) = try_parse_response(&raw, true).unwrap();
+        assert_eq!(status, 200);
+        let te: Vec<_> = headers
+            .iter()
+            .filter(|(k, _)| k == "transfer-encoding")
+            .collect();
+        assert_eq!(te.len(), 1, "exactly one transfer-encoding: {headers:?}");
+        assert_eq!(te[0].1, "chunked");
+        assert_eq!(body, b"hello");
+        assert_eq!(end, raw.len(), "no bytes after the chunked terminator");
+    }
+
+    #[tokio::test]
+    async fn tcp_app_set_content_length_and_transfer_encoding_uses_content_length() {
+        let addr = start_server(|| {
+            App::new()
+                .get("/both", |_req: Request| async {
+                    Response::text("hello").header("transfer-encoding", "chunked")
+                })
+                .get("/hello", hello)
+        })
+        .await;
+
+        // Pipeline a second request: if the response framing were ambiguous
+        // the second response would be misread.
+        let raw = raw_exchange(
+            addr,
+            b"GET /both HTTP/1.1\r\nHost: localhost\r\n\r\nGET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+
+        let (status, headers, body, end) = try_parse_response(&raw, true).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(header_val(&headers, "transfer-encoding"), None);
+        assert_eq!(header_val(&headers, "content-length"), Some("5"));
+        assert_eq!(body, b"hello");
+
+        let (status, _, body, end2) = try_parse_response(&raw[end..], true).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, b"hello");
+        assert_eq!(end + end2, raw.len());
+    }
+
+    #[tokio::test]
+    async fn tcp_wrong_fixed_content_length_closes_without_writing_a_response() {
+        let addr = start_server(|| {
+            App::new()
+                .get("/declared-short", |_req: Request| async {
+                    Response::text("hello").header("content-length", "4")
+                })
+                .get("/declared-long", |_req: Request| async {
+                    Response::text("hello").header("content-length", "10")
+                })
+                .get("/stream-overrun", |_req: Request| async {
+                    one_chunk_stream(b"hello").header("content-length", "3")
+                })
+                .get("/stream-underrun", |_req: Request| async {
+                    one_chunk_stream(b"hello").header("content-length", "10")
+                })
+        })
+        .await;
+
+        // A mismatched length must never reach the wire: a client (or proxy)
+        // would desynchronise on the next response.
+        for path in [
+            "/declared-short",
+            "/declared-long",
+            "/stream-overrun",
+            "/stream-underrun",
+        ] {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            let raw = raw_exchange(addr, req.as_bytes()).await;
+            assert!(
+                raw.is_empty(),
+                "{path}: expected connection close without a response, got {:?}",
+                String::from_utf8_lossy(&raw)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_bodyless_responses_keep_pipelined_connection_in_sync() {
+        let addr = start_server(|| {
+            App::new()
+                .get("/hello", hello)
+                .get("/stream", |_req: Request| async {
+                    one_chunk_stream(b"hidden")
+                })
+                .get("/no-content", |_req: Request| async {
+                    Response::text("hidden").status(204)
+                })
+                .get("/not-modified", |_req: Request| async {
+                    Response::text("hidden").status(304)
+                })
+        })
+        .await;
+
+        let raw = raw_exchange(
+            addr,
+            b"HEAD /hello HTTP/1.1\r\nHost: localhost\r\n\r\n\
+              HEAD /stream HTTP/1.1\r\nHost: localhost\r\n\r\n\
+              GET /no-content HTTP/1.1\r\nHost: localhost\r\n\r\n\
+              GET /not-modified HTTP/1.1\r\nHost: localhost\r\n\r\n\
+              GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+
+        let mut rest = &raw[..];
+        for (name, expected) in [
+            ("HEAD fixed", 200),
+            ("HEAD streaming", 200),
+            ("204", 204),
+            ("304", 304),
+        ] {
+            let (status, headers, _, end) = try_parse_response(rest, false).unwrap();
+            assert_eq!(status, expected, "{name}");
+            assert_eq!(header_val(&headers, "transfer-encoding"), None, "{name}");
+            rest = &rest[end..];
+            assert!(
+                rest.starts_with(b"HTTP/1.1 "),
+                "{name}: body bytes leaked onto the wire: {:?}",
+                String::from_utf8_lossy(rest)
+            );
+        }
+        let (status, _, body, end) = try_parse_response(rest, true).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, b"hello");
+        assert_eq!(end, rest.len());
+    }
+
+    #[tokio::test]
+    async fn tcp_streaming_response_error_mid_body_truncates_and_closes() {
+        let addr = start_server(|| {
+            App::new().get("/fail", |_req: Request| async {
+                let stream = futures_util::stream::iter([
+                    Ok(http_body::Frame::data(bytes::Bytes::from_static(b"first"))),
+                    Err(Box::<dyn std::error::Error + Send + Sync>::from("boom")),
+                ]);
+                Response::streaming(StatusCode::OK, stream)
+            })
+        })
+        .await;
+
+        // Keep-alive request: the server must still close, because the
+        // response cannot be completed.
+        let raw = raw_exchange(addr, b"GET /fail HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+        assert!(text.contains("5\r\nfirst\r\n"), "{text}");
+        assert!(
+            try_parse_response(&raw, true).is_none(),
+            "a failed stream must not be terminated like a complete body: {text}"
+        );
+    }
+
+    // -- Lifecycle ----------------------------------------------------------
+
+    #[tokio::test]
+    async fn tcp_keep_alive_reuses_connection_for_sequential_requests() {
+        let addr = start_server(|| App::new().get("/hello", hello).post("/echo", echo_body)).await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut pending = Vec::new();
+        for i in 0..3 {
+            stream
+                .write_all(b"GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .unwrap();
+            let (status, headers, body) = read_one_response(&mut stream, &mut pending, true).await;
+            assert_eq!(status, 200, "get {i}");
+            assert_eq!(body, b"hello", "get {i}");
+            assert_eq!(header_val(&headers, "connection"), None, "get {i}");
+
+            stream
+                .write_all(
+                    b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 3\r\n\r\nabc",
+                )
+                .await
+                .unwrap();
+            let (status, _, body) = read_one_response(&mut stream, &mut pending, true).await;
+            assert_eq!(status, 200, "post {i}");
+            assert_eq!(body, b"got 3 bytes", "post {i}");
+        }
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tcp_pipelined_requests_after_bodies_are_parsed_from_buffer() {
+        let addr = start_server(|| App::new().get("/hello", hello).post("/echo", echo_body)).await;
+
+        // Three requests in one write: the body boundary of each must be
+        // exact for the next request line to parse.
+        let raw = raw_exchange(
+            addr,
+            b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello\
+              POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n4\r\ndefg\r\n0\r\n\r\n\
+              GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+
+        let mut rest = &raw[..];
+        for expected in [&b"got 5 bytes"[..], b"got 7 bytes", b"hello"] {
+            let (status, _, body, end) = try_parse_response(rest, true).unwrap();
+            assert_eq!(status, 200);
+            assert_eq!(body, expected);
+            rest = &rest[end..];
+        }
+        assert!(rest.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tcp_oversized_content_length_gets_413_before_body_is_sent() {
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        let addr = start_server_with_config(
+            || {
+                App::new().post("/echo", |_req: Request| async {
+                    HITS.fetch_add(1, Ordering::SeqCst);
+                    Response::text("dispatched")
+                })
+            },
+            harrow_server_tokio::ServerConfig {
+                max_body_size: 16,
+                ..Default::default()
+            },
+        )
+        .await;
+
+        // Only the head is sent; the server must answer without waiting for
+        // (or reading) a body it will never accept.
+        let raw = raw_exchange(
+            addr,
+            b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000000\r\n\r\n",
+        )
+        .await;
+
+        assert_single_error(&raw, 413, "oversized content-length");
+        assert_eq!(HITS.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn tcp_early_response_without_reading_body_closes_connection() {
+        let addr = start_server(|| {
+            App::new().post("/early", |_req: Request| async { Response::text("early") })
+        })
+        .await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        // Keep-alive request whose body is still in flight when the handler
+        // answers. The unread body makes the connection unusable for reuse.
+        stream
+            .write_all(
+                b"POST /early HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nonly-part",
+            )
+            .await
+            .unwrap();
+        let mut pending = Vec::new();
+        let (status, headers, body) = read_one_response(&mut stream, &mut pending, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(body, b"early");
+        assert_eq!(header_val(&headers, "connection"), Some("close"));
+
+        // Finish the body; the server drains it and then closes.
+        stream.write_all(&[b'x'; 91]).await.unwrap();
+        let rest = read_until_close(&mut stream).await;
+        assert!(
+            pending.is_empty() && rest.is_empty(),
+            "no second response expected: {:?}",
+            String::from_utf8_lossy(&rest)
+        );
+    }
+
+    #[tokio::test]
+    async fn tcp_slow_header_timeout_closes_connection() {
+        let addr = start_server_with_config(
+            || App::new().get("/", hello),
+            harrow_server_tokio::ServerConfig {
+                header_read_timeout: Some(Duration::from_millis(200)),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let started = std::time::Instant::now();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+            .await
+            .unwrap();
+
+        let raw = read_until_close(&mut stream).await;
+        let elapsed = started.elapsed();
+        assert!(
+            raw.is_empty(),
+            "header timeout closes silently: {:?}",
+            String::from_utf8_lossy(&raw)
+        );
+        assert!(
+            elapsed >= Duration::from_millis(150) && elapsed < Duration::from_secs(2),
+            "closed after {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tcp_slow_chunked_body_timeout_gets_408() {
+        let addr = start_server_with_config(
+            || App::new().post("/echo", echo_body),
+            harrow_server_tokio::ServerConfig {
+                body_read_timeout: Some(Duration::from_millis(200)),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel",
+            )
+            .await
+            .unwrap();
+
+        let raw = read_until_close(&mut stream).await;
+        assert_single_error(&raw, 408, "stalled chunked body");
+    }
+
+    #[tokio::test]
+    async fn tcp_shutdown_during_keep_alive_request_completes_then_closes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let server = spawn_server_thread(
+            || App::new().get("/slow", slow_handler),
+            addr,
+            rx,
+            harrow_server_tokio::ServerConfig {
+                drain_timeout: Duration::from_secs(5),
+                ..Default::default()
+            },
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = tx.send(());
+
+        // The in-flight keep-alive request completes, then the connection is
+        // closed instead of waiting for another request.
+        let mut pending = Vec::new();
+        let (status, _, body) = read_one_response(&mut stream, &mut pending, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(body, b"slow");
+        let rest = read_until_close(&mut stream).await;
+        assert!(pending.is_empty() && rest.is_empty());
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::task::spawn_blocking(move || server.join().unwrap()),
+        )
+        .await
+        .expect("server should stop once the in-flight request finished")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "bug #98: ShutdownSignal is a polled flag, so an idle keep-alive connection blocked in read_request_head is not woken; shutdown waits for header_read_timeout or drain_timeout"]
+    async fn tcp_shutdown_closes_idle_keep_alive_connection_promptly() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let server = spawn_server_thread(
+            || App::new().get("/hello", hello),
+            addr,
+            rx,
+            harrow_server_tokio::ServerConfig {
+                header_read_timeout: Some(Duration::from_secs(10)),
+                drain_timeout: Duration::from_secs(10),
+                ..Default::default()
+            },
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut pending = Vec::new();
+        let (status, _, _) = read_one_response(&mut stream, &mut pending, true).await;
+        assert_eq!(status, 200);
+
+        // The connection is now idle between requests.
+        let _ = tx.send(());
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::task::spawn_blocking(move || server.join().unwrap()),
+        )
+        .await
+        .expect("shutdown should not wait for idle keep-alive connections")
+        .unwrap();
+    }
+} // mod h1_adversarial
+
 async fn raw_bytes_request(
     addr: SocketAddr,
     request: &[u8],

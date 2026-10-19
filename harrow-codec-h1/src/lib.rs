@@ -134,8 +134,15 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
         if name == CONTENT_LENGTH {
             let s = std::str::from_utf8(h.value)
                 .map_err(|_| CodecError::Invalid("invalid content-length encoding".into()))?;
+            // RFC 9110 §8.6: Content-Length = 1*DIGIT. `u64::from_str` also
+            // accepts a leading `+`, and `str::trim` strips Unicode
+            // whitespace; both would let us agree on a length that an
+            // upstream hop rejects or reads differently.
+            let s = trim_ows(s);
+            if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(CodecError::Invalid("invalid content-length value".into()));
+            }
             let len: u64 = s
-                .trim()
                 .parse()
                 .map_err(|_| CodecError::Invalid("invalid content-length value".into()))?;
             if content_length.is_some_and(|prev| prev != len) {
@@ -247,6 +254,12 @@ fn should_keep_alive(version: Version, conn_close: bool, conn_keep_alive: bool) 
     version == Version::HTTP_11
 }
 
+/// Trim optional whitespace (SP / HTAB, RFC 9110 §5.6.3) only — never the
+/// wider Unicode whitespace set `str::trim` strips.
+fn trim_ows(s: &str) -> &str {
+    s.trim_matches(|c| c == ' ' || c == '\t')
+}
+
 fn parse_transfer_encoding(value: &[u8], version: Version) -> Result<bool, CodecError> {
     if version != Version::HTTP_11 {
         return Err(CodecError::Invalid(
@@ -257,7 +270,7 @@ fn parse_transfer_encoding(value: &[u8], version: Version) -> Result<bool, Codec
     let value = std::str::from_utf8(value)
         .map_err(|_| CodecError::Invalid("invalid transfer-encoding encoding".into()))?;
 
-    let mut tokens = value.split(',').map(str::trim);
+    let mut tokens = value.split(',').map(trim_ows);
     match (tokens.next(), tokens.next()) {
         (Some(token), None) if token.eq_ignore_ascii_case("chunked") => Ok(true),
         (Some(""), _) | (None, _) => {
@@ -763,6 +776,50 @@ mod tests {
     }
 
     #[test]
+    fn reject_non_digit_content_length_forms() {
+        for value in [
+            &b"+5"[..],
+            b"-5",
+            b"",
+            b"0x5",
+            b"5,5",
+            b"5 5",
+            b"5\xc2\xa0",
+            b"\xc2\xa05",
+            b"99999999999999999999999",
+        ] {
+            let mut req = b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: ".to_vec();
+            req.extend_from_slice(value);
+            req.extend_from_slice(b"\r\n\r\n");
+            assert!(
+                matches!(try_parse_request(&req), Err(CodecError::Invalid(_))),
+                "content-length {:?} should be rejected",
+                String::from_utf8_lossy(value)
+            );
+        }
+    }
+
+    #[test]
+    fn content_length_allows_surrounding_ows() {
+        let req = b"POST /data HTTP/1.1\r\nHost: localhost\r\nContent-Length: \t5 \r\n\r\nhello";
+        assert_eq!(try_parse_request(req).unwrap().content_length, Some(5));
+    }
+
+    #[test]
+    fn reject_transfer_encoding_with_non_ows_whitespace() {
+        // obs-text is a legal header value byte, so the request line/header
+        // syntax itself is fine; only the framing interpretation must fail.
+        try_parse_request(b"GET / HTTP/1.1\r\nHost: localhost\r\nX-Note: \xc2\xa0chunked\r\n\r\n")
+            .unwrap();
+        let req =
+            b"POST /data HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: \xc2\xa0chunked\r\n\r\n";
+        assert!(matches!(
+            try_parse_request(req),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
     fn reject_conflicting_content_lengths() {
         let req = b"POST /data HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\n";
         assert!(matches!(
@@ -1167,6 +1224,101 @@ mod tests {
             PayloadItem::Chunk(c) => assert_eq!(c.as_ref(), b"hello"),
             _ => panic!("expected Chunk"),
         }
+    }
+
+    // --- PayloadDecoder: adversarial chunked framing (#86) ---
+
+    /// Drive the stateful chunked decoder over a complete input.
+    fn decode_stateful(input: &[u8], max_body: Option<usize>) -> Result<Vec<u8>, CodecError> {
+        let mut buf = BytesMut::from(input);
+        let mut dec = PayloadDecoder::chunked();
+        let mut body = Vec::new();
+        loop {
+            match dec.decode(&mut buf, max_body)? {
+                Some(PayloadItem::Chunk(c)) => body.extend_from_slice(&c),
+                Some(PayloadItem::Eof) => return Ok(body),
+                None => return Err(CodecError::Incomplete),
+            }
+        }
+    }
+
+    #[test]
+    fn payload_chunked_rejects_bad_delimiter_after_chunk_data() {
+        for input in [
+            &b"5\r\nhelloXX0\r\n\r\n"[..],
+            b"5\r\nhello\rX0\r\n\r\n",
+            b"5\r\nhello\n0\r\n\r\n",
+            // Chunk longer than its declared size.
+            b"5\r\nhello!\r\n0\r\n\r\n",
+        ] {
+            assert!(
+                matches!(decode_stateful(input, None), Err(CodecError::Invalid(_))),
+                "{:?} should be rejected",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn payload_chunked_rejects_bad_final_crlf() {
+        for input in [
+            &b"5\r\nhello\r\n0\r\nXX"[..],
+            b"5\r\nhello\r\n0\r\n\rX",
+            b"5\r\nhello\r\n0\r\n\n",
+            // Trailer fields are not supported; they must not be skipped
+            // silently or mistaken for the next request.
+            b"5\r\nhello\r\n0\r\nX-Trailer: a\r\n\r\n",
+        ] {
+            assert!(
+                matches!(decode_stateful(input, None), Err(CodecError::Invalid(_))),
+                "{:?} should be rejected",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn payload_chunked_rejects_chunk_size_overflow() {
+        // 17 hex digits do not fit in a u64.
+        let err = decode_stateful(b"10000000000000000\r\nx\r\n0\r\n\r\n", None).unwrap_err();
+        assert!(matches!(err, CodecError::Invalid(ref m) if m.contains("overflow")));
+        // The largest u64 size parses but cannot exceed the body limit.
+        assert!(matches!(
+            decode_stateful(b"ffffffffffffffff\r\nxx", Some(1)),
+            Err(CodecError::BodyTooLarge)
+        ));
+    }
+
+    #[test]
+    fn payload_chunked_eof_mid_chunk_is_incomplete_not_eof() {
+        for input in [
+            &b"5\r\nhel"[..],
+            b"5\r\nhello",
+            b"5\r\nhello\r\n",
+            b"5\r\nhello\r\n0\r\n",
+            b"5",
+        ] {
+            assert!(
+                matches!(decode_stateful(input, None), Err(CodecError::Incomplete)),
+                "{:?} must not decode as a complete body",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn payload_chunked_preserves_pipelined_bytes_after_terminator() {
+        let mut buf = BytesMut::from(&b"5\r\nhello\r\n0\r\n\r\nGET /next HTTP/1.1\r\n\r\n"[..]);
+        let mut dec = PayloadDecoder::chunked();
+        assert!(matches!(
+            dec.decode(&mut buf, None).unwrap(),
+            Some(PayloadItem::Chunk(_))
+        ));
+        assert!(matches!(
+            dec.decode(&mut buf, None).unwrap(),
+            Some(PayloadItem::Eof)
+        ));
+        assert_eq!(buf.as_ref(), b"GET /next HTTP/1.1\r\n\r\n");
     }
 
     #[test]
