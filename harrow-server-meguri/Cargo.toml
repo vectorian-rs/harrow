@@ -1,6 +1,8 @@
 [package]
 name = "harrow-server-meguri"
 version.workspace = true
+# Depends on `meguri`, which is unpublished (the crates.io name is taken).
+publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

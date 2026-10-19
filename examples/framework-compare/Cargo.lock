@@ -722,7 +722,7 @@ checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "harrow"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "harrow-core",
  "harrow-server-tokio",
@@ -730,18 +730,17 @@ dependencies = [
 
 [[package]]
 name = "harrow-codec-h1"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "harrow-io",
  "http",
  "httparse",
- "memchr",
 ]
 
 [[package]]
 name = "harrow-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -758,14 +757,14 @@ dependencies = [
 
 [[package]]
 name = "harrow-io"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
 ]
 
 [[package]]
 name = "harrow-serde"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "serde",
@@ -774,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "harrow-codec-h1",
@@ -786,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "harrow-server-tokio"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "futures-util",
