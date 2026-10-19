@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-19
+
 ### Security
 - HTTP/1 codec: a chunk-size line without hex digits (`\r\n`, `;ext\r\n`, ` \r\n`) was read as size 0, ending the body early and letting the following bytes be parsed as a new request on a keep-alive connection. Every chunk-size must now start with a hex digit (RFC 9112 §7.1).
 - HTTP/1 codec: `Content-Length` accepted a leading `+` (`+5`), and `Content-Length` / `Transfer-Encoding` values padded with Unicode whitespace (e.g. U+00A0) were trimmed and accepted. Both are now rejected: `Content-Length` must be `1*DIGIT`, and only spaces and tabs are trimmed. An upstream proxy could read such values differently (request smuggling).

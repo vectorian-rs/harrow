@@ -1,6 +1,8 @@
 [package]
 name = "harrow-bench"
 version.workspace = true
+# Benchmark tooling, not a library.
+publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
