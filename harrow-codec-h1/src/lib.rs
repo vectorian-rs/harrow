@@ -569,55 +569,28 @@ impl ChunkedState {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy stateless decoder (kept for backward compatibility)
+// One-shot chunked decoding
 // ---------------------------------------------------------------------------
 
-/// Decode chunked transfer-encoding in a single pass.
+/// Decode a complete chunked body held in one buffer.
 ///
-/// Prefer [`PayloadDecoder::chunked`] for incremental decoding.
+/// Returns `Ok(None)` if `buf` ends before the body does, or
+/// `Ok(Some((body, consumed)))` with the decoded body and the number of
+/// bytes of `buf` it used. Exactly as strict as [`PayloadDecoder`], which
+/// it drives; prefer that for incremental decoding.
 pub fn decode_chunked_with_limit(
     buf: &[u8],
     max_body: Option<usize>,
 ) -> Result<Option<(Bytes, usize)>, CodecError> {
+    let mut decoder = PayloadDecoder::chunked();
+    let mut src = BytesMut::from(buf);
     let mut decoded = BytesMut::new();
-    let mut pos = 0;
-
     loop {
-        let remaining = &buf[pos..];
-        let crlf_pos = match find_crlf(remaining) {
-            Some(p) => p,
+        match decoder.decode(&mut src, max_body)? {
+            Some(PayloadItem::Chunk(chunk)) => decoded.extend_from_slice(&chunk),
+            Some(PayloadItem::Eof) => return Ok(Some((decoded.freeze(), buf.len() - src.len()))),
             None => return Ok(None),
-        };
-
-        let size_str = std::str::from_utf8(&remaining[..crlf_pos])
-            .map_err(|_| CodecError::Invalid("invalid chunk size".into()))?;
-        let size_str = size_str.trim();
-        let chunk_size_u64 = u64::from_str_radix(size_str, 16)
-            .map_err(|_| CodecError::Invalid(format!("invalid chunk size: {size_str}")))?;
-        let chunk_size = usize::try_from(chunk_size_u64)
-            .map_err(|_| CodecError::Invalid("chunk size too large".into()))?;
-
-        pos += crlf_pos + 2;
-
-        if chunk_size == 0 {
-            if buf.len() < pos + 2 {
-                return Ok(None);
-            }
-            pos += 2;
-            return Ok(Some((decoded.freeze(), pos)));
         }
-
-        let needed = pos.saturating_add(chunk_size).saturating_add(2);
-        if buf.len() < needed {
-            return Ok(None);
-        }
-
-        if max_body.is_some_and(|limit| decoded.len().saturating_add(chunk_size) > limit) {
-            return Err(CodecError::BodyTooLarge);
-        }
-
-        decoded.extend_from_slice(&buf[pos..pos + chunk_size]);
-        pos += chunk_size + 2;
     }
 }
 
@@ -699,18 +672,6 @@ pub fn encode_chunk(data: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(data.len() + 20);
     encode_chunk_into(data, &mut buf);
     buf
-}
-
-fn find_crlf(buf: &[u8]) -> Option<usize> {
-    let mut start = 0;
-    while start < buf.len() {
-        let abs = start + memchr::memchr(b'\r', &buf[start..])?;
-        if abs + 1 < buf.len() && buf[abs + 1] == b'\n' {
-            return Some(abs);
-        }
-        start = abs + 1;
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,6 +1135,83 @@ mod tests {
     }
 
     #[test]
+    fn one_shot_decoder_rejects_bad_delimiters_after_chunk_data() {
+        // The old one-shot decoder skipped two bytes here without looking.
+        for input in [
+            &b"5\r\nhelloXY0\r\n\r\n"[..],
+            b"5\r\nhello\n\r0\r\n\r\n",
+            b"5\r\nhello\r0\r\n\r\n",
+        ] {
+            assert!(
+                matches!(
+                    decode_chunked_with_limit(input, None),
+                    Err(CodecError::Invalid(_))
+                ),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn one_shot_decoder_validates_the_final_crlf() {
+        assert!(matches!(
+            decode_chunked_with_limit(b"5\r\nhello\r\n0\r\nXY", None),
+            Err(CodecError::Invalid(_))
+        ));
+        // Trailer fields are not supported (same as PayloadDecoder).
+        assert!(matches!(
+            decode_chunked_with_limit(b"5\r\nhello\r\n0\r\nX-T: 1\r\n\r\n", None),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn one_shot_decoder_accepts_chunk_extensions() {
+        let input = b"5;a=b\r\nhello\r\n0;c\r\n\r\n";
+        let (body, used) = decode_chunked_with_limit(input, None).unwrap().unwrap();
+        assert_eq!(&body[..], b"hello");
+        assert_eq!(used, input.len());
+    }
+
+    #[test]
+    fn one_shot_decoder_reports_bytes_used_before_trailing_data() {
+        let input = b"3\r\nabc\r\n0\r\n\r\nGET / HTTP/1.1\r\n";
+        let (body, used) = decode_chunked_with_limit(input, None).unwrap().unwrap();
+        assert_eq!(&body[..], b"abc");
+        assert_eq!(&input[used..], b"GET / HTTP/1.1\r\n");
+    }
+
+    #[test]
+    fn one_shot_decoder_needs_more_data_mid_chunk_and_before_final_crlf() {
+        for input in [
+            &b"a\r\nhel"[..],
+            b"5\r\nhello\r",
+            b"5\r\nhello\r\n0\r\n",
+            b"5\r\nhello\r\n0\r\n\r",
+        ] {
+            assert!(
+                matches!(decode_chunked_with_limit(input, None), Ok(None)),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn one_shot_decoder_enforces_the_limit_across_chunks() {
+        assert!(matches!(
+            decode_chunked_with_limit(b"3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n", Some(5)),
+            Err(CodecError::BodyTooLarge)
+        ));
+        assert!(
+            decode_chunked_with_limit(b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n", Some(5))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn decode_chunked_complete() {
         let data = b"5\r\nhello\r\n0\r\n\r\n";
         let result = decode_chunked_with_limit(data, None).unwrap().unwrap();
@@ -1228,15 +1266,6 @@ mod tests {
     #[test]
     fn encode_chunk_basic() {
         assert_eq!(encode_chunk(b"hello"), b"5\r\nhello\r\n");
-    }
-
-    #[test]
-    fn find_crlf_basic() {
-        assert_eq!(find_crlf(b"hello\r\nworld"), Some(5));
-        assert_eq!(find_crlf(b"\r\n"), Some(0));
-        assert_eq!(find_crlf(b"no crlf here"), None);
-        assert_eq!(find_crlf(b"just\r no lf"), None);
-        assert_eq!(find_crlf(b""), None);
     }
 }
 

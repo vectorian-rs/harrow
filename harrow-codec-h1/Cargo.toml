@@ -12,7 +12,6 @@ harrow-io = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 httparse = { workspace = true }
-memchr = "2"
 
 [dev-dependencies]
 proptest = { workspace = true }
