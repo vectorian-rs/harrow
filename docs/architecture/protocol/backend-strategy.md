@@ -141,6 +141,22 @@ Tokio Hyper backend with at least:
 - benchmark profile alongside current custom Tokio, Monoio, Meguri, Tako, and
   other baselines.
 
+### Prototype Status (#88)
+
+| Criterion | Status |
+| --- | --- |
+| App/router/middleware dispatch, HTTP/1 via Hyper | Done |
+| HTTP/2 path | Planned through Hyper/h2 (`auto` connection builder), not wired |
+| Thread-per-core: per-worker thread, `current_thread` runtime, `LocalSet`, `SO_REUSEPORT` | Done |
+| CPU affinity | Deferred. Pinning helps only when the server owns the machine; in shared hosts and containers a pinned worker cannot leave a busy core, and every process pins from core 0. Tako ships it off by default for the same reason. Add it if a measured run shows a gain on a dedicated host. |
+| Connection limit, header-read timeout, connection lifetime, drain timeout | Done (same `ServerConfig` as custom H1) |
+| Graceful shutdown | Single runtime: `serve_with_shutdown`. Multi-worker: no external handle yet (custom H1 has `start` / `ServerHandle`) |
+| Body limits | Harrow's `max_body_size` on the app; Hyper enforces framing |
+| Observability | Same `tracing` events as the other backends; no Hyper-specific metrics |
+| TLS/ALPN | Not in-process, like every Harrow backend; terminate at a proxy |
+| Benchmark entries | Custom H1 (`harrow-tokio-*`), Hyper thread-per-core (`harrow-tokio-hyper-*`), Monoio, Meguri, Tako default and thread-per-core (`tako-tokio-pt-*`). The Hyper multithread baseline is `axum-tokio-*`: `axum::serve` is Hyper on Tokio's work-stealing runtime. |
+| Measured results and 1.0 recommendation | Pending a remote run of `framework-comparison`; feeds the decision gate below (#89) |
+
 ## Decision Gate
 
 After the prototype exists, compare:
