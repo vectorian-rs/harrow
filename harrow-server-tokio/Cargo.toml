@@ -34,6 +34,8 @@ pin-project-lite = { workspace = true, optional = true }
 tokio-tungstenite = { version = "0.29", optional = true }
 
 [dev-dependencies]
+# Record lifecycle traces in tests (tests/lifecycle_traces.rs).
+harrow-server = { workspace = true, features = ["lifecycle-trace"] }
 harrow-core = { workspace = true }
 harrow-middleware = { workspace = true, features = ["o11y", "body-limit", "rate-limit", "session", "catch-panic"] }
 harrow-o11y = { workspace = true }

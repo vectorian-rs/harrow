@@ -127,9 +127,11 @@ WriteClose(i) ==
     /\ free_slots' = free_slots \cup {i}
     /\ UNCHANGED shutdown
 
-(* Header parse/body-limit error: write error response then close. *)
+(* Error response decided while reading headers (parse error, Content-Length
+   over the limit) or the body (bad chunk framing, body over the limit, body
+   read timeout): write it, then close. *)
 WriteErrorResponse(i) ==
-    /\ conns[i] = "Headers"
+    /\ conns[i] \in {"Headers", "Body"}
     /\ pending_io[i] = "Recv"
     /\ conns' = [conns EXCEPT ![i] = "Writing"]
     /\ pending_io' = [pending_io EXCEPT ![i] = "Write"]
