@@ -36,6 +36,10 @@ pub(crate) enum ProtocolError {
     #[error("body too large")]
     BodyTooLarge,
 
+    /// The request was rejected with a specific HTTP error response.
+    #[error("request rejected: {}", .0.body())]
+    Rejected(harrow_server::h1::ErrorResponse),
+
     #[error("stream closed")]
     StreamClosed,
 }

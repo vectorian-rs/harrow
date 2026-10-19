@@ -49,6 +49,9 @@ pub enum CodecError {
     Incomplete,
     HeadersTooLarge,
     BodyTooLarge,
+    /// The request carries an `Expect` member other than `100-continue`
+    /// (RFC 9110 §10.1.1); answer `417 Expectation Failed`.
+    ExpectationFailed,
     Invalid(String),
 }
 
@@ -58,6 +61,7 @@ impl std::fmt::Display for CodecError {
             CodecError::Incomplete => write!(f, "incomplete HTTP request"),
             CodecError::HeadersTooLarge => write!(f, "request headers too large"),
             CodecError::BodyTooLarge => write!(f, "body too large"),
+            CodecError::ExpectationFailed => write!(f, "unsupported expectation"),
             CodecError::Invalid(msg) => write!(f, "invalid HTTP request: {msg}"),
         }
     }
@@ -160,17 +164,20 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
                     }
                 }
             }
-        } else if name == EXPECT
-            && let Ok(s) = std::str::from_utf8(h.value)
-            && s.trim().eq_ignore_ascii_case("100-continue")
-        {
-            expect_continue = true;
+        } else if name == EXPECT {
+            expect_continue |= parse_expect(h.value)?;
         }
 
         headers.append(name, value);
     }
 
     let keep_alive = should_keep_alive(version, conn_close, conn_keep_alive);
+
+    // RFC 9110 §10.1.1: a server MUST ignore a 100-continue expectation in an
+    // HTTP/1.0 request (1.0 clients do not understand the interim response).
+    if version == Version::HTTP_10 {
+        expect_continue = false;
+    }
 
     // RFC 9110 §6.3: reject any request with both Content-Length and
     // Transfer-Encoding, not just chunked. Different hops may disagree
@@ -203,6 +210,31 @@ pub fn try_parse_request(buf: &[u8]) -> Result<ParsedRequest, CodecError> {
         keep_alive,
         expect_continue,
     })
+}
+
+/// Parse one `Expect` field value (RFC 9110 §10.1.1): a comma-separated list
+/// whose only supported member is `100-continue` (case-insensitive). Empty
+/// list elements are ignored (§5.6.1). Returns whether `100-continue` was
+/// present.
+fn parse_expect(value: &[u8]) -> Result<bool, CodecError> {
+    if !value
+        .iter()
+        .all(|&b| b == b' ' || b == b'\t' || b.is_ascii_graphic())
+    {
+        return Err(CodecError::Invalid("invalid expect header value".into()));
+    }
+    // Checked above: visible ASCII and whitespace only.
+    let value = std::str::from_utf8(value).expect("ascii");
+
+    let mut expect_continue = false;
+    for member in value.split(',').map(str::trim).filter(|m| !m.is_empty()) {
+        if member.eq_ignore_ascii_case("100-continue") {
+            expect_continue = true;
+        } else {
+            return Err(CodecError::ExpectationFailed);
+        }
+    }
+    Ok(expect_continue)
 }
 
 fn should_keep_alive(version: Version, conn_close: bool, conn_keep_alive: bool) -> bool {
@@ -832,6 +864,75 @@ mod tests {
         let parsed = try_parse_request(req).unwrap();
         assert!(parsed.expect_continue);
         assert_eq!(parsed.content_length, Some(1024));
+    }
+
+    fn parse_with_expect(
+        version: &str,
+        expect_lines: &[&[u8]],
+    ) -> Result<ParsedRequest, CodecError> {
+        let mut req = format!("POST /upload {version}\r\nHost: localhost\r\nContent-Length: 4\r\n")
+            .into_bytes();
+        for line in expect_lines {
+            req.extend_from_slice(b"Expect: ");
+            req.extend_from_slice(line);
+            req.extend_from_slice(b"\r\n");
+        }
+        req.extend_from_slice(b"\r\n");
+        try_parse_request(&req)
+    }
+
+    #[test]
+    fn expect_100_continue_is_case_and_whitespace_insensitive() {
+        for value in [
+            &b"100-Continue"[..],
+            b"  100-CONTINUE\t",
+            b"100-continue, 100-continue",
+            b", 100-continue,",
+        ] {
+            let parsed = parse_with_expect("HTTP/1.1", &[value]).expect("accepted");
+            assert!(parsed.expect_continue, "{}", String::from_utf8_lossy(value));
+        }
+    }
+
+    #[test]
+    fn expect_with_only_empty_elements_is_ignored() {
+        let parsed = parse_with_expect("HTTP/1.1", &[b" , "]).expect("accepted");
+        assert!(!parsed.expect_continue);
+    }
+
+    #[test]
+    fn unsupported_expectations_fail_with_417() {
+        for lines in [
+            &[&b"foo"[..]][..],
+            &[b"100-continue, foo"],
+            &[b"100-continue=1"],
+            &[b"100-continue", b"bar"],
+        ] {
+            assert!(
+                matches!(
+                    parse_with_expect("HTTP/1.1", lines),
+                    Err(CodecError::ExpectationFailed)
+                ),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn expect_with_non_ascii_bytes_is_invalid() {
+        assert!(matches!(
+            parse_with_expect("HTTP/1.1", &[b"100-continue\xff"]),
+            Err(CodecError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn expect_100_continue_is_ignored_for_http_10() {
+        let parsed = parse_with_expect("HTTP/1.0", &[b"100-continue"]).expect("accepted");
+        assert!(
+            !parsed.expect_continue,
+            "1.0 clients must not get a 100 response"
+        );
     }
 
     #[test]

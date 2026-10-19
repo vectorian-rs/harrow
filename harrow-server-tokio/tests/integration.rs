@@ -2183,3 +2183,58 @@ mod ws_tests {
         assert!(result.is_err());
     }
 }
+
+async fn raw_bytes_request(
+    addr: SocketAddr,
+    request: &[u8],
+) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream.write_all(request).await.unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    parse_raw_http_response(&buf)
+}
+
+#[tokio::test]
+async fn tcp_unsupported_expectation_gets_417_without_running_the_handler() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app = {
+        let calls = Arc::clone(&calls);
+        move || {
+            let calls = Arc::clone(&calls);
+            App::new().post("/upload", move |_req: Request| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Response::text("stored") }
+            })
+        }
+    };
+    let addr = start_server(app).await;
+
+    let (status, _, body) = raw_bytes_request(
+        addr,
+        b"POST /upload HTTP/1.1\r\nHost: localhost\r\nExpect: fly-me-to-the-moon\r\nContent-Length: 4\r\n\r\nbody",
+    )
+    .await;
+    assert_eq!(status, 417);
+    assert_eq!(body, b"expectation failed");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // 100-continue still works: interim 100, then the handler's response.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nExpect: 100-Continue\r\nContent-Length: 4\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut interim = [0u8; 25];
+    stream.read_exact(&mut interim).await.unwrap();
+    assert_eq!(&interim, b"HTTP/1.1 100 Continue\r\n\r\n");
+    stream.write_all(b"body").await.unwrap();
+    let mut rest = Vec::new();
+    stream.read_to_end(&mut rest).await.unwrap();
+    let (status, _, body) = parse_raw_http_response(&rest);
+    assert_eq!(status, 200);
+    assert_eq!(body, b"stored");
+}
