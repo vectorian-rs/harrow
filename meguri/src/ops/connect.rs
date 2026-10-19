@@ -34,12 +34,17 @@ impl Operation for ConnectOp {
     type Output = MeguriResult<()>;
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
-        sq.push_connect(
-            user_data,
-            self.fd,
-            (&raw const self.addr.storage).cast(),
-            self.addr.len,
-        )
+        // SAFETY: `addr` is boxed (stable address) and holds an encoded
+        // sockaddr of `addr.len` bytes; it lives until the CQE is consumed,
+        // as described for `AcceptOp::push`.
+        unsafe {
+            sq.push_connect(
+                user_data,
+                self.fd,
+                (&raw const self.addr.storage).cast(),
+                self.addr.len,
+            )
+        }
     }
 
     fn complete(self, result: MeguriResult<u32>) -> Self::Output {

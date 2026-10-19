@@ -201,6 +201,22 @@ impl ConnToken {
 const DISPATCH_TICK_MILLIS: i64 = 10;
 
 #[cfg(target_os = "linux")]
+/// The dispatch tick's duration. A `static`, so the pointer in its SQE is
+/// valid for the life of the process.
+static DISPATCH_TICK_TS: libc::timespec = libc::timespec {
+    tv_sec: 0,
+    tv_nsec: DISPATCH_TICK_MILLIS * 1_000_000,
+};
+
+#[cfg(target_os = "linux")]
+/// The teardown timer's duration (`TEARDOWN_TIMEOUT`), static for the same
+/// reason.
+static TEARDOWN_TS: libc::timespec = libc::timespec {
+    tv_sec: TEARDOWN_TIMEOUT.as_secs() as libc::time_t,
+    tv_nsec: 0,
+};
+
+#[cfg(target_os = "linux")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct DeadlineEntry {
     deadline: std::time::Instant,
@@ -386,6 +402,14 @@ fn worker_loop(
     shutdown: harrow_server::ShutdownSignal,
     mut startup: Option<StartupSignal>,
 ) -> Result<(), BoxError> {
+    // Read by the kernel when a TIMEOUT SQE pointing at it is submitted.
+    // Declared before `ring` so it is dropped after it: an SQE still queued
+    // in the ring can never point at a dead stack slot.
+    let mut timeout_ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+
     let mut ring = match meguri::Ring::new(config.ring_entries) {
         Ok(ring) => ring,
         Err(err) => return Err(Box::new(err)),
@@ -413,16 +437,6 @@ fn worker_loop(
 
     let listener_fd = listener.as_raw_fd();
 
-    // Timeout specs must live on the stack across submit_and_wait since the
-    // kernel reads them asynchronously.
-    let mut timeout_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    let dispatch_tick_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: DISPATCH_TICK_MILLIS * 1_000_000,
-    };
     let mut dispatch_tick_armed = false;
     let mut timeout_armed = false;
     let mut timeout_deadline = None;
@@ -461,7 +475,7 @@ fn worker_loop(
         );
 
         if dispatch_tick_needed(&conns) && !dispatch_tick_armed {
-            dispatch_tick_armed = submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
+            dispatch_tick_armed = submit_dispatch_tick(&mut ring);
         }
 
         // Submit pending SQEs and wait for at least one completion.
@@ -543,7 +557,7 @@ fn worker_loop(
             &mut timeout_ts,
         );
         if dispatch_tick_needed(&conns) && !dispatch_tick_armed {
-            dispatch_tick_armed = submit_dispatch_tick(&mut ring, &dispatch_tick_ts);
+            dispatch_tick_armed = submit_dispatch_tick(&mut ring);
         }
         if let Err(err) = wait_for_completions(&mut ring) {
             failure = Some(err);
@@ -662,12 +676,12 @@ fn teardown(
             .sq()
             .push_cancel(ACCEPT_CANCEL_USER_DATA, ACCEPT_USER_DATA);
     }
-    // The kernel copies the timespec while it prepares the SQE (in
-    // io_uring_enter), so `ts` only has to outlive the next submit.
-    let ts = duration_to_timespec(TEARDOWN_TIMEOUT);
-    let timer_armed = ring
-        .sq()
-        .push_timeout(TEARDOWN_TIMER_USER_DATA, &ts as *const _, 0, 0);
+    // SAFETY: `TEARDOWN_TS` is a `static`, valid for as long as the SQE can
+    // be submitted.
+    let timer_armed = unsafe {
+        ring.sq()
+            .push_timeout(TEARDOWN_TIMER_USER_DATA, &TEARDOWN_TS, 0, 0)
+    };
 
     let deadline = std::time::Instant::now() + TEARDOWN_TIMEOUT;
     while timer_armed
@@ -903,13 +917,18 @@ fn set_socket_flag(
 /// instead of with a follow-up fcntl(2) whose result went unchecked.
 #[cfg(target_os = "linux")]
 fn submit_accept(ring: &mut meguri::Ring, listener_fd: std::os::fd::RawFd) -> bool {
-    ring.sq().push_accept(
-        ACCEPT_USER_DATA,
-        listener_fd,
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-        (libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK) as u32,
-    )
+    // SAFETY: null `addr`/`addrlen` is allowed and points at no memory. The
+    // accepted fd in the CQE is taken over by `handle_accept` (or closed by
+    // the drain/teardown loops); `listener_fd` outlives the ring.
+    unsafe {
+        ring.sq().push_accept(
+            ACCEPT_USER_DATA,
+            listener_fd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            (libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK) as u32,
+        )
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -965,7 +984,14 @@ fn submit_recv(ring: &mut meguri::Ring, conn_idx: usize, conn: &mut connection::
     let (buf_ptr, len) = conn.prepare_recv(codec::DEFAULT_BUFFER_SIZE);
     let user_data = ConnToken::of(conn_idx, conn).user_data(RECV_USER_DATA_FLAG);
 
-    if !ring.sq().push_recv(user_data, conn.fd, buf_ptr, len, 0) {
+    // SAFETY: `buf_ptr..buf_ptr + len` is `conn.buf`'s spare capacity (heap,
+    // valid for writes). It stays allocated and unmoved until the CQE: the
+    // slot is kept while `recv_pending` (`close_conn`, `teardown`), and
+    // `conn.buf` is not reallocated while a RECV is pending (checked by
+    // `commit_recv`). `conn.fd` is the connection's open socket; if it is
+    // closed early, the kernel keeps its own reference.
+    let pushed = unsafe { ring.sq().push_recv(user_data, conn.fd, buf_ptr, len, 0) };
+    if !pushed {
         conn.discard_recv();
         tracing::error!("SQ full, dropping connection fd {}", conn.fd);
         return false;
@@ -1101,7 +1127,12 @@ fn submit_write(ring: &mut meguri::Ring, conn_idx: usize, conn: &mut connection:
     };
     let user_data = ConnToken::of(conn_idx, conn).user_data(WRITE_USER_DATA_FLAG);
 
-    if !ring.sq().push_send(user_data, conn.fd, ptr, len, 0) {
+    // SAFETY: `ptr..ptr + len` is the unwritten tail of `conn.response_buf`
+    // (heap, valid for reads). It stays allocated, unmoved and unmodified
+    // until the CQE: the slot is kept while `write_pending`, and nothing
+    // replaces or refills `response_buf` while a SEND is pending.
+    let pushed = unsafe { ring.sq().push_send(user_data, conn.fd, ptr, len, 0) };
+    if !pushed {
         tracing::error!("SQ full, dropping connection fd {}", conn.fd);
         return false;
     }
@@ -1131,9 +1162,12 @@ fn submit_recv_cancel(ring: &mut meguri::Ring, token: ConnToken) -> bool {
 /// Queue the short dispatch wake tick. Returns `false` if the SQ is full, so
 /// the caller does not believe a tick is armed (it would otherwise never arm
 /// another, and a pending dispatch could stall until an unrelated CQE).
-fn submit_dispatch_tick(ring: &mut meguri::Ring, ts: &libc::timespec) -> bool {
-    ring.sq()
-        .push_timeout(DISPATCH_TICK_USER_DATA, ts as *const _, 0, 0)
+fn submit_dispatch_tick(ring: &mut meguri::Ring) -> bool {
+    // SAFETY: `DISPATCH_TICK_TS` is a `static`.
+    unsafe {
+        ring.sq()
+            .push_timeout(DISPATCH_TICK_USER_DATA, &DISPATCH_TICK_TS, 0, 0)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1163,10 +1197,15 @@ fn schedule_next_timeout(
 
     let delay = deadline.saturating_duration_since(std::time::Instant::now());
     *timeout_ts = duration_to_timespec(delay);
-    if ring
-        .sq()
-        .push_timeout(TIMEOUT_USER_DATA, timeout_ts as *const _, 0, 0)
-    {
+    // SAFETY: `timeout_ts` is the worker loop's local, declared before the
+    // ring, so it outlives every submit of this SQE. It is next rewritten
+    // only on a later call, after the loop has submitted this SQE (each
+    // iteration submits before scheduling again) and the kernel has copied
+    // the value.
+    if unsafe {
+        ring.sq()
+            .push_timeout(TIMEOUT_USER_DATA, timeout_ts as *const _, 0, 0)
+    } {
         *timeout_armed = true;
     }
 }
@@ -1864,7 +1903,8 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let mut ring = meguri::Ring::new(8).expect("ring");
             let ts = duration_to_timespec(Duration::from_millis(300));
-            assert!(ring.sq().push_timeout(1, &ts, 0, 0));
+            // SAFETY: `ts` outlives the submit right below.
+            assert!(unsafe { ring.sq().push_timeout(1, &ts, 0, 0) });
             // Submit now: with nothing left to submit, an interrupted wait
             // reports EINTR (with SQEs submitted it reports their count).
             assert_eq!(ring.submit().expect("submit"), 1);
@@ -1939,13 +1979,17 @@ mod tests {
     fn listener_errors_do_not_leak_the_socket() {
         let taken = create_listener("127.0.0.1:0".parse().unwrap(), false).expect("listener");
         let addr = taken.local_addr().unwrap();
+        // Other tests open and close fds concurrently, so compare with slack:
+        // a leak would add one fd per iteration.
+        const ATTEMPTS: usize = 256;
         let before = open_fd_count();
-        for _ in 0..16 {
+        for _ in 0..ATTEMPTS {
             // Without SO_REUSEPORT on either side, bind fails: EADDRINUSE.
             let err = create_listener(addr, false).expect_err("address in use");
             assert_eq!(err.raw_os_error(), Some(libc::EADDRINUSE));
         }
-        assert_eq!(open_fd_count(), before);
+        let after = open_fd_count();
+        assert!(after < before + ATTEMPTS / 4, "{before} -> {after} fds");
     }
 
     #[test]

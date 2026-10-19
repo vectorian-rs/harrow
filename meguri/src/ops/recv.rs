@@ -32,13 +32,17 @@ impl Operation for RecvOp {
 
     fn push(&mut self, sq: &mut SubmissionQueue, user_data: u64) -> bool {
         let spare = self.buf.spare_capacity_mut();
-        sq.push_recv(
-            user_data,
-            self.fd,
-            spare.as_mut_ptr().cast(),
-            sqe_len(spare.len()),
-            self.flags,
-        )
+        // SAFETY: as in `ReadOp::push`: heap spare capacity of a buffer the
+        // op owns exclusively and keeps alive until the CQE.
+        unsafe {
+            sq.push_recv(
+                user_data,
+                self.fd,
+                spare.as_mut_ptr().cast(),
+                sqe_len(spare.len()),
+                self.flags,
+            )
+        }
     }
 
     fn complete(mut self, result: MeguriResult<u32>) -> Self::Output {

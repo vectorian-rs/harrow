@@ -84,6 +84,9 @@ pub struct Ring {
     reclaim: ReclaimPool,
     eventfd: Option<RawFd>,
     params: IoUringParams,
+    /// Timespec for the timer `drain_in_flight` arms; boxed so its address
+    /// survives the ring being moved before that SQE is submitted.
+    drain_ts: Box<libc::timespec>,
 
     // Hold mmap regions so they live as long as the Ring. The SQ, CQ, and
     // SQE pointers point into these regions.
@@ -171,6 +174,10 @@ impl Ring {
             params,
             _sq_ring_mmap: sq_ring_mmap,
             _cq_ring_mmap: cq_ring_mmap,
+            drain_ts: Box::new(libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            }),
             _sqes_mmap: sqes_mmap,
         })
     }
@@ -342,20 +349,26 @@ impl Ring {
             }
         }
 
-        // A timer bounds the blocking wait below. The kernel copies the
-        // timespec while preparing the SQE (inside `io_uring_enter`), so the
-        // local only has to live until the submit.
-        let ts = libc::timespec {
+        // A timer bounds the blocking wait below.
+        *self.drain_ts = libc::timespec {
             tv_sec: timeout.as_secs() as libc::time_t,
             tv_nsec: timeout.subsec_nanos().into(),
         };
+        let ts: *const libc::timespec = &raw const *self.drain_ts;
         let timer_ud = self.dispatcher.register_internal();
-        if !self.sq.push_timeout(timer_ud, &ts, 0, 0) {
+        // SAFETY: `ts` points into a box owned by the ring, so it stays valid
+        // and unmoved for as long as the SQE can be submitted, even if this
+        // function returns before submitting it. A later `drain_in_flight`
+        // rewriting it only changes the duration a not-yet-submitted timer
+        // would read; the kernel copies it at submission.
+        let pushed = unsafe { self.sq.push_timeout(timer_ud, ts, 0, 0) } || {
             let _ = self.submit();
-            if !self.sq.push_timeout(timer_ud, &ts, 0, 0) {
-                self.dispatcher.unregister(timer_ud);
-                return false;
-            }
+            // SAFETY: as above.
+            unsafe { self.sq.push_timeout(timer_ud, ts, 0, 0) }
+        };
+        if !pushed {
+            self.dispatcher.unregister(timer_ud);
+            return false;
         }
 
         let deadline = Instant::now() + timeout;
@@ -467,7 +480,8 @@ mod tests {
             tv_nsec: 1_000_000,
         };
 
-        assert!(ring.sq().push_timeout(7, &ts, 0, 0));
+        // SAFETY: `ts` outlives the submit_and_wait below, which submits it.
+        assert!(unsafe { ring.sq().push_timeout(7, &ts, 0, 0) });
         ring.submit_and_wait(1).expect("submit_and_wait failed");
 
         let cqe = ring.cq.peek().expect("expected one CQE");
