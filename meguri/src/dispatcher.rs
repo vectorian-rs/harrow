@@ -175,6 +175,17 @@ impl Dispatcher {
         self.pending.contains(user_data as usize)
     }
 
+    /// `user_data` of every operation the kernel may still be working on for
+    /// an owner (`Pending`) or for the reclaim pool (`Dropped`). Meguri's own
+    /// `Internal` entries (cancels, timers) are excluded.
+    pub fn cancellable_user_data(&self) -> Vec<u64> {
+        self.pending
+            .iter()
+            .filter(|(_, state)| matches!(state, OpState::Pending { .. } | OpState::Dropped { .. }))
+            .map(|(key, _)| key as u64)
+            .collect()
+    }
+
     /// Number of operations still waiting for a completion from the kernel.
     pub fn in_flight(&self) -> usize {
         self.in_flight

@@ -293,6 +293,56 @@ mod tests {
         close(w);
     }
 
+    /// Before the ring is dropped (and with it the reclaim pool), the kernel
+    /// must have finished with every abandoned buffer. Here the read is
+    /// dropped without the driver ever submitting it or its cancel.
+    #[test]
+    fn ring_drain_waits_for_an_abandoned_read_before_releasing_its_buffer() {
+        let driver = Driver::new(8).expect("ring");
+        let (r, w) = pipe();
+
+        let read = Read::new(&driver, r, BytesMut::with_capacity(64), 0);
+        driver.block_on(poll_once_then_drop(read));
+        assert_eq!(driver.ring().reclaim().len(), 1);
+
+        assert!(
+            driver
+                .ring()
+                .drain_in_flight(std::time::Duration::from_secs(5))
+        );
+        assert!(
+            driver.ring().reclaim().is_empty(),
+            "kernel finished; buffer released"
+        );
+        // Only meguri's own timer and its cancel may remain.
+        assert!(
+            driver
+                .ring()
+                .dispatcher()
+                .cancellable_user_data()
+                .is_empty()
+        );
+        close(r);
+        close(w);
+    }
+
+    /// Dropping the last driver handle with an abandoned operation still in
+    /// the kernel cancels and waits for it instead of freeing its buffer
+    /// early, and it does not hang.
+    #[test]
+    fn dropping_the_driver_with_an_abandoned_read_returns_promptly() {
+        let driver = Driver::new(8).expect("ring");
+        let (r, w) = pipe();
+
+        let read = Read::new(&driver, r, BytesMut::with_capacity(64), 0);
+        driver.block_on(poll_once_then_drop(read));
+        let started = std::time::Instant::now();
+        drop(driver);
+        assert!(started.elapsed() < std::time::Duration::from_millis(900));
+        close(r);
+        close(w);
+    }
+
     /// Polls two futures until both are ready.
     async fn join<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
         let (mut a, mut b) = (Box::pin(a), Box::pin(b));

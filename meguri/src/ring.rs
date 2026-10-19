@@ -3,8 +3,9 @@
 //! Owns the io_uring fd, mmap'd SQ/CQ regions, and the dispatcher.
 
 use std::io;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::ptr;
+use std::time::{Duration, Instant};
 
 use crate::cq::CompletionQueue;
 use crate::dispatcher::Dispatcher;
@@ -72,7 +73,11 @@ impl Drop for MmapRegion {
 /// Owns the ring fd, mmap'd SQ/CQ regions, the dispatcher for waker
 /// management, and the reclaim pool for dropped operations.
 pub struct Ring {
-    ring_fd: RawFd,
+    // Field order is drop order. The ring fd closes first; the reclaim pool
+    // is freed only after `Drop::drop` has drained in-flight operations; the
+    // mmaps go last (the kernel keeps its own reference to the ring memory,
+    // so unmapping after close is fine).
+    ring_fd: OwnedFd,
     sq: SubmissionQueue,
     cq: CompletionQueue,
     dispatcher: Dispatcher,
@@ -107,7 +112,12 @@ impl Ring {
         let mut params = params;
 
         // SAFETY: io_uring_setup is safe with a valid params pointer.
-        let ring_fd = unsafe { io_uring_setup(entries, &mut params)? };
+        let raw_fd = unsafe { io_uring_setup(entries, &mut params)? };
+        // Own the fd at once so the `?` on every mmap below closes it instead
+        // of leaking it.
+        // SAFETY: io_uring_setup just returned this fd; nothing else owns it.
+        let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        let ring_fd = owned_fd.as_raw_fd();
 
         // Calculate mmap sizes.
         let sq_ring_size =
@@ -152,7 +162,7 @@ impl Ring {
         let cq = unsafe { CompletionQueue::from_raw(cq_ring_base, &params) };
 
         Ok(Self {
-            ring_fd,
+            ring_fd: owned_fd,
             sq,
             cq,
             dispatcher: Dispatcher::new(),
@@ -179,7 +189,7 @@ impl Ring {
     pub fn register_eventfd(&mut self, fd: RawFd) -> io::Result<()> {
         unsafe {
             crate::syscall::io_uring_register(
-                self.ring_fd,
+                self.ring_fd.as_raw_fd(),
                 crate::syscall::IORING_REGISTER_EVENTFD,
                 &fd as *const _ as *const _,
                 1,
@@ -195,7 +205,7 @@ impl Ring {
         if pending == 0 {
             return Ok(0);
         }
-        unsafe { io_uring_enter(self.ring_fd, pending, 0, 0, ptr::null(), 0) }
+        unsafe { io_uring_enter(self.ring_fd.as_raw_fd(), pending, 0, 0, ptr::null(), 0) }
     }
 
     /// Submit pending SQEs and wait for at least `min_complete` CQEs.
@@ -209,7 +219,16 @@ impl Ring {
         } else {
             0
         };
-        unsafe { io_uring_enter(self.ring_fd, pending, min_complete, flags, ptr::null(), 0) }
+        unsafe {
+            io_uring_enter(
+                self.ring_fd.as_raw_fd(),
+                pending,
+                min_complete,
+                flags,
+                ptr::null(),
+                0,
+            )
+        }
     }
 
     /// Poll the completion queue, dispatching completions to wakers and
@@ -292,21 +311,102 @@ impl Ring {
     }
 }
 
-impl AsRawFd for Ring {
-    fn as_raw_fd(&self) -> RawFd {
-        self.ring_fd
+impl Ring {
+    /// Cancel every operation the dispatcher still tracks and wait up to
+    /// `timeout` for their completions. Returns `true` when nothing tracked by
+    /// the dispatcher is in flight any more.
+    ///
+    /// Closing the ring fd does not stop the kernel synchronously: the
+    /// kernel cancels outstanding requests later, from a workqueue, and until
+    /// then a pending `recv`/`read` can still write into its buffer. So the
+    /// buffers in the reclaim pool must outlive the requests, not the fd.
+    ///
+    /// Operations pushed directly through [`Ring::sq`] without registering
+    /// with the dispatcher are invisible here; their owner must drain them
+    /// before dropping the ring.
+    pub(crate) fn drain_in_flight(&mut self, timeout: Duration) -> bool {
+        self.poll_completions();
+        if self.dispatcher.in_flight() == 0 {
+            return true;
+        }
+
+        // `release_op` normally queued a cancel already, but it may have
+        // found the SQ full. Cancelling twice is harmless (-ENOENT/-EALREADY).
+        for target in self.dispatcher.cancellable_user_data() {
+            let cancel_ud = self.dispatcher.register_internal();
+            if !self.sq.push_cancel(cancel_ud, target) {
+                let _ = self.submit();
+                if !self.sq.push_cancel(cancel_ud, target) {
+                    self.dispatcher.unregister(cancel_ud);
+                }
+            }
+        }
+
+        // A timer bounds the blocking wait below. The kernel copies the
+        // timespec while preparing the SQE (inside `io_uring_enter`), so the
+        // local only has to live until the submit.
+        let ts = libc::timespec {
+            tv_sec: timeout.as_secs() as libc::time_t,
+            tv_nsec: timeout.subsec_nanos().into(),
+        };
+        let timer_ud = self.dispatcher.register_internal();
+        if !self.sq.push_timeout(timer_ud, &ts, 0, 0) {
+            let _ = self.submit();
+            if !self.sq.push_timeout(timer_ud, &ts, 0, 0) {
+                self.dispatcher.unregister(timer_ud);
+                return false;
+            }
+        }
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.poll_completions();
+            let timer_pending = usize::from(self.dispatcher.is_pending(timer_ud));
+            if self.dispatcher.in_flight() <= timer_pending {
+                if timer_pending == 1 {
+                    // Stop the timer too; its completion is discarded.
+                    let cancel_ud = self.dispatcher.register_internal();
+                    if !self.sq.push_cancel(cancel_ud, timer_ud) {
+                        self.dispatcher.unregister(cancel_ud);
+                    }
+                    let _ = self.submit();
+                }
+                return true;
+            }
+            if timer_pending == 0 || Instant::now() >= deadline {
+                return false;
+            }
+            match self.submit_and_wait(1) {
+                Ok(_) => {}
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return false,
+            }
+        }
     }
 }
 
+impl AsRawFd for Ring {
+    fn as_raw_fd(&self) -> RawFd {
+        self.ring_fd.as_raw_fd()
+    }
+}
+
+/// How long `Ring::drop` waits for cancelled operations to complete.
+const DROP_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+
 impl Drop for Ring {
     fn drop(&mut self) {
-        // Drain remaining completions to reclaim buffers.
-        self.poll_completions();
-        // Close the ring fd. The kernel cleans up resources.
-        // Mmap regions are unmapped by their own Drop impls.
-        unsafe {
-            libc::close(self.ring_fd);
+        // Free operation buffers only once the kernel has finished with
+        // them. If some operation outlives the wait, leak the reclaim pool:
+        // a leak is safe, freeing memory the kernel may still write is not.
+        if !self.drain_in_flight(DROP_DRAIN_TIMEOUT) {
+            tracing::warn!(
+                in_flight = self.dispatcher.in_flight(),
+                "meguri ring dropped with operations still in flight; leaking their buffers"
+            );
+            std::mem::forget(std::mem::take(&mut self.reclaim));
         }
+        // The ring fd (`OwnedFd`) and the mmaps close in their own drops.
     }
 }
 
