@@ -1421,15 +1421,17 @@ mod proptests {
             full.extend_from_slice(&trailing);
 
             let parsed = try_parse_request(&full).unwrap();
-            let mut decoder = PayloadDecoder::from_parsed(&parsed).unwrap();
             let mut buf = BytesMut::from(&full[parsed.header_len..]);
             let mut decoded = Vec::new();
 
-            loop {
-                match decoder.decode(&mut buf, None).unwrap() {
-                    Some(PayloadItem::Chunk(chunk)) => decoded.extend_from_slice(&chunk),
-                    Some(PayloadItem::Eof) => break,
-                    None => prop_assert!(false, "unexpected incomplete request body"),
+            // `Content-Length: 0` has no payload decoder: nothing to read.
+            if let Some(mut decoder) = PayloadDecoder::from_parsed(&parsed) {
+                loop {
+                    match decoder.decode(&mut buf, None).unwrap() {
+                        Some(PayloadItem::Chunk(chunk)) => decoded.extend_from_slice(&chunk),
+                        Some(PayloadItem::Eof) => break,
+                        None => prop_assert!(false, "unexpected incomplete request body"),
+                    }
                 }
             }
 
