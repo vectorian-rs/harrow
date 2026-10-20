@@ -662,10 +662,11 @@ pub(crate) fn response_channel() -> (
 pub(crate) async fn stream_response(
     tx: mpsc::Sender<ResponseStreamEvent>,
     response: http::Response<harrow_core::response::ResponseBody>,
+    version: http::Version,
     keep_alive: bool,
     is_head_request: bool,
 ) {
-    let completed = stream_response_inner(&tx, response, keep_alive, is_head_request)
+    let completed = stream_response_inner(&tx, response, version, keep_alive, is_head_request)
         .await
         .is_ok();
     let terminal = if completed {
@@ -679,10 +680,12 @@ pub(crate) async fn stream_response(
 async fn stream_response_inner(
     tx: &mpsc::Sender<ResponseStreamEvent>,
     response: http::Response<harrow_core::response::ResponseBody>,
+    version: http::Version,
     keep_alive: bool,
     is_head_request: bool,
 ) -> Result<(), ()> {
-    let prepared = prepare_response(response, keep_alive, is_head_request).map_err(|_| ())?;
+    let prepared =
+        prepare_response(response, version, keep_alive, is_head_request).map_err(|_| ())?;
     let mut body = prepared.body;
 
     let head = codec::write_response_head(
@@ -726,6 +729,19 @@ async fn stream_response_inner(
             }
 
             let _ = send_response_bytes(tx, Bytes::from_static(codec::CHUNK_TERMINATOR)).await;
+            Ok(())
+        }
+        // Raw bytes; closing the connection (keep_alive is false) ends the body.
+        ResponseBodyMode::CloseDelimited => {
+            while let Some(frame) = body.frame().await {
+                let frame = frame.map_err(|_| ())?;
+                if let Ok(data) = frame.into_data()
+                    && !data.is_empty()
+                    && !send_response_bytes(tx, data).await
+                {
+                    return Ok(());
+                }
+            }
             Ok(())
         }
     }
@@ -1048,13 +1064,27 @@ mod tests {
         keep_alive: bool,
         is_head_request: bool,
     ) -> (Vec<u8>, bool) {
+        collect_response_stream_for(
+            response,
+            http::Version::HTTP_11,
+            keep_alive,
+            is_head_request,
+        )
+    }
+
+    fn collect_response_stream_for(
+        response: http::Response<harrow_core::response::ResponseBody>,
+        version: http::Version,
+        keep_alive: bool,
+        is_head_request: bool,
+    ) -> (Vec<u8>, bool) {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async move {
                 let (tx, mut rx) = response_channel();
-                stream_response(tx, response, keep_alive, is_head_request).await;
+                stream_response(tx, response, version, keep_alive, is_head_request).await;
 
                 let mut bytes = Vec::new();
                 let mut saw_done = false;
@@ -1337,6 +1367,28 @@ mod tests {
         assert!(response.contains("content-length: 5\r\n"));
         assert!(response.ends_with("\r\n\r\n"));
         assert!(!response.ends_with("\r\n\r\nhello"));
+    }
+
+    #[test]
+    fn http10_streaming_response_is_close_delimited() {
+        let response = harrow_core::response::Response::streaming(
+            http::StatusCode::OK,
+            futures_util::stream::iter(vec![Ok::<
+                Frame<Bytes>,
+                Box<dyn std::error::Error + Send + Sync>,
+            >(Frame::data(Bytes::from_static(
+                b"hello",
+            )))]),
+        )
+        .into_inner();
+
+        let (response, saw_done) =
+            collect_response_stream_for(response, http::Version::HTTP_10, true, false);
+        let response = String::from_utf8_lossy(&response);
+        assert!(saw_done);
+        assert!(response.contains("connection: close\r\n"), "{response}");
+        assert!(!response.contains("transfer-encoding"), "{response}");
+        assert!(response.ends_with("\r\n\r\nhello"), "{response}");
     }
 
     #[test]

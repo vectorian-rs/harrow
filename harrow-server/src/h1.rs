@@ -74,12 +74,36 @@ pub struct PreparedResponse {
     pub expected_len: usize,
 }
 
+/// Whether answering a request of `version` with `response` must close the
+/// connection to end the body: a streaming (no `Content-Length`) response to
+/// an HTTP/1.0 request, which cannot use chunked encoding. Backends use this
+/// to decide connection reuse; [`prepare_response`] makes the same decision.
+pub fn response_closes_connection<B>(
+    version: http::Version,
+    response: &http::Response<B>,
+    is_head_request: bool,
+) -> bool {
+    ResponseWritePlan::new(
+        version,
+        response.headers(),
+        is_head_request,
+        response.status(),
+    )
+    .mode
+        == ResponseBodyMode::CloseDelimited
+}
+
 pub fn prepare_response(
     response: http::Response<ResponseBody>,
+    version: http::Version,
     keep_alive: bool,
     is_head_request: bool,
 ) -> Result<PreparedResponse, ResponseStreamError> {
     let (mut parts, body) = response.into_parts();
+
+    let plan = ResponseWritePlan::new(version, &parts.headers, is_head_request, parts.status);
+    // A close-delimited body ends when the connection closes.
+    let keep_alive = keep_alive && plan.mode != ResponseBodyMode::CloseDelimited;
 
     normalize_response_headers(
         &mut parts.headers,
@@ -87,8 +111,6 @@ pub fn prepare_response(
         keep_alive,
         is_head_request,
     );
-
-    let plan = ResponseWritePlan::new(&parts.headers, is_head_request, parts.status);
     let expected_len = match plan.mode {
         ResponseBodyMode::Fixed => {
             let expected_len = declared_content_length(&parts.headers)
@@ -283,6 +305,10 @@ pub enum ResponseBodyMode {
     None,
     Fixed,
     Chunked,
+    /// Raw body bytes, ended by closing the connection: how a body of
+    /// unknown length is sent to an HTTP/1.0 client, which has no chunked
+    /// encoding (RFC 9112 §6.1, §6.3).
+    CloseDelimited,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -291,11 +317,18 @@ pub struct ResponseWritePlan {
 }
 
 impl ResponseWritePlan {
-    pub fn new(headers: &http::HeaderMap, is_head_request: bool, status: http::StatusCode) -> Self {
+    pub fn new(
+        version: http::Version,
+        headers: &http::HeaderMap,
+        is_head_request: bool,
+        status: http::StatusCode,
+    ) -> Self {
         let mode = if !response_body_permitted(is_head_request, status) {
             ResponseBodyMode::None
         } else if headers.contains_key(http::header::CONTENT_LENGTH) {
             ResponseBodyMode::Fixed
+        } else if version == http::Version::HTTP_10 {
+            ResponseBodyMode::CloseDelimited
         } else {
             ResponseBodyMode::Chunked
         };
@@ -401,20 +434,88 @@ mod tests {
     fn response_write_plan_handles_body_modes() {
         let empty_headers = http::HeaderMap::new();
         assert_eq!(
-            ResponseWritePlan::new(&empty_headers, true, http::StatusCode::OK).mode,
+            ResponseWritePlan::new(
+                http::Version::HTTP_11,
+                &empty_headers,
+                true,
+                http::StatusCode::OK
+            )
+            .mode,
             ResponseBodyMode::None
         );
         assert_eq!(
-            ResponseWritePlan::new(&empty_headers, false, http::StatusCode::OK).mode,
+            ResponseWritePlan::new(
+                http::Version::HTTP_11,
+                &empty_headers,
+                false,
+                http::StatusCode::OK
+            )
+            .mode,
             ResponseBodyMode::Chunked
         );
 
         let mut fixed_headers = http::HeaderMap::new();
         fixed_headers.insert(http::header::CONTENT_LENGTH, "5".parse().unwrap());
-        let plan = ResponseWritePlan::new(&fixed_headers, false, http::StatusCode::OK);
+        let plan = ResponseWritePlan::new(
+            http::Version::HTTP_11,
+            &fixed_headers,
+            false,
+            http::StatusCode::OK,
+        );
         assert_eq!(plan.mode, ResponseBodyMode::Fixed);
         assert!(plan.should_write_body());
         assert!(!plan.is_chunked());
+    }
+
+    /// A response of unknown length: no `Content-Length` header.
+    fn unknown_length_response() -> http::Response<ResponseBody> {
+        let mut response = Response::text("hello").into_inner();
+        response.headers_mut().remove(CONTENT_LENGTH);
+        response
+    }
+
+    #[test]
+    fn http10_streaming_response_is_close_delimited() {
+        let response = unknown_length_response();
+        assert!(response_closes_connection(
+            http::Version::HTTP_10,
+            &response,
+            false
+        ));
+        assert!(!response_closes_connection(
+            http::Version::HTTP_11,
+            &response,
+            false
+        ));
+
+        // Even when the 1.0 client asked for keep-alive.
+        let prepared = prepare_response(response, http::Version::HTTP_10, true, false)
+            .expect("prepared response");
+        assert_eq!(prepared.plan.mode, ResponseBodyMode::CloseDelimited);
+        assert!(!prepared.plan.is_chunked());
+        assert_eq!(prepared.headers.get(CONNECTION).unwrap(), "close");
+        assert!(prepared.headers.get(TRANSFER_ENCODING).is_none());
+        assert!(prepared.headers.get(CONTENT_LENGTH).is_none());
+    }
+
+    #[test]
+    fn http10_fixed_and_bodyless_responses_are_unchanged() {
+        let fixed = Response::text("hello").into_inner();
+        assert!(!response_closes_connection(
+            http::Version::HTTP_10,
+            &fixed,
+            false
+        ));
+        let prepared = prepare_response(fixed, http::Version::HTTP_10, true, false).unwrap();
+        assert_eq!(prepared.plan.mode, ResponseBodyMode::Fixed);
+        assert!(prepared.headers.get(CONNECTION).is_none());
+
+        let head = unknown_length_response();
+        assert!(!response_closes_connection(
+            http::Version::HTTP_10,
+            &head,
+            true
+        ));
     }
 
     #[test]
@@ -423,7 +524,8 @@ mod tests {
             .header("content-length", "5")
             .into_inner();
 
-        let prepared = prepare_response(response, false, false).expect("prepared response");
+        let prepared = prepare_response(response, http::Version::HTTP_11, false, false)
+            .expect("prepared response");
         let head = harrow_codec_h1::write_response_head(
             prepared.status,
             &prepared.headers,
@@ -441,7 +543,8 @@ mod tests {
             .header("transfer-encoding", "gzip")
             .into_inner();
 
-        let prepared = prepare_response(response, true, false).expect("prepared response");
+        let prepared = prepare_response(response, http::Version::HTTP_11, true, false)
+            .expect("prepared response");
 
         assert!(prepared.headers.get(TRANSFER_ENCODING).is_none());
         assert_eq!(prepared.plan.mode, ResponseBodyMode::Fixed);
@@ -454,7 +557,8 @@ mod tests {
             .header("connection", "keep-alive")
             .into_inner();
 
-        let prepared = prepare_response(response, false, false).expect("prepared response");
+        let prepared = prepare_response(response, http::Version::HTTP_11, false, false)
+            .expect("prepared response");
 
         assert_eq!(prepared.headers.get(CONNECTION).unwrap(), "close");
     }
@@ -465,7 +569,7 @@ mod tests {
             .header("content-length", "4")
             .into_inner();
 
-        let Err(err) = prepare_response(response, true, false) else {
+        let Err(err) = prepare_response(response, http::Version::HTTP_11, true, false) else {
             panic!("length mismatch should fail");
         };
 
@@ -479,7 +583,8 @@ mod tests {
             .header("transfer-encoding", "chunked")
             .into_inner();
 
-        let prepared = prepare_response(response, true, false).expect("prepared response");
+        let prepared = prepare_response(response, http::Version::HTTP_11, true, false)
+            .expect("prepared response");
 
         assert_eq!(prepared.plan.mode, ResponseBodyMode::None);
         assert!(prepared.headers.get(CONTENT_LENGTH).is_none());
@@ -490,7 +595,8 @@ mod tests {
     fn prepare_response_preserves_head_content_length() {
         let response = Response::text("hello").into_inner();
 
-        let prepared = prepare_response(response, true, true).expect("prepared response");
+        let prepared = prepare_response(response, http::Version::HTTP_11, true, true)
+            .expect("prepared response");
 
         assert_eq!(prepared.plan.mode, ResponseBodyMode::None);
         assert_eq!(prepared.headers.get(CONTENT_LENGTH).unwrap(), "5");

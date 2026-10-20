@@ -78,6 +78,7 @@ where
             };
 
         let keep_alive = parsed.keep_alive;
+        let version = parsed.version;
         let content_length = parsed.content_length;
 
         if harrow_server::h1::request_exceeds_body_limit(content_length, config.max_body_size) {
@@ -152,8 +153,12 @@ where
         if shutdown.is_shutdown() {
             connection_reusable = false;
         }
+        // A streaming response to HTTP/1.0 ends by closing the connection.
+        if harrow_server::h1::response_closes_connection(version, &response, is_head_request) {
+            connection_reusable = false;
+        }
         if writer
-            .write_response(response, connection_reusable, is_head_request)
+            .write_response(response, version, connection_reusable, is_head_request)
             .await
             .is_err()
         {

@@ -2487,7 +2487,6 @@ mod h1_adversarial {
     }
 
     #[tokio::test]
-    #[ignore = "bug #100: streaming responses to HTTP/1.0 clients use chunked transfer-encoding, which HTTP/1.0 does not define (RFC 9112 §6.1); they must be close-delimited"]
     async fn tcp_http10_streaming_response_is_not_chunked() {
         let addr = start_server(|| {
             App::new().get("/stream", |_req: Request| async {
@@ -2500,6 +2499,32 @@ mod h1_adversarial {
 
         let (status, headers, body) = parse_raw_http_response(&raw);
         assert_eq!(status, 200);
+        assert_eq!(header_val(&headers, "transfer-encoding"), None);
+        assert_eq!(body, b"hello");
+    }
+
+    /// A 1.0 client asking for keep-alive still gets `Connection: close`:
+    /// closing the connection is what ends a body of unknown length.
+    #[tokio::test]
+    async fn tcp_http10_keep_alive_streaming_response_closes_the_connection() {
+        let addr = start_server(|| {
+            App::new().get("/stream", |_req: Request| async {
+                one_chunk_stream(b"hello")
+            })
+        })
+        .await;
+
+        // `raw_exchange` reads until the server closes, so a lingering
+        // keep-alive connection would fail this test.
+        let raw = raw_exchange(
+            addr,
+            b"GET /stream HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
+        )
+        .await;
+
+        let (status, headers, body) = parse_raw_http_response(&raw);
+        assert_eq!(status, 200);
+        assert_eq!(header_val(&headers, "connection"), Some("close"));
         assert_eq!(header_val(&headers, "transfer-encoding"), None);
         assert_eq!(body, b"hello");
     }
