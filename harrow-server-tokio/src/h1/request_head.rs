@@ -22,6 +22,9 @@ pub(crate) enum CloseReason {
     IoError,
     /// `header_read_timeout` elapsed.
     Timeout,
+    /// Shutdown started while the connection was idle (no bytes of the next
+    /// request received yet).
+    Shutdown,
 }
 
 pub(crate) async fn read_request_head<S>(
@@ -29,6 +32,7 @@ pub(crate) async fn read_request_head<S>(
     buf: &mut BytesMut,
     config: &ServerConfig,
     trace: &mut Trace,
+    shutdown: &harrow_server::ShutdownSignal,
 ) -> RequestHeadRead
 where
     S: tokio::io::AsyncRead + Unpin,
@@ -55,23 +59,55 @@ where
             trace.record(Event::HeadersNeedMore);
         }
 
-        if let Some(timeout) = config.header_read_timeout {
-            let remaining = timeout.saturating_sub(request_started.elapsed());
-            if remaining.is_zero() {
-                return RequestHeadRead::Close(CloseReason::Timeout);
-            }
-            match tokio::time::timeout(remaining, stream.read_buf(buf)).await {
-                Ok(Ok(0)) => return RequestHeadRead::Close(CloseReason::Eof),
-                Ok(Ok(_)) => {}
-                Ok(Err(_)) => return RequestHeadRead::Close(CloseReason::IoError),
-                Err(_) => return RequestHeadRead::Close(CloseReason::Timeout),
+        let deadline = config
+            .header_read_timeout
+            .map(|timeout| request_started + timeout);
+        // Idle: nothing of the next request has arrived, so shutdown may end
+        // the wait. Once bytes arrive, the request is allowed to finish.
+        let idle = buf.is_empty();
+        let read = read_with_deadline(stream, buf, deadline);
+        let outcome = if idle {
+            tokio::select! {
+                biased;
+                () = shutdown.wait() => return RequestHeadRead::Close(CloseReason::Shutdown),
+                outcome = read => outcome,
             }
         } else {
-            match stream.read_buf(buf).await {
-                Ok(0) => return RequestHeadRead::Close(CloseReason::Eof),
-                Ok(_) => {}
-                Err(_) => return RequestHeadRead::Close(CloseReason::IoError),
+            read.await
+        };
+        if let Some(reason) = outcome {
+            return RequestHeadRead::Close(reason);
+        }
+    }
+}
+
+/// Read once into `buf`. `None` means bytes arrived; `Some(reason)` means the
+/// connection should close.
+async fn read_with_deadline<S>(
+    stream: &mut S,
+    buf: &mut BytesMut,
+    deadline: Option<std::time::Instant>,
+) -> Option<CloseReason>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
+    let read = stream.read_buf(buf);
+    let result = match deadline {
+        Some(deadline) => {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Some(CloseReason::Timeout);
+            }
+            match tokio::time::timeout(remaining, read).await {
+                Ok(result) => result,
+                Err(_) => return Some(CloseReason::Timeout),
             }
         }
+        None => read.await,
+    };
+    match result {
+        Ok(0) => Some(CloseReason::Eof),
+        Ok(_) => None,
+        Err(_) => Some(CloseReason::IoError),
     }
 }

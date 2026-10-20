@@ -253,7 +253,7 @@ File keys:
 | Body too large: early response | tokio-dst `dst_oversized_content_length`; tokio-e2e `h1_adversarial::tcp_oversized_content_length_gets_413_before_body_is_sent`, `h1_adversarial::tcp_early_response_without_reading_body_closes_connection`; meguri `content_length_too_large`; shared lifecycle `early_response_moves_from_body_to_write`; monoio `body_limit_content_length_rejection` |
 | Slow header timeout | tokio-dst `dst_slowloris_header_timeout`; tokio-e2e `h1_adversarial::tcp_slow_header_timeout_closes_connection`; meguri `read_timed_out_uses_header_timeout_for_headers_state`; monoio `header_read_timeout` |
 | Slow body timeout | tokio-dst `dst_slowloris_body_timeout`; tokio-e2e `tcp_body_read_timeout_returns_400` (Content-Length), `h1_adversarial::tcp_slow_chunked_body_timeout_gets_408`; meguri `read_timed_out_uses_body_timeout_for_body_phase`; monoio `body_read_timeout` |
-| Shutdown during active request | tokio-e2e `tcp_graceful_drain_completes_inflight_request`, `tcp_graceful_shutdown_waits_for_drain_before_returning`, `h1_adversarial::tcp_shutdown_during_keep_alive_request_completes_then_closes`, `h1_adversarial::tcp_shutdown_closes_idle_keep_alive_connection_promptly` (**ignored: known bug**); multi `shutdown_drains_in_flight_requests_then_stops_accepting`; shared lifecycle `shutdown_scripts_can_drain_to_free`; monoio `graceful_shutdown_drains_connections` |
+| Shutdown during active request | tokio-e2e `tcp_graceful_drain_completes_inflight_request`, `tcp_graceful_shutdown_waits_for_drain_before_returning`, `h1_adversarial::tcp_shutdown_during_keep_alive_request_completes_then_closes`, `h1_adversarial::tcp_shutdown_closes_idle_keep_alive_connection_promptly`, `h1_adversarial::tcp_shutdown_lets_a_partially_received_request_finish`; multi `shutdown_drains_in_flight_requests_then_stops_accepting`; shared lifecycle `shutdown_scripts_can_drain_to_free`; monoio `graceful_shutdown_drains_connections` |
 
 #### Behaviour these tests pin
 
@@ -280,11 +280,6 @@ File keys:
   not define chunked encoding, so the response must be close-delimited
   (RFC 9112 §6.1). To fix this, every backend needs a close-delimited body
   mode.
-- `tcp_shutdown_closes_idle_keep_alive_connection_promptly` (#98):
-  `ShutdownSignal` is a flag that the server checks only between requests.
-  An idle keep-alive connection that waits in `read_request_head` does not
-  see the shutdown. The server stops only after `header_read_timeout` or
-  `drain_timeout`.
 
 ---
 

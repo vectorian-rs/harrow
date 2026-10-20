@@ -386,13 +386,9 @@ fn pipelined_requests_report_the_buffered_next_request() {
 #[test]
 fn shutdown_during_an_active_request_and_with_an_idle_connection() {
     let _serial = serial();
-    // A short header timeout: an idle keep-alive connection does not see the
-    // shutdown signal while it waits for the next request, so it closes when
-    // this timeout fires (#98; see the assertion below).
-    let mut server = Server::start(ServerConfig {
-        header_read_timeout: Some(Duration::from_millis(300)),
-        ..config()
-    });
+    // Default 5 s header timeout: the idle connection must close because of
+    // the shutdown (#98), not because that timeout fires.
+    let mut server = Server::start(config());
 
     // Idle keep-alive connection: one request done, waiting for the next.
     let mut idle = TcpStream::connect(server.addr).unwrap();
@@ -407,7 +403,13 @@ fn shutdown_during_an_active_request_and_with_an_idle_connection() {
     let active =
         std::thread::spawn(move || exchange(addr, b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n"));
     std::thread::sleep(Duration::from_millis(100));
+    let shutdown_started = Instant::now();
     server.shutdown();
+    assert!(
+        shutdown_started.elapsed() < Duration::from_secs(2),
+        "shutdown waited {:?}; idle connections should not hold it up",
+        shutdown_started.elapsed()
+    );
 
     let response = active.join().unwrap();
     assert!(
@@ -429,7 +431,7 @@ fn shutdown_during_an_active_request_and_with_an_idle_connection() {
     );
     assert!(
         ends.iter()
-            .any(|t| t.ends_with(&[DONE_KEEP, Timeout, ClosedCqe])),
-        "idle connection closes when its header timeout fires: {ends:?}"
+            .any(|t| t.ends_with(&[DONE_KEEP, Shutdown, Timeout, ClosedCqe])),
+        "idle connection should close because of the shutdown: {ends:?}"
     );
 }
