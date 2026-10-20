@@ -17,6 +17,7 @@ impl H1Connection {
     /// This function uses `cancelable_read` to ensure that when a timeout fires,
     /// the kernel operation is explicitly cancelled before the buffer is dropped.
     pub(crate) async fn read_headers(&mut self) -> Result<codec::ParsedRequest, ProtocolError> {
+        let mut first_attempt = true;
         loop {
             match codec::try_parse_request(&self.buf) {
                 Ok(parsed) => {
@@ -42,6 +43,12 @@ impl H1Connection {
                 }
             }
 
+            // The model's first `Recv` is armed by `Accept` / keep-alive
+            // reuse; every further read is "headers need more".
+            if !std::mem::take(&mut first_attempt) {
+                self.trace
+                    .record(harrow_server::h1_lifecycle::Event::HeadersNeedMore);
+            }
             let n = self
                 .read_more(
                     DEFAULT_BUFFER_SIZE,

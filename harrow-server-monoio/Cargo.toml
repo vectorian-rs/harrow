@@ -24,6 +24,8 @@ thiserror = "1"
 tracing = { workspace = true }
 
 [dev-dependencies]
+# Record lifecycle traces in tests (tests/lifecycle_traces.rs).
+harrow-server = { workspace = true, features = ["lifecycle-trace"] }
 tokio = { workspace = true }
 proptest = { workspace = true }
 bolero = "0.13"
