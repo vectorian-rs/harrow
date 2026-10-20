@@ -68,26 +68,111 @@ impl ServerConfig {
 }
 
 /// Shared shutdown flag used across worker threads.
+///
+/// Check it with [`is_shutdown`](Self::is_shutdown), or await
+/// [`wait`](Self::wait) to be woken when it is set. Runtime-agnostic: waiting
+/// futures park their `Waker`, and [`shutdown`](Self::shutdown) wakes them
+/// from any thread.
 #[derive(Clone)]
 pub struct ShutdownSignal {
-    flag: Arc<AtomicBool>,
+    inner: Arc<ShutdownInner>,
+}
+
+struct ShutdownInner {
+    flag: AtomicBool,
+    waiters: std::sync::Mutex<Waiters>,
+}
+
+#[derive(Default)]
+struct Waiters {
+    next_key: u64,
+    wakers: std::collections::HashMap<u64, std::task::Waker>,
 }
 
 impl ShutdownSignal {
     pub fn new() -> Self {
         Self {
-            flag: Arc::new(AtomicBool::new(false)),
+            inner: Arc::new(ShutdownInner {
+                flag: AtomicBool::new(false),
+                waiters: std::sync::Mutex::new(Waiters::default()),
+            }),
         }
     }
 
-    /// Signal shutdown. All workers will observe this on their next check.
+    /// Signal shutdown and wake every pending [`wait`](Self::wait).
     pub fn shutdown(&self) {
-        self.flag.store(true, Ordering::Release);
+        self.inner.flag.store(true, Ordering::Release);
+        let wakers = std::mem::take(&mut self.lock_waiters().wakers);
+        for waker in wakers.into_values() {
+            waker.wake();
+        }
     }
 
     /// Check if shutdown has been signaled.
     pub fn is_shutdown(&self) -> bool {
-        self.flag.load(Ordering::Acquire)
+        self.inner.flag.load(Ordering::Acquire)
+    }
+
+    /// Resolve once shutdown has been signaled (immediately if it already
+    /// has). Dropping the future before then unregisters it.
+    pub fn wait(&self) -> ShutdownWait<'_> {
+        ShutdownWait {
+            signal: self,
+            key: None,
+        }
+    }
+
+    fn lock_waiters(&self) -> std::sync::MutexGuard<'_, Waiters> {
+        // A panic while holding this lock cannot leave the map inconsistent.
+        self.inner
+            .waiters
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Future returned by [`ShutdownSignal::wait`].
+pub struct ShutdownWait<'a> {
+    signal: &'a ShutdownSignal,
+    key: Option<u64>,
+}
+
+impl std::future::Future for ShutdownWait<'_> {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.signal.is_shutdown() {
+            return std::task::Poll::Ready(());
+        }
+        let mut waiters = self.signal.lock_waiters();
+        // Checked again under the lock: `shutdown` sets the flag before it
+        // takes the lock, so either it sees this waker or this sees the flag.
+        if self.signal.is_shutdown() {
+            return std::task::Poll::Ready(());
+        }
+        let key = match self.key {
+            Some(key) => key,
+            None => {
+                let key = waiters.next_key;
+                waiters.next_key += 1;
+                key
+            }
+        };
+        waiters.wakers.insert(key, cx.waker().clone());
+        drop(waiters);
+        self.key = Some(key);
+        std::task::Poll::Pending
+    }
+}
+
+impl Drop for ShutdownWait<'_> {
+    fn drop(&mut self) {
+        if let Some(key) = self.key {
+            self.signal.lock_waiters().wakers.remove(&key);
+        }
     }
 }
 
@@ -584,5 +669,62 @@ mod tests {
             panic!("startup should fail");
         };
         assert!(err.to_string().contains("exited before reporting"), "{err}");
+    }
+
+    /// Minimal executor: block on `future`, parking the thread between polls.
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        struct ThreadWaker(thread::Thread);
+        impl std::task::Wake for ThreadWaker {
+            fn wake(self: Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+        let waker = std::task::Waker::from(Arc::new(ThreadWaker(thread::current())));
+        let mut cx = std::task::Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            if let std::task::Poll::Ready(out) = future.as_mut().poll(&mut cx) {
+                return out;
+            }
+            thread::park();
+        }
+    }
+
+    #[test]
+    fn wait_is_woken_by_shutdown_from_another_thread() {
+        let signal = ShutdownSignal::new();
+        let remote = signal.clone();
+        let trigger = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            remote.shutdown();
+        });
+        block_on(signal.wait());
+        assert!(signal.is_shutdown());
+        trigger.join().unwrap();
+    }
+
+    #[test]
+    fn wait_after_shutdown_is_ready_immediately() {
+        let signal = ShutdownSignal::new();
+        signal.shutdown();
+        block_on(signal.wait());
+    }
+
+    #[test]
+    fn dropping_a_pending_wait_unregisters_its_waker() {
+        let signal = ShutdownSignal::new();
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        {
+            let mut wait = std::pin::pin!(signal.wait());
+            assert!(wait.as_mut().poll(&mut cx).is_pending());
+            assert!(wait.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(
+                signal.lock_waiters().wakers.len(),
+                1,
+                "re-poll reuses its slot"
+            );
+        }
+        assert!(signal.lock_waiters().wakers.is_empty());
     }
 }

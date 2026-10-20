@@ -2963,7 +2963,6 @@ mod h1_adversarial {
     }
 
     #[tokio::test]
-    #[ignore = "bug #98: ShutdownSignal is a polled flag, so an idle keep-alive connection blocked in read_request_head is not woken; shutdown waits for header_read_timeout or drain_timeout"]
     async fn tcp_shutdown_closes_idle_keep_alive_connection_promptly() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -3000,6 +2999,52 @@ mod h1_adversarial {
         .await
         .expect("shutdown should not wait for idle keep-alive connections")
         .unwrap();
+    }
+
+    /// Shutdown may end an idle wait, but not a request that has started
+    /// arriving: the rest of its head is still read and answered.
+    #[tokio::test]
+    async fn tcp_shutdown_lets_a_partially_received_request_finish() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let server = spawn_server_thread(
+            || App::new().get("/hello", hello),
+            addr,
+            rx,
+            harrow_server_tokio::ServerConfig {
+                header_read_timeout: Some(Duration::from_secs(10)),
+                drain_timeout: Duration::from_secs(10),
+                ..Default::default()
+            },
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /hello HTTP/1.1\r\nHost: lo")
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let _ = tx.send(());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        stream
+            .write_all(b"calhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+
+        let response = read_until_close(&mut stream).await;
+        assert!(
+            response.starts_with(b"HTTP/1.1 200 OK\r\n"),
+            "{}",
+            String::from_utf8_lossy(&response)
+        );
+        tokio::task::spawn_blocking(move || server.join().unwrap())
+            .await
+            .unwrap();
     }
 } // mod h1_adversarial
 

@@ -53,29 +53,40 @@ where
             break;
         }
 
-        let parsed =
-            match request_head::read_request_head(&mut read_stream, &mut buf, config, &mut trace)
-                .await
-            {
-                request_head::RequestHeadRead::Parsed(parsed) => *parsed,
-                request_head::RequestHeadRead::WriteError(error_response) => {
-                    write_error_response(&writer, error_response, &mut trace).await;
-                    break;
-                }
-                request_head::RequestHeadRead::Close(reason) => {
-                    match reason {
-                        // The model treats peer EOF like any failed read.
-                        request_head::CloseReason::Eof | request_head::CloseReason::IoError => {
-                            trace.record(Event::IoError);
-                        }
-                        request_head::CloseReason::Timeout => {
-                            trace.record(Event::Timeout);
-                            trace.record(Event::ClosedCqe);
-                        }
+        let parsed = match request_head::read_request_head(
+            &mut read_stream,
+            &mut buf,
+            config,
+            &mut trace,
+            shutdown,
+        )
+        .await
+        {
+            request_head::RequestHeadRead::Parsed(parsed) => *parsed,
+            request_head::RequestHeadRead::WriteError(error_response) => {
+                write_error_response(&writer, error_response, &mut trace).await;
+                break;
+            }
+            request_head::RequestHeadRead::Close(reason) => {
+                match reason {
+                    // The model treats peer EOF like any failed read.
+                    request_head::CloseReason::Eof | request_head::CloseReason::IoError => {
+                        trace.record(Event::IoError);
                     }
-                    break;
+                    request_head::CloseReason::Timeout => {
+                        trace.record(Event::Timeout);
+                        trace.record(Event::ClosedCqe);
+                    }
+                    // Same as noticing shutdown at the top of the loop.
+                    request_head::CloseReason::Shutdown => {
+                        trace.record(Event::Shutdown);
+                        trace.record(Event::Timeout);
+                        trace.record(Event::ClosedCqe);
+                    }
                 }
-            };
+                break;
+            }
+        };
 
         let keep_alive = parsed.keep_alive;
         let content_length = parsed.content_length;
