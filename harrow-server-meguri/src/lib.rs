@@ -576,9 +576,7 @@ fn worker_loop(
     }
 
     if shutdown.is_shutdown() {
-        for (_, conn) in conns.iter_mut() {
-            conn.trace.record(Event::Shutdown);
-        }
+        begin_drain(&mut conns);
     }
 
     // Drain phase: wait for in-flight connections.
@@ -659,6 +657,31 @@ fn worker_loop(
     match failure {
         Some(err) => Err(Box::new(err)),
         None => Ok(()),
+    }
+}
+
+/// Shutdown started. In-flight requests are finished without keep-alive,
+/// and idle connections (waiting for a request of which no byte has
+/// arrived) are closed now: otherwise each would hold the drain until its
+/// header read timeout, or until the drain timeout without one. A request
+/// that is partly received is still read and answered.
+#[cfg(target_os = "linux")]
+fn begin_drain(conns: &mut slab::Slab<connection::Conn>) {
+    let mut idle = Vec::new();
+    for (idx, conn) in conns.iter_mut() {
+        conn.trace.record(Event::Shutdown);
+        if matches!(conn.state, connection::ConnState::Closed) {
+            continue;
+        }
+        conn.draining = true;
+        conn.keep_alive = false;
+        if matches!(conn.state, connection::ConnState::Headers) && conn.buf.is_empty() {
+            idle.push(idx);
+        }
+    }
+    for idx in idle {
+        // The server stops waiting for the next request.
+        close_conn(idx, conns, CloseReason::Timeout);
     }
 }
 

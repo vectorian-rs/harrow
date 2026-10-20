@@ -146,6 +146,9 @@ pub(crate) struct Conn {
     /// A RECV was already armed for the current request body, so a further
     /// one is the model's `BodyNeedMore`.
     pub body_recv_armed: bool,
+    /// The server is shutting down: requests still read on this connection
+    /// are answered with `connection: close`.
+    pub draining: bool,
 }
 
 /// Where an in-flight RECV writes: the start of `buf`'s spare capacity at
@@ -229,6 +232,7 @@ impl Conn {
             trace: Trace::new(),
             awaiting_closed_cqe: false,
             body_recv_armed: false,
+            draining: false,
         }
     }
 
@@ -366,7 +370,7 @@ impl Conn {
                     return self.reject(ErrorResponse::PayloadTooLarge);
                 }
 
-                self.keep_alive = parsed.keep_alive;
+                self.keep_alive = parsed.keep_alive && !self.draining;
                 self.request_body = None;
                 self.pending_request_body = None;
 

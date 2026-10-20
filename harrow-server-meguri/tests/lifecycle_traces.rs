@@ -542,3 +542,54 @@ fn peer_closes_mid_body() {
         [Accept, HeadersParsed { has_body: true }, IoError]
     );
 }
+
+#[test]
+fn shutdown_during_an_active_request_and_with_an_idle_connection() {
+    let _serial = serial();
+    // 2 s header timeout: the idle connection must close because of the
+    // shutdown, not because that timeout fires.
+    let (addr, server) = start(config());
+
+    // Idle keep-alive connection: one request done, waiting for the next.
+    let mut idle = TcpStream::connect(addr).unwrap();
+    idle.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    idle.write_all(b"GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
+        .unwrap();
+    read_until_suffix(&mut idle, "hello");
+
+    // Active request: the handler is still running when shutdown starts.
+    let active =
+        std::thread::spawn(move || exchange(addr, b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n"));
+    std::thread::sleep(Duration::from_millis(100));
+    let shutdown_started = Instant::now();
+    server.shutdown().unwrap();
+    assert!(
+        shutdown_started.elapsed() < Duration::from_secs(1),
+        "shutdown waited {:?}; idle connections should not hold it up",
+        shutdown_started.elapsed()
+    );
+
+    let response = active.join().unwrap();
+    assert!(
+        response.ends_with("slow"),
+        "in-flight request must finish: {response}"
+    );
+    assert!(
+        response.to_ascii_lowercase().contains("connection: close"),
+        "response during shutdown must not advertise keep-alive: {response}"
+    );
+
+    let traces = wait_for_traces(2);
+    assert_replays(&traces);
+    let ends: Vec<Vec<Event>> = traces.iter().map(|t| without_partial_io(t)).collect();
+    assert!(
+        ends.iter()
+            .any(|t| t.ends_with(&[Shutdown, DispatchDone, DONE_CLOSE])),
+        "in-flight request should answer without keep-alive: {ends:?}"
+    );
+    assert!(
+        ends.iter()
+            .any(|t| t.ends_with(&[DONE_KEEP, Shutdown, Timeout, ClosedCqe])),
+        "idle connection should close because of the shutdown: {ends:?}"
+    );
+}
