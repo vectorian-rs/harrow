@@ -93,6 +93,8 @@ use harrow_core::dispatch::{self, SharedState};
 use harrow_core::route::App;
 #[cfg(target_os = "linux")]
 use harrow_server::h1::{EarlyResponseMode, ErrorResponse, early_response_control};
+#[cfg(target_os = "linux")]
+use harrow_server::h1_lifecycle::Event;
 
 #[cfg(target_os = "linux")]
 #[derive(Clone)]
@@ -573,6 +575,10 @@ fn worker_loop(
         );
     }
 
+    if shutdown.is_shutdown() {
+        begin_drain(&mut conns);
+    }
+
     // Drain phase: wait for in-flight connections.
     let drain_start = std::time::Instant::now();
     while failure.is_none() && !conns.is_empty() && drain_start.elapsed() < config.drain_timeout {
@@ -654,6 +660,31 @@ fn worker_loop(
     }
 }
 
+/// Shutdown started. In-flight requests are finished without keep-alive,
+/// and idle connections (waiting for a request of which no byte has
+/// arrived) are closed now: otherwise each would hold the drain until its
+/// header read timeout, or until the drain timeout without one. A request
+/// that is partly received is still read and answered.
+#[cfg(target_os = "linux")]
+fn begin_drain(conns: &mut slab::Slab<connection::Conn>) {
+    let mut idle = Vec::new();
+    for (idx, conn) in conns.iter_mut() {
+        conn.trace.record(Event::Shutdown);
+        if matches!(conn.state, connection::ConnState::Closed) {
+            continue;
+        }
+        conn.draining = true;
+        conn.keep_alive = false;
+        if matches!(conn.state, connection::ConnState::Headers) && conn.buf.is_empty() {
+            idle.push(idx);
+        }
+    }
+    for idx in idle {
+        // The server stops waiting for the next request.
+        close_conn(idx, conns, CloseReason::Timeout);
+    }
+}
+
 /// Submit queued SQEs and block until at least one CQE is available.
 ///
 /// `EINTR` (any signal delivered to the worker thread, e.g. a profiler's
@@ -696,7 +727,8 @@ fn teardown(
 ) {
     let all: Vec<usize> = conns.iter().map(|(idx, _)| idx).collect();
     for idx in all {
-        close_conn(idx, conns);
+        // The drain ended: the server stops waiting for these connections.
+        close_conn(idx, conns, CloseReason::Timeout);
     }
     if conns.is_empty() && !*accept_armed {
         return;
@@ -777,7 +809,19 @@ fn release_if_idle(idx: usize, conns: &mut slab::Slab<connection::Conn>) {
     if conns.get(idx).is_some_and(|conn| {
         matches!(conn.state, connection::ConnState::Closed) && !conn.has_io_in_flight()
     }) {
-        conns.remove(idx);
+        remove_conn(idx, conns);
+    }
+}
+
+/// Remove a connection from its slot. Every removal goes through here, so a
+/// connection closed by a timeout records the model's `ClosedCqe` (its
+/// abandoned read or write is over) before its trace is recorded on drop.
+#[cfg(target_os = "linux")]
+fn remove_conn(idx: usize, conns: &mut slab::Slab<connection::Conn>) {
+    if let Some(mut conn) = conns.try_remove(idx)
+        && conn.awaiting_closed_cqe
+    {
+        conn.trace.record(Event::ClosedCqe);
     }
 }
 
@@ -794,7 +838,7 @@ fn reap_closed_drain_connections(conns: &mut slab::Slab<connection::Conn>) {
         .collect();
 
     for idx in closed {
-        let _ = conns.try_remove(idx);
+        remove_conn(idx, conns);
     }
 }
 
@@ -994,6 +1038,7 @@ fn handle_accept(
 
     // From here the `Conn` owns `fd`; `close_conn` closes it.
     let mut conn = connection::Conn::new(fd);
+    conn.trace.record(Event::Accept);
     conn.generation = *next_generation;
     *next_generation = next_generation.wrapping_add(1) & CONN_GENERATION_MASK;
     let conn_idx = conns.insert(conn);
@@ -1082,7 +1127,7 @@ fn handle_recv_completion(
             std::io::Error::from_raw_os_error(-res)
         );
         conn.discard_recv();
-        close_conn(conn_idx, conns);
+        close_conn(conn_idx, conns, CloseReason::IoError);
         return;
     }
 
@@ -1091,7 +1136,7 @@ fn handle_recv_completion(
         Err(connection::RecvBufferMoved) => {
             debug_assert!(false, "receive buffer moved while a RECV was in flight");
             tracing::error!("receive buffer moved under a RECV on fd {}", conn.fd);
-            close_conn(conn_idx, conns);
+            close_conn(conn_idx, conns, CloseReason::IoError);
             return;
         }
     };
@@ -1100,6 +1145,13 @@ fn handle_recv_completion(
         let result = conns[conn_idx].on_recv(nbytes, config.max_body_size);
         handle_process_result(ring, conns, conn_idx, result, shared, local, config);
     } else if matches!(conns[conn_idx].state, connection::ConnState::Dispatching) {
+        if nbytes == 0 {
+            // Peer EOF before the request body ended: the body can never
+            // complete. (Pumping again would only queue another RECV that
+            // returns 0 at once, spinning until the body read timeout.)
+            close_conn(conn_idx, conns, CloseReason::IoError);
+            return;
+        }
         advance_dispatching_connection(ring, conns, conn_idx, shared, local, config);
     }
 }
@@ -1135,7 +1187,7 @@ fn handle_write_completion(
             conn.fd,
             std::io::Error::from_raw_os_error(-res)
         );
-        close_conn(conn_idx, conns);
+        close_conn(conn_idx, conns, CloseReason::IoError);
         return;
     }
 
@@ -1364,17 +1416,17 @@ fn sweep_timed_out_connections(
                 conns[idx].arm_timeout_error(ErrorResponse::RequestTimeout);
                 let token = ConnToken::of(idx, &conns[idx]);
                 if !submit_recv_cancel(ring, token) {
-                    close_conn(idx, conns);
+                    close_conn(idx, conns, CloseReason::Timeout);
                 }
             } else if write_pending {
-                close_conn(idx, conns);
+                close_conn(idx, conns, CloseReason::Timeout);
             } else {
                 conns[idx].set_error_response(ErrorResponse::RequestTimeout);
                 submit_write_or_close(ring, idx, conns);
             }
         } else {
             tracing::debug!("closing timed-out connection fd={}", conns[idx].fd);
-            close_conn(idx, conns);
+            close_conn(idx, conns, CloseReason::Timeout);
         }
 
         refresh_timeout_deadline(deadline_heap, conns, idx, config);
@@ -1418,11 +1470,21 @@ fn submit_continue(_ring: &mut meguri::Ring, _conn_idx: usize, conn: &mut connec
 /// The socket is shut down first: io_uring holds its own reference to the
 /// file, so close(2) alone would neither send FIN nor complete the RECV.
 #[cfg(target_os = "linux")]
-fn close_conn(conn_idx: usize, conns: &mut slab::Slab<connection::Conn>) {
+fn close_conn(conn_idx: usize, conns: &mut slab::Slab<connection::Conn>, reason: CloseReason) {
     let Some(conn) = conns.get_mut(conn_idx) else {
         return;
     };
     let in_flight = conn.has_io_in_flight();
+    if !matches!(conn.state, connection::ConnState::Closed) {
+        match reason {
+            CloseReason::Finished => {}
+            CloseReason::IoError => conn.trace.record(Event::IoError),
+            CloseReason::Timeout => {
+                conn.trace.record(Event::Timeout);
+                conn.awaiting_closed_cqe = conn.lifecycle_io_pending();
+            }
+        }
+    }
     if conn.fd >= 0 {
         // SAFETY: `conn.fd` is the connection's own socket, still open
         // (`fd >= 0`), and closed exactly once here. shutdown(2) can only
@@ -1440,8 +1502,23 @@ fn close_conn(conn_idx: usize, conns: &mut slab::Slab<connection::Conn>) {
     if in_flight {
         conn.mark_closed();
     } else {
-        conns.remove(conn_idx);
+        remove_conn(conn_idx, conns);
     }
+}
+
+/// Why `close_conn` closes a connection, for its lifecycle trace.
+#[cfg(target_os = "linux")]
+#[derive(Copy, Clone, Debug)]
+enum CloseReason {
+    /// The trace already ends the connection (`WriteDone` with
+    /// `keep_alive: false`, or a failed response recorded as `IoError`).
+    Finished,
+    /// Peer EOF, a failed RECV/SEND, or no room to queue one.
+    IoError,
+    /// The server stops waiting: header/body/lifetime timeout, or the drain
+    /// ended. A read or write the model still has pending ends with
+    /// `ClosedCqe` when the slot is freed.
+    Timeout,
 }
 
 /// Submit a RECV or close the connection on SQ full.
@@ -1452,7 +1529,7 @@ fn submit_recv_or_close(
     conns: &mut slab::Slab<connection::Conn>,
 ) {
     if !submit_recv(ring, conn_idx, &mut conns[conn_idx]) {
-        close_conn(conn_idx, conns);
+        close_conn(conn_idx, conns, CloseReason::IoError);
     }
 }
 
@@ -1464,7 +1541,7 @@ fn submit_write_or_close(
     conns: &mut slab::Slab<connection::Conn>,
 ) {
     if !submit_write(ring, conn_idx, &mut conns[conn_idx]) {
-        close_conn(conn_idx, conns);
+        close_conn(conn_idx, conns, CloseReason::IoError);
     }
 }
 
@@ -1558,7 +1635,7 @@ fn handle_process_result(
             }
 
             if !spawn_dispatch_task(conn_idx, conns, shared, local) {
-                close_conn(conn_idx, conns);
+                close_conn(conn_idx, conns, CloseReason::IoError);
                 return;
             }
 
@@ -1567,12 +1644,11 @@ fn handle_process_result(
         connection::ProcessResult::WriteError(resp) => {
             conns[conn_idx].set_serialized_response(resp, false);
             conns[conn_idx].buf.clear();
-            if !submit_write(ring, conn_idx, &mut conns[conn_idx]) {
-                close_conn(conn_idx, conns);
-            }
+            submit_write_or_close(ring, conn_idx, conns);
         }
+        // Peer EOF while waiting for a request head.
         connection::ProcessResult::Close => {
-            close_conn(conn_idx, conns);
+            close_conn(conn_idx, conns, CloseReason::IoError);
         }
     }
 }
@@ -1602,7 +1678,7 @@ fn handle_write_result(
             handle_process_result(ring, conns, conn_idx, process_result, shared, local, config);
         }
         connection::WriteResult::Close => {
-            close_conn(conn_idx, conns);
+            close_conn(conn_idx, conns, CloseReason::Finished);
         }
     }
 }
@@ -1633,8 +1709,9 @@ fn advance_response_stream(
             conns[conn_idx].set_internal_server_error();
             submit_write_or_close(ring, conn_idx, conns);
         }
+        // The response body failed after its head went out.
         connection::ResponseProgress::StreamError => {
-            close_conn(conn_idx, conns);
+            close_conn(conn_idx, conns, CloseReason::IoError);
         }
     }
 }
@@ -1705,6 +1782,13 @@ fn advance_dispatching_connection(
     }
 
     if let Some(dispatch_result) = conns[conn_idx].poll_dispatch_result() {
+        let conn = &mut conns[conn_idx];
+        conn.trace.record(if conn.request_body_in_progress() {
+            // The handler answered before the request body ended.
+            Event::EarlyResponse
+        } else {
+            Event::DispatchDone
+        });
         match dispatch_result {
             Ok(response) => {
                 if conns[conn_idx].request_body_in_progress() {
@@ -1740,12 +1824,20 @@ fn advance_dispatching_connection(
 
     match conns[conn_idx].pump_request_body(config.max_body_size) {
         connection::BodyPumpResult::NeedRecv => {
+            let conn = &mut conns[conn_idx];
+            // The model's first body read is armed by `HeadersParsed`.
+            if std::mem::replace(&mut conn.body_recv_armed, true) {
+                conn.trace.record(Event::BodyNeedMore);
+            }
             submit_recv_or_close(ring, conn_idx, conns);
         }
-        connection::BodyPumpResult::Blocked | connection::BodyPumpResult::Eof => {}
+        connection::BodyPumpResult::Blocked => {}
+        connection::BodyPumpResult::Eof => conns[conn_idx].trace.record(Event::BodyDone),
         connection::BodyPumpResult::ReceiverClosed => {
+            // The handler dropped the request body: no more body to read.
             let control = early_response_control(EarlyResponseMode::DropRequestBody);
             let conn = &mut conns[conn_idx];
+            conn.trace.record(Event::BodyDone);
             conn.keep_alive = control.keep_alive;
             conn.abort_request_body();
         }
@@ -1889,7 +1981,7 @@ mod tests {
         conns[idx].recv_pending = true;
         conns[idx].write_pending = true;
 
-        close_conn(idx, &mut conns);
+        close_conn(idx, &mut conns, CloseReason::IoError);
         assert!(conns.contains(idx), "buffers still referenced by SQEs");
         assert!(matches!(conns[idx].state, connection::ConnState::Closed));
         assert_eq!(conns[idx].fd, -1);
@@ -1907,10 +1999,10 @@ mod tests {
     fn closing_an_idle_connection_frees_the_slot_at_once() {
         let mut conns = slab::Slab::new();
         let idx = conns.insert(conn_with_generation(1));
-        close_conn(idx, &mut conns);
+        close_conn(idx, &mut conns, CloseReason::IoError);
         assert!(!conns.contains(idx));
         // Closing again (e.g. from a stale path) is a no-op.
-        close_conn(idx, &mut conns);
+        close_conn(idx, &mut conns, CloseReason::IoError);
     }
 
     #[test]

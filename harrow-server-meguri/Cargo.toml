@@ -37,6 +37,8 @@ tokio = { workspace = true, features = ["rt"] }
 slab = "0.4"
 
 [dev-dependencies]
+# Record lifecycle traces in tests (tests/lifecycle_traces.rs).
+harrow-server = { workspace = true, features = ["lifecycle-trace"] }
 harrow-middleware = { workspace = true }
 harrow-o11y = { workspace = true }
 proptest = { workspace = true }

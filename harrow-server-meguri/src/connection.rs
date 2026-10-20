@@ -28,6 +28,7 @@ use harrow_server::h1::{
     finish_fixed_response_body, prepare_response, record_fixed_response_bytes,
     request_exceeds_body_limit,
 };
+use harrow_server::h1_lifecycle::{Event, trace::Trace};
 
 const MAX_REQUEST_BODY_BUFFER_SIZE: usize = 32 * 1024;
 const MAX_RESPONSE_BUFFER_SIZE: usize = 32 * 1024;
@@ -136,6 +137,18 @@ pub(crate) struct Conn {
     pub generation: u32,
     /// The spare capacity of `buf` handed to the in-flight RECV.
     recv_target: Option<RecvTarget>,
+    /// Lifecycle events for `h1_lifecycle::Machine`, recorded when the
+    /// `Conn` is dropped (only with the `lifecycle-trace` feature).
+    pub trace: Trace,
+    /// The connection was closed by a timeout while the model still had a
+    /// read or write pending: `ClosedCqe` is recorded when the slot is freed.
+    pub awaiting_closed_cqe: bool,
+    /// A RECV was already armed for the current request body, so a further
+    /// one is the model's `BodyNeedMore`.
+    pub body_recv_armed: bool,
+    /// The server is shutting down: requests still read on this connection
+    /// are answered with `connection: close`.
+    pub draining: bool,
 }
 
 /// Where an in-flight RECV writes: the start of `buf`'s spare capacity at
@@ -216,6 +229,24 @@ impl Conn {
             tracked_deadline: None,
             generation: 0,
             recv_target: None,
+            trace: Trace::new(),
+            awaiting_closed_cqe: false,
+            body_recv_armed: false,
+            draining: false,
+        }
+    }
+
+    /// Whether the lifecycle model has a read or write pending for this
+    /// connection: every phase but "handler running, no request body left
+    /// to read" (the model's `Dispatching`). A response that waits for its
+    /// next chunk is still `Writing`.
+    pub fn lifecycle_io_pending(&self) -> bool {
+        match self.state {
+            ConnState::Headers | ConnState::Writing => true,
+            ConnState::Dispatching => {
+                self.request_body_in_progress() || self.dispatch_handle.is_none()
+            }
+            ConnState::Closed => false,
         }
     }
 
@@ -301,10 +332,30 @@ impl Conn {
         }
 
         match self.state {
-            ConnState::Headers => self.process_headers(max_body),
+            ConnState::Headers => {
+                let result = self.process_headers(max_body);
+                if matches!(result, ProcessResult::NeedRecv) {
+                    self.trace.record(Event::HeadersNeedMore);
+                }
+                result
+            }
             ConnState::Dispatching => ProcessResult::Dispatch,
             _ => ProcessResult::Close,
         }
+    }
+
+    /// An error response decided while reading the head: the model's
+    /// `ProtocolError` (`BodyLimitExceeded` for 413).
+    fn reject(&mut self, error: ErrorResponse) -> ProcessResult {
+        self.record_error_response(error);
+        ProcessResult::WriteError(wire_error(error, false))
+    }
+
+    fn record_error_response(&mut self, error: ErrorResponse) {
+        self.trace.record(match error {
+            ErrorResponse::PayloadTooLarge => Event::BodyLimitExceeded,
+            _ => Event::ProtocolError,
+        });
     }
 
     fn process_headers(&mut self, max_body: usize) -> ProcessResult {
@@ -316,13 +367,10 @@ impl Conn {
                 self.buf.advance(header_len);
 
                 if request_exceeds_body_limit(content_length, max_body) {
-                    return ProcessResult::WriteError(wire_error(
-                        ErrorResponse::PayloadTooLarge,
-                        false,
-                    ));
+                    return self.reject(ErrorResponse::PayloadTooLarge);
                 }
 
-                self.keep_alive = parsed.keep_alive;
+                self.keep_alive = parsed.keep_alive && !self.draining;
                 self.request_body = None;
                 self.pending_request_body = None;
 
@@ -334,24 +382,18 @@ impl Conn {
                 } else {
                     self.pending_request_body = Some(empty_body());
                 }
+                self.trace.record(Event::HeadersParsed { has_body });
+                self.body_recv_armed = false;
 
                 self.parsed = Some(parsed);
                 self.state = ConnState::Dispatching;
                 ProcessResult::Dispatch
             }
             Err(CodecError::Incomplete) => ProcessResult::NeedRecv,
-            Err(CodecError::HeadersTooLarge) => {
-                ProcessResult::WriteError(wire_error(ErrorResponse::RequestHeadersTooLarge, false))
-            }
-            Err(CodecError::Invalid(_)) => {
-                ProcessResult::WriteError(wire_error(ErrorResponse::BadRequest, false))
-            }
-            Err(CodecError::BodyTooLarge) => {
-                ProcessResult::WriteError(wire_error(ErrorResponse::PayloadTooLarge, false))
-            }
-            Err(CodecError::ExpectationFailed) => {
-                ProcessResult::WriteError(wire_error(ErrorResponse::ExpectationFailed, false))
-            }
+            Err(CodecError::HeadersTooLarge) => self.reject(ErrorResponse::RequestHeadersTooLarge),
+            Err(CodecError::Invalid(_)) => self.reject(ErrorResponse::BadRequest),
+            Err(CodecError::BodyTooLarge) => self.reject(ErrorResponse::PayloadTooLarge),
+            Err(CodecError::ExpectationFailed) => self.reject(ErrorResponse::ExpectationFailed),
         }
     }
 
@@ -493,6 +535,7 @@ impl Conn {
         self.response_written += nbytes;
 
         if self.response_written < self.response_buf.len() {
+            self.trace.record(Event::WriteProgress);
             return WriteResult::WriteMore;
         }
 
@@ -502,8 +545,12 @@ impl Conn {
         if self.response_done {
             self.finish_response()
         } else if self.response_failed {
+            // The response body failed after its head went out: the
+            // response cannot be completed, as if the write had failed.
+            self.trace.record(Event::IoError);
             WriteResult::Close
         } else {
+            self.trace.record(Event::WriteProgress);
             WriteResult::AwaitResponse
         }
     }
@@ -541,7 +588,10 @@ impl Conn {
         self.state = ConnState::Writing;
     }
 
+    /// Answer with an error response decided while reading the request
+    /// body (bad framing, body over the limit, body read timeout).
     pub fn set_error_response(&mut self, error: ErrorResponse) {
+        self.record_error_response(error);
         self.set_serialized_response(wire_error(error, false), false);
     }
 
@@ -584,6 +634,12 @@ impl Conn {
     }
 
     fn finish_response(&mut self) -> WriteResult {
+        // Leftover bytes on a closing connection (e.g. the rest of a
+        // rejected body) are not a next request.
+        self.trace.record(Event::WriteDone {
+            keep_alive: self.keep_alive,
+            buffered_next_request: self.keep_alive && !self.buf.is_empty(),
+        });
         if self.keep_alive {
             self.reset();
             WriteResult::RecvNext

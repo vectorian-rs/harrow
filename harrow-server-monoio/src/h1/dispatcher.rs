@@ -21,8 +21,10 @@ use monoio::net::TcpStream;
 use harrow_core::dispatch::SharedState;
 use harrow_io::BufPool;
 use harrow_server::h1::{
-    EarlyResponseMode, RequestBodyDecision, decide_request_body_progress, early_response_control,
+    EarlyResponseMode, ErrorResponse, RequestBodyDecision, decide_request_body_progress,
+    early_response_control,
 };
+use harrow_server::h1_lifecycle::{Event, trace::Trace};
 
 use crate::h1::request_body;
 use crate::o11y::ConnectionMetrics;
@@ -55,6 +57,9 @@ pub(crate) struct H1Connection {
     pub(crate) buf: BytesMut,
     pub(crate) write_buf: BytesMut,
     pub(crate) connection_deadline: Option<Instant>,
+    /// Lifecycle events for `h1_lifecycle::Machine`, recorded when the
+    /// connection is dropped (only with the `lifecycle-trace` feature).
+    pub(crate) trace: Trace,
 }
 
 impl H1Connection {
@@ -66,6 +71,7 @@ impl H1Connection {
             buf: BytesMut::with_capacity(8192),
             write_buf: BufPool::acquire_write(),
             connection_deadline: None,
+            trace: Trace::new(),
         }
     }
 
@@ -96,26 +102,36 @@ impl H1Connection {
     /// Inner connection loop.
     async fn run_inner(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let max_body = self.config.shared.max_body_size;
+        self.trace.record(Event::Accept);
 
         'connection: loop {
-            self.check_connection_deadline()?;
+            // Connection lifetime reached while waiting for the next request:
+            // the pending read is abandoned (`Timeout`, then `ClosedCqe`).
+            if let Err(err) = self.check_connection_deadline() {
+                self.trace.record(Event::Timeout);
+                self.trace.record(Event::ClosedCqe);
+                return Err(err);
+            }
 
             // Read headers
             let parsed = match self.read_headers().await {
                 Ok(parsed) => parsed,
-                Err(ProtocolError::StreamClosed) => return Ok(()),
+                Err(ProtocolError::StreamClosed) => {
+                    self.trace.record(Event::IoError);
+                    return Ok(());
+                }
+                // Monoio answers a header timeout with 408 and a malformed or
+                // truncated head with 400: error responses, in the model.
                 Err(ProtocolError::Timeout) => {
-                    let error = harrow_server::h1::ErrorResponse::RequestTimeout;
-                    let _ = self.write_status(error.status(), error.body()).await;
+                    self.write_error_traced(ErrorResponse::RequestTimeout).await;
                     return Ok(());
                 }
                 Err(ProtocolError::Rejected(error)) => {
-                    let _ = self.write_status(error.status(), error.body()).await;
+                    self.write_error_traced(error).await;
                     return Ok(());
                 }
                 Err(e) => {
-                    let error = harrow_server::h1::ErrorResponse::BadRequest;
-                    let _ = self.write_status(error.status(), error.body()).await;
+                    self.write_error_traced(ErrorResponse::BadRequest).await;
                     return Err(Box::new(e));
                 }
             };
@@ -125,9 +141,13 @@ impl H1Connection {
 
             // Early reject: Content-Length exceeds limit
             if harrow_server::h1::request_exceeds_body_limit(parsed.content_length, max_body) {
-                let error = harrow_server::h1::ErrorResponse::PayloadTooLarge;
-                self.write_status(error.status(), error.body()).await?;
-                break;
+                if self
+                    .write_error_traced(ErrorResponse::PayloadTooLarge)
+                    .await
+                {
+                    break;
+                }
+                return Err(Box::new(ProtocolError::BodyTooLarge));
             }
 
             let (mut request_body_state, body) =
@@ -135,7 +155,12 @@ impl H1Connection {
                     .await
                 {
                     Ok(state) => state,
-                    Err(err) => return Err(Box::new(err)),
+                    Err(err) => {
+                        // Writing the interim `100 Continue` failed.
+                        self.trace.record(Event::HeadersParsed { has_body: true });
+                        self.trace.record(Event::IoError);
+                        return Err(Box::new(err));
+                    }
                 };
 
             let mut response_fut = std::pin::pin!(request_body::dispatch_request(
@@ -145,15 +170,22 @@ impl H1Connection {
             ));
 
             let mut body_complete = request_body_state.is_complete();
+            self.trace.record(Event::HeadersParsed {
+                has_body: !body_complete,
+            });
             let mut connection_reusable = keep_alive;
 
             let response = loop {
                 if body_complete {
-                    break response_fut.await;
+                    let response = response_fut.await;
+                    self.trace.record(Event::DispatchDone);
+                    break response;
                 }
 
                 monoio::select! {
                     response = &mut response_fut => {
+                        // The handler answered before the request body ended.
+                        self.trace.record(Event::EarlyResponse);
                         let control = early_response_control(EarlyResponseMode::DropRequestBody);
                         connection_reusable = control.keep_alive;
                         request_body_state.abort();
@@ -165,16 +197,20 @@ impl H1Connection {
                             connection_reusable,
                             EarlyResponseMode::DropRequestBody,
                         ) {
-                            RequestBodyDecision::Continue => {}
+                            RequestBodyDecision::Continue => self.trace.record(Event::BodyNeedMore),
                             RequestBodyDecision::BodyComplete { keep_alive, .. } => {
+                                self.trace.record(Event::BodyDone);
                                 body_complete = true;
                                 connection_reusable = keep_alive;
                             }
                             RequestBodyDecision::WriteError(error) => {
-                                self.write_status(error.status(), error.body()).await?;
-                                break 'connection;
+                                if self.write_error_traced(error).await {
+                                    break 'connection;
+                                }
+                                return Err(Box::new(ProtocolError::StreamClosed));
                             }
                             RequestBodyDecision::CloseConnection => {
+                                self.trace.record(Event::IoError);
                                 break 'connection;
                             }
                         }
@@ -188,8 +224,17 @@ impl H1Connection {
             }
 
             // Write response
-            self.write_response(response, version, connection_reusable, is_head_request)
-                .await?;
+            if let Err(err) = self
+                .write_response(response, version, connection_reusable, is_head_request)
+                .await
+            {
+                self.trace.record(Event::IoError);
+                return Err(err);
+            }
+            self.trace.record(Event::WriteDone {
+                keep_alive: connection_reusable,
+                buffered_next_request: !self.buf.is_empty(),
+            });
 
             if !connection_reusable {
                 break;
@@ -231,5 +276,30 @@ pub(crate) async fn handle_connection(stream: TcpStream, conn: crate::connection
     // Run the connection within the span
     if let Err(e) = conn.run().instrument(span).await {
         tracing::debug!(error = %e, "h1 connection error");
+    }
+}
+
+impl H1Connection {
+    /// Write an error response and close: the model's `ProtocolError` /
+    /// `BodyLimitExceeded`, then `WriteDone` (or `IoError` if the write
+    /// fails). Returns whether the write succeeded.
+    async fn write_error_traced(&mut self, error: ErrorResponse) -> bool {
+        self.trace.record(match error {
+            ErrorResponse::PayloadTooLarge => Event::BodyLimitExceeded,
+            _ => Event::ProtocolError,
+        });
+        let written = self
+            .write_status(error.status(), error.body())
+            .await
+            .is_ok();
+        self.trace.record(if written {
+            Event::WriteDone {
+                keep_alive: false,
+                buffered_next_request: false,
+            }
+        } else {
+            Event::IoError
+        });
+        written
     }
 }

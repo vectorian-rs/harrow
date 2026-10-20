@@ -157,11 +157,16 @@ impl Machine {
                 Action::ArmWrite
             }
 
-            (Headers | Body, Recv | Write, Timeout) => {
+            // The server stops waiting on a pending read or write: header or
+            // body read timeout, connection lifetime, end of the drain. The
+            // lifetime also bounds a response the peer reads too slowly (or
+            // that stalls), so a write can be abandoned too. The slot is
+            // kept until the abandoned operation completes.
+            (Headers | Body | Writing, Recv | Write, Timeout) => {
                 self.state = Closed;
                 Action::AwaitClosedCqe
             }
-            (Dispatching | Writing, PendingIo::None, Timeout) => {
+            (Dispatching, PendingIo::None, Timeout) => {
                 self.state = Free;
                 self.pending_io = PendingIo::None;
                 Action::Close
@@ -469,6 +474,7 @@ mod tests {
                     buffered_next_request: false,
                 },
                 IoError,
+                Timeout,
                 Shutdown,
             ],
             (ConnectionState::Closed, PendingIo::Recv)
@@ -561,6 +567,27 @@ mod tests {
         assert_eq!(machine.apply(Event::ClosedCqe), Ok(Action::Close));
         assert_eq!(machine.state, ConnectionState::Free);
         assert_eq!(machine.pending_io, PendingIo::None);
+    }
+
+    #[test]
+    fn timeout_while_writing_waits_for_the_abandoned_write() {
+        use Event::*;
+        let events = [
+            Accept,
+            HeadersParsed { has_body: false },
+            DispatchDone,
+            WriteProgress,
+            Timeout,
+            ClosedCqe,
+        ];
+        let mut machine = Machine::new();
+        for event in &events[..4] {
+            machine.apply(*event).unwrap();
+        }
+        assert_eq!(machine.apply(Timeout), Ok(Action::AwaitClosedCqe));
+        assert_eq!(machine.state, ConnectionState::Closed);
+        assert_eq!(machine.pending_io, PendingIo::Write);
+        assert!(trace::replay(&events).is_ok());
     }
 
     #[test]

@@ -155,9 +155,11 @@ TimeoutNoPending(i) ==
     /\ free_slots' = free_slots \cup {i}
     /\ UNCHANGED shutdown
 
-(* Timeout handling: keep slab entry alive until the pending CQE arrives. *)
+(* Timeout handling: keep slab entry alive until the pending CQE arrives.
+   Covers Writing too: connection_timeout also bounds a response that the
+   peer reads too slowly (or that stalls), so a SEND can be abandoned. *)
 TimeoutWithPending(i) ==
-    /\ conns[i] \in {"Headers", "Body"}
+    /\ conns[i] \in {"Headers", "Body", "Writing"}
     /\ pending_io[i] \in {"Recv", "Write"}
     /\ conns' = [conns EXCEPT ![i] = "Closed"]
     /\ UNCHANGED <<pending_io, shutdown, free_slots>>
