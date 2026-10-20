@@ -1,5 +1,5 @@
 # Build stage — aarch64 only, profile=perf (full DWARF + frame pointers)
-FROM --platform=linux/arm64 rust:1 AS build-env
+FROM --platform=linux/arm64 rust:1.99.1 AS build-env
 WORKDIR /app
 
 ENV RUSTFLAGS="-g -Cforce-frame-pointers=on"
