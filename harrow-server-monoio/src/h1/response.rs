@@ -17,10 +17,11 @@ impl H1Connection {
     pub(crate) async fn write_response(
         &mut self,
         response: http::Response<harrow_core::response::ResponseBody>,
+        version: http::Version,
         keep_alive: bool,
         is_head_request: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let prepared = prepare_response(response, keep_alive, is_head_request)
+        let prepared = prepare_response(response, version, keep_alive, is_head_request)
             .map_err(|e| -> Box<dyn std::error::Error> { e })?;
         self.flush_write_buffer().await?;
         codec::write_response_head_into_bytes_mut(
@@ -37,6 +38,9 @@ impl H1Connection {
                     .await?
             }
             ResponseBodyMode::Chunked => self.write_body_chunked(prepared.body).await?,
+            ResponseBodyMode::CloseDelimited => {
+                self.write_body_close_delimited(prepared.body).await?
+            }
         }
 
         self.flush_write_buffer().await?;
@@ -82,6 +86,25 @@ impl H1Connection {
         Ok(())
     }
 
+    /// Raw body bytes; the caller closes the connection to end the body.
+    async fn write_body_close_delimited(
+        &mut self,
+        mut body: harrow_core::response::ResponseBody,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|e| -> Box<dyn std::error::Error> { e })?;
+            if let Ok(data) = frame.into_data()
+                && !data.is_empty()
+            {
+                // Flush each frame: a streaming body should not wait for the
+                // write buffer to fill.
+                self.queue_fixed_data(data).await?;
+                self.flush_write_buffer().await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn write_status(
         &mut self,
         status: http::StatusCode,
@@ -89,6 +112,7 @@ impl H1Connection {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.write_response(
             harrow_core::response::Response::new(status, body).into_inner(),
+            http::Version::HTTP_11,
             false,
             false,
         )

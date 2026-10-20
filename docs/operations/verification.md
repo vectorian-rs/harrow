@@ -222,7 +222,7 @@ File keys:
 | `Transfer-Encoding` + `Content-Length` | codec `reject_content_length_and_chunked`, `reject_transfer_encoding_with_content_length`; tokio-e2e `h1_adversarial::tcp_transfer_encoding_with_content_length_is_rejected`; monoio `rejects_content_length_and_chunked_together` |
 | Invalid `Content-Length` | codec `reject_invalid_content_length`, `reject_non_digit_content_length_forms`, `content_length_allows_surrounding_ows`; tokio-e2e `h1_adversarial::tcp_invalid_content_length_is_rejected` |
 | Invalid or unsupported `Transfer-Encoding` | codec `reject_identity_transfer_encoding`, `reject_comma_separated_transfer_encoding`, `reject_unsupported_transfer_encoding`, `reject_empty_transfer_encoding_token`, `reject_invalid_transfer_encoding_bytes`, `reject_duplicate_transfer_encoding`, `reject_transfer_encoding_with_non_ows_whitespace`; tokio-e2e `h1_adversarial::tcp_invalid_or_unsupported_transfer_encoding_is_rejected` |
-| HTTP/1.0 body and framing edge cases | codec `reject_transfer_encoding_on_http10`, `reject_http10_post_without_content_length`, `reject_http10_put_without_content_length`, `allow_http10_get_without_content_length`, `keep_alive_http10_close`, `keep_alive_http10_explicit`; tokio-e2e `h1_adversarial::tcp_http10_post_with_content_length_is_served_then_closed`, `h1_adversarial::tcp_http10_body_without_content_length_or_with_chunked_is_rejected`, `h1_adversarial::tcp_http10_streaming_response_is_not_chunked` (**ignored: known bug**). The handling of `Expect` on HTTP/1.0 is covered in #95. |
+| HTTP/1.0 body and framing edge cases | codec `reject_transfer_encoding_on_http10`, `reject_http10_post_without_content_length`, `reject_http10_put_without_content_length`, `allow_http10_get_without_content_length`, `keep_alive_http10_close`, `keep_alive_http10_explicit`; tokio-e2e `h1_adversarial::tcp_http10_post_with_content_length_is_served_then_closed`, `h1_adversarial::tcp_http10_body_without_content_length_or_with_chunked_is_rejected`, `h1_adversarial::tcp_http10_streaming_response_is_not_chunked`, `h1_adversarial::tcp_http10_keep_alive_streaming_response_closes_the_connection`; monoio `http10_streaming_response_is_close_delimited`. The handling of `Expect` on HTTP/1.0 is covered in #95. |
 
 #### Chunked request bodies
 
@@ -275,11 +275,7 @@ File keys:
 
 #### Known gaps (ignored tests)
 
-- `tcp_http10_streaming_response_is_not_chunked` (#100): a streaming response to an
-  HTTP/1.0 request is sent with `transfer-encoding: chunked`. HTTP/1.0 does
-  not define chunked encoding, so the response must be close-delimited
-  (RFC 9112 §6.1). To fix this, every backend needs a close-delimited body
-  mode.
+None: the #98 and #100 tests, previously ignored, now run.
 
 ---
 

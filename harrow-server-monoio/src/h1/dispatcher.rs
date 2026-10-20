@@ -120,6 +120,7 @@ impl H1Connection {
                 }
             };
             let keep_alive = parsed.keep_alive;
+            let version = parsed.version;
             let is_head_request = parsed.method == http::Method::HEAD;
 
             // Early reject: Content-Length exceeds limit
@@ -181,8 +182,13 @@ impl H1Connection {
                 }
             };
 
+            // A streaming response to HTTP/1.0 ends by closing the connection.
+            if harrow_server::h1::response_closes_connection(version, &response, is_head_request) {
+                connection_reusable = false;
+            }
+
             // Write response
-            self.write_response(response, connection_reusable, is_head_request)
+            self.write_response(response, version, connection_reusable, is_head_request)
                 .await?;
 
             if !connection_reusable {

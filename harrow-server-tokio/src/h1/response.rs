@@ -38,6 +38,7 @@ enum WriteCommand {
     },
     Response {
         response: http::Response<harrow_core::response::ResponseBody>,
+        version: http::Version,
         keep_alive: bool,
         is_head_request: bool,
         completion: oneshot::Sender<std::io::Result<()>>,
@@ -234,11 +235,13 @@ impl WriteRunner {
     pub(crate) async fn write_response(
         &self,
         response: http::Response<harrow_core::response::ResponseBody>,
+        version: http::Version,
         keep_alive: bool,
         is_head_request: bool,
     ) -> std::io::Result<()> {
         self.send(WriteCommand::Response {
             response,
+            version,
             keep_alive,
             is_head_request,
             completion: oneshot::channel().0,
@@ -396,13 +399,20 @@ where
         }
         WriteCommand::Response {
             response,
+            version,
             keep_alive,
             is_head_request,
             completion,
         } => {
-            let flush_mode =
-                write_response_to_stream(stream, state, response, keep_alive, is_head_request)
-                    .await;
+            let flush_mode = write_response_to_stream(
+                stream,
+                state,
+                response,
+                version,
+                keep_alive,
+                is_head_request,
+            )
+            .await;
 
             let flush_mode = match flush_mode {
                 Ok(flush_mode) => flush_mode,
@@ -457,14 +467,15 @@ async fn write_response_to_stream<S>(
     stream: &mut S,
     state: &mut WriteState,
     response: http::Response<harrow_core::response::ResponseBody>,
+    version: http::Version,
     keep_alive: bool,
     is_head_request: bool,
 ) -> std::io::Result<FlushMode>
 where
     S: AsyncWrite + Unpin,
 {
-    let prepared =
-        prepare_response(response, keep_alive, is_head_request).map_err(std::io::Error::other)?;
+    let prepared = prepare_response(response, version, keep_alive, is_head_request)
+        .map_err(std::io::Error::other)?;
     let mut body = prepared.body;
     let mark = state.mark();
     state.encode_response_head(
@@ -477,6 +488,9 @@ where
         ResponseBodyMode::None => Ok(FlushMode::Buffered),
         ResponseBodyMode::Fixed => write_body_direct(state, &mut body, prepared.expected_len).await,
         ResponseBodyMode::Chunked => write_body_chunked(stream, state, &mut body).await,
+        ResponseBodyMode::CloseDelimited => {
+            write_body_close_delimited(stream, state, &mut body).await
+        }
     };
 
     if result.is_err() {
@@ -527,6 +541,27 @@ where
     }
 
     state.queue_slice(harrow_codec_h1::CHUNK_TERMINATOR);
+    Ok(FlushMode::Streaming)
+}
+
+/// Raw body bytes, flushed as they arrive; the connection close ends the body.
+async fn write_body_close_delimited<S>(
+    stream: &mut S,
+    state: &mut WriteState,
+    body: &mut harrow_core::response::ResponseBody,
+) -> std::io::Result<FlushMode>
+where
+    S: AsyncWrite + Unpin,
+{
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(std::io::Error::other)?;
+        if let Ok(data) = frame.into_data()
+            && !data.is_empty()
+        {
+            state.queue_bytes(data);
+            flush_pending(stream, state).await?;
+        }
+    }
     Ok(FlushMode::Streaming)
 }
 
@@ -708,9 +743,16 @@ mod tests {
         let mut stream = CountingWriter::default();
         let mut state = WriteState::new();
 
-        let err = write_response_to_stream(&mut stream, &mut state, response, false, false)
-            .await
-            .expect_err("fixed-length mismatch should error");
+        let err = write_response_to_stream(
+            &mut stream,
+            &mut state,
+            response,
+            http::Version::HTTP_11,
+            false,
+            false,
+        )
+        .await
+        .expect_err("fixed-length mismatch should error");
         state.release();
 
         assert!(err.to_string().contains("shorter than declared"));
@@ -724,9 +766,16 @@ mod tests {
         let mut stream = CountingWriter::default();
         let mut state = WriteState::new();
 
-        let flush_mode = write_response_to_stream(&mut stream, &mut state, response, false, false)
-            .await
-            .expect("response write should succeed");
+        let flush_mode = write_response_to_stream(
+            &mut stream,
+            &mut state,
+            response,
+            http::Version::HTTP_11,
+            false,
+            false,
+        )
+        .await
+        .expect("response write should succeed");
         assert_eq!(flush_mode, FlushMode::Buffered);
         maybe_flush(&mut stream, &mut state, flush_mode)
             .await
@@ -757,9 +806,16 @@ mod tests {
         let mut stream = CountingWriter::default();
         let mut state = WriteState::new();
 
-        let flush_mode = write_response_to_stream(&mut stream, &mut state, response, false, false)
-            .await
-            .expect("response write should succeed");
+        let flush_mode = write_response_to_stream(
+            &mut stream,
+            &mut state,
+            response,
+            http::Version::HTTP_11,
+            false,
+            false,
+        )
+        .await
+        .expect("response write should succeed");
         assert_eq!(flush_mode, FlushMode::Streaming);
         maybe_flush(&mut stream, &mut state, flush_mode)
             .await
@@ -787,7 +843,7 @@ mod tests {
                     .into_inner();
 
                 runner
-                    .write_response(response, false, false)
+                    .write_response(response, http::Version::HTTP_11, false, false)
                     .await
                     .expect("write runner should deliver response");
                 runner.finish().await.expect("write runner should join");
@@ -815,7 +871,7 @@ mod tests {
                         .into_inner();
 
                     runner
-                        .write_response(response, true, false)
+                        .write_response(response, http::Version::HTTP_11, true, false)
                         .await
                         .expect("write runner should queue buffered response");
                 }

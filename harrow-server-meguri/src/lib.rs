@@ -1515,16 +1515,22 @@ fn start_response_stream_task(
     local: &tokio::task::LocalSet,
     response: http::Response<harrow_core::response::ResponseBody>,
 ) {
-    let keep_alive = conns[conn_idx].keep_alive;
-    let is_head_request = conns[conn_idx]
+    let (version, is_head_request) = conns[conn_idx]
         .parsed
         .as_ref()
-        .is_some_and(|parsed| parsed.method == http::Method::HEAD);
+        .map_or((http::Version::HTTP_11, false), |parsed| {
+            (parsed.version, parsed.method == http::Method::HEAD)
+        });
+    // A streaming response to HTTP/1.0 ends by closing the connection.
+    if harrow_server::h1::response_closes_connection(version, &response, is_head_request) {
+        conns[conn_idx].keep_alive = false;
+    }
+    let keep_alive = conns[conn_idx].keep_alive;
     let (tx, rx) = connection::response_channel();
     conns[conn_idx].set_response_receiver(rx);
 
     local.spawn_local(async move {
-        connection::stream_response(tx, response, keep_alive, is_head_request).await;
+        connection::stream_response(tx, response, version, keep_alive, is_head_request).await;
     });
 }
 

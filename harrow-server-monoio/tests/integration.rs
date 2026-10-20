@@ -435,6 +435,35 @@ async fn large_response_chunked() {
     assert!(body.chars().all(|c| c == 'x'));
 }
 
+/// A streaming response to HTTP/1.0 cannot be chunked: it is sent raw and
+/// ended by closing the connection, even if the client asked for keep-alive.
+#[tokio::test]
+async fn http10_streaming_response_is_close_delimited() {
+    async fn stream(_req: Request) -> Response {
+        Response::streaming(
+            StatusCode::OK,
+            futures_util::stream::iter(vec![Ok::<
+                http_body::Frame<bytes::Bytes>,
+                Box<dyn std::error::Error + Send + Sync>,
+            >(http_body::Frame::data(
+                bytes::Bytes::from_static(b"hello"),
+            ))]),
+        )
+    }
+
+    let app = || App::new().get("/stream", stream);
+    let (addr, _server) = start_monoio_server(app);
+
+    // `http_request` reads until the server closes the connection.
+    let req = "GET /stream HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n";
+    let (status, headers, body) = http_request(addr, req).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(get_header(&headers, "transfer-encoding"), None);
+    assert_eq!(get_header(&headers, "connection"), Some("close"));
+    assert_eq!(body, "hello");
+}
+
 #[tokio::test]
 async fn header_read_timeout() {
     use tokio::io::AsyncReadExt;
