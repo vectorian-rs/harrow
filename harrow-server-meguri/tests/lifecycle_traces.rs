@@ -504,3 +504,41 @@ fn connection_lifetime_reached_mid_response() {
         ]
     );
 }
+
+/// The peer half-closes before the body it announced is complete. Meguri
+/// used to keep queueing RECVs that returned 0 at once (hundreds of
+/// thousands of `BodyNeedMore`) until the body read timeout answered 408.
+#[test]
+fn peer_closes_mid_body() {
+    let _serial = serial();
+    let (addr, _server) = start(config());
+
+    let started = Instant::now();
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .write_all(b"POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc")
+        .unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut response = Vec::new();
+    let _ = stream.read_to_end(&mut response);
+    assert!(
+        response.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&response)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "closed after {:?}, not at the peer's EOF",
+        started.elapsed()
+    );
+
+    let traces = wait_for_traces(1);
+    assert_replays(&traces);
+    assert_eq!(
+        traces[0],
+        [Accept, HeadersParsed { has_body: true }, IoError]
+    );
+}

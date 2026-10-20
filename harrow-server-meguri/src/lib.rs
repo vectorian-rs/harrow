@@ -1122,6 +1122,13 @@ fn handle_recv_completion(
         let result = conns[conn_idx].on_recv(nbytes, config.max_body_size);
         handle_process_result(ring, conns, conn_idx, result, shared, local, config);
     } else if matches!(conns[conn_idx].state, connection::ConnState::Dispatching) {
+        if nbytes == 0 {
+            // Peer EOF before the request body ended: the body can never
+            // complete. (Pumping again would only queue another RECV that
+            // returns 0 at once, spinning until the body read timeout.)
+            close_conn(conn_idx, conns, CloseReason::IoError);
+            return;
+        }
         advance_dispatching_connection(ring, conns, conn_idx, shared, local, config);
     }
 }
