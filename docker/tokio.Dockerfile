@@ -1,5 +1,5 @@
 # Build stage — aarch64 only
-FROM --platform=$BUILDPLATFORM rust:1 AS build-env
+FROM --platform=$BUILDPLATFORM rust:1.99.1 AS build-env
 WORKDIR /app
 
 # Copy manifests first so dependency resolution survives unrelated source edits.

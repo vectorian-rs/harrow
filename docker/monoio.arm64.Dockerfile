@@ -1,6 +1,6 @@
 # Monoio/io_uring perf server for ARM64 production deployments
 
-FROM --platform=linux/arm64 rust:1 AS builder
+FROM --platform=linux/arm64 rust:1.99.1 AS builder
 WORKDIR /app
 
 ARG BUILD_PROFILE=release
